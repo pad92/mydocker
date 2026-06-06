@@ -1,3 +1,9 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+x-localtime-volume: &localtime-volume "/etc/localtime:/etc/localtime:ro"
 services:
   netdata:
     image: netdata/netdata
@@ -6,10 +12,7 @@ services:
     pid: host
     networks:
       - traefik_gateway
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
+    logging: *default-logging
     restart: unless-stopped
     deploy:
       resources:
@@ -30,7 +33,7 @@ services:
       - /:/host/root:ro,rslave
       - ${NETDATA_ETC_PASSWD_DATA_DIR}:/host${NETDATA_ETC_PASSWD_DATA_DIR}:ro
       - ${NETDATA_ETC_GROUP_DATA_DIR}:/host${NETDATA_ETC_GROUP_DATA_DIR}:ro
-      - /etc/localtime:/etc/localtime:ro
+      - *localtime-volume
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - ${NETDATA_ETC_OS_RELEASE_DATA_DIR}:/host${NETDATA_ETC_OS_RELEASE_DATA_DIR}:ro

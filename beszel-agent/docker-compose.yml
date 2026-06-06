@@ -1,3 +1,8 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   beszel-agent:
     image: henrygd/beszel-agent:latest
@@ -18,3 +23,4 @@ services:
       KEY: "${KEY}"
       TOKEN: "${TOKEN}"
       HUB_URL: "${HUB_URL}"
+    logging: *default-logging

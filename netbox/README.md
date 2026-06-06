@@ -49,7 +49,7 @@ Service container running lscr.io/linuxserver/netbox.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/lscr.io/linuxserver/netbox](https://hub.docker.com/r/lscr.io/linuxserver/netbox)
-- **Docker Image Maintainer**: [Official Hub Registry](lscr.io/linuxserver/netbox)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/lscr.io/linuxserver/netbox)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

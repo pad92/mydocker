@@ -1,3 +1,8 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   netbox_postgres:
     image: postgres:15-alpine
@@ -7,7 +12,7 @@ services:
       test: ["CMD", "pg_isready", "-q", "-d", "netbox", "-U", "netbox"]
       timeout: 45s
       interval: 10s
-      retries: 10   
+      retries: 10
     volumes:
       - ${NETBOX_DATA_DIR}:/var/lib/postgresql/data
     networks:
@@ -17,6 +22,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
 
+    logging: *default-logging
   netbox_redis:
     image: redis:7-alpine
     user: 1030:100
@@ -29,7 +35,8 @@ services:
       - netbox
     volumes:
       - ${NETBOX_DATA_DIR}:/data
-      
+
+    logging: *default-logging
   netbox:
     image: lscr.io/linuxserver/netbox:latest
     container_name: netbox_server
@@ -59,7 +66,7 @@ services:
     depends_on:
       - netbox_postgres
       - netbox_redis
-    restart: unless-stopped 
+    restart: unless-stopped
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.netbox.rule=Host(`${NETBOX_DOMAIN}`)"
@@ -67,6 +74,7 @@ services:
       - "traefik.http.services.netbox.loadbalancer.server.port=8000"
       - "traefik.docker.network=traefik_gateway"
 
+    logging: *default-logging
 networks:
   netbox:
   traefik_gateway:

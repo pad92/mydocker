@@ -1,3 +1,8 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   manyfold:
     image: ghcr.io/manyfold3d/manyfold:latest
@@ -56,12 +61,14 @@ services:
 
       traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
       traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
-      
+
       traefik.http.routers.manyfold.rule: "Host(`${MANYFOLD_DOMAIN}`)"
       traefik.http.routers.manyfold.entrypoints: "websecure"
       traefik.http.routers.manyfold.tls: "true"
       traefik.http.routers.manyfold.tls.certresolver: "stepca"
 
+    restart: unless-stopped
+    logging: *default-logging
   postgres:
     image: postgres:15
     volumes:
@@ -73,12 +80,14 @@ services:
     networks:
       - manyfold
 
+    logging: *default-logging
   redis:
     image: redis:7
     restart: on-failure
     networks:
       - manyfold
 
+    logging: *default-logging
 networks:
   manyfold:
   traefik_gateway:

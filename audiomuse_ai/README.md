@@ -71,7 +71,7 @@ Service container running ghcr.io/neptunehub/audiomuse-ai.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/ghcr.io/neptunehub/audiomuse-ai](https://hub.docker.com/r/ghcr.io/neptunehub/audiomuse-ai)
-- **Docker Image Maintainer**: [Official Hub Registry](ghcr.io/neptunehub/audiomuse-ai)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/ghcr.io/neptunehub/audiomuse-ai)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:
@@ -93,7 +93,7 @@ Service container running ghcr.io/neptunehub/audiomuse-ai.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/ghcr.io/neptunehub/audiomuse-ai](https://hub.docker.com/r/ghcr.io/neptunehub/audiomuse-ai)
-- **Docker Image Maintainer**: [Official Hub Registry](ghcr.io/neptunehub/audiomuse-ai)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/ghcr.io/neptunehub/audiomuse-ai)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

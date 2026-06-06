@@ -1,3 +1,10 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+x-common-env: &common-env
+  TZ: ${TZ}
 services:
   # Redis service for RQ (task queue)
   redis:
@@ -12,12 +19,14 @@ services:
     restart: unless-stopped
 
   # PostgreSQL database service
+    logging: *default-logging
   postgres:
     image: postgres:15-alpine
     container_name: audiomuse-postgres
     networks:
       - AudioMuse
     environment:
+      <<: *common-env
       POSTGRES_USER: ${POSTGRES_USER:-audiomuse}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-audiomusepassword}
       POSTGRES_DB: ${POSTGRES_DB:-audiomusedb}
@@ -28,6 +37,7 @@ services:
     restart: unless-stopped
 
   # AudioMuse-AI Flask application service
+    logging: *default-logging
   audiomuse-ai-flask:
     image: ghcr.io/neptunehub/audiomuse-ai:latest-nvidia
     container_name: audiomuse-ai-flask-app
@@ -37,8 +47,8 @@ services:
       - AudioMuse
       - traefik_gateway
     environment:
+      <<: *common-env
       SERVICE_TYPE: "${SERVICE_TYPE}" # Tells the container to run the Flask app
-      TZ: "${TZ:-UTC}"
       MEDIASERVER_TYPE: "${MEDIASERVER_TYPE}" # Specify the media server type
       JELLYFIN_USER_ID: "${JELLYFIN_USER_ID}"
       JELLYFIN_TOKEN: "${JELLYFIN_TOKEN}"
@@ -68,7 +78,7 @@ services:
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.audiomuse.loadbalancer.server.port: 8000
-    
+
       traefik.http.routers.audiomuse_http.rule: "Host(`${AUDIOMUSE_AI_DOMAIN}`)"
       traefik.http.routers.audiomuse_http.entrypoints: web
       traefik.http.routers.audiomuse_http.middlewares: redirect-https
@@ -90,12 +100,13 @@ services:
               capabilities: [gpu]
 
   # AudioMuse-AI RQ Worker service
+    logging: *default-logging
   audiomuse-ai-worker:
     image: ghcr.io/neptunehub/audiomuse-ai:latest-nvidia
     container_name: audiomuse-ai-worker-instance
     environment:
+      <<: *common-env
       SERVICE_TYPE: "${SERVICE_TYPE}" # Tells the container to run the RQ worker
-      TZ: "${TZ:-UTC}"
       MEDIASERVER_TYPE: "${MEDIASERVER_TYPE}" # Specify the media server type
       audiomuse_USER: "${AUDIOMUSE_USER}"
       audiomuse_PASSWORD: "${AUDIOMUSE_PASSWORD}"
@@ -135,6 +146,7 @@ services:
               capabilities: [gpu]
 
 # Define volumes for persistent data and temporary files
+    logging: *default-logging
 volumes:
   redis-data:
   postgres-data:

@@ -1,4 +1,8 @@
----
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   code-server:
     image: lscr.io/linuxserver/code-server:latest
@@ -27,7 +31,7 @@ services:
       - "traefik.http.routers.vscode.service=vscode"
       - "traefik.http.services.vscode.loadbalancer.server.port=8443"
       - "traefik.docker.network=traefik_gateway"
-      
+    logging: *default-logging
 networks:
   traefik_gateway:
     external: true

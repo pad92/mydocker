@@ -9,7 +9,7 @@ Service container running ghcr.io/karakeep-app/karakeep:${KARAKEEP_VERSION.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/ghcr.io/karakeep-app/karakeep:${KARAKEEP_VERSION](https://hub.docker.com/r/ghcr.io/karakeep-app/karakeep:${KARAKEEP_VERSION)
-- **Docker Image Maintainer**: [Official Hub Registry](ghcr.io/karakeep-app/karakeep:${KARAKEEP_VERSION)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/ghcr.io/karakeep-app/karakeep:${KARAKEEP_VERSION)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:
@@ -32,7 +32,7 @@ Service container running gcr.io/zenika-hub/alpine-chrome.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/gcr.io/zenika-hub/alpine-chrome](https://hub.docker.com/r/gcr.io/zenika-hub/alpine-chrome)
-- **Docker Image Maintainer**: [Official Hub Registry](gcr.io/zenika-hub/alpine-chrome)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/gcr.io/zenika-hub/alpine-chrome)
 
 ---
 
@@ -43,7 +43,7 @@ Service container running getmeili/meilisearch.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/getmeili/meilisearch](https://hub.docker.com/r/getmeili/meilisearch)
-- **Docker Image Maintainer**: [Official Hub Registry](getmeili/meilisearch)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/getmeili/meilisearch)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

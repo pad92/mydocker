@@ -27,7 +27,7 @@ Service container running grafana/grafana-oss.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/grafana/grafana-oss](https://hub.docker.com/r/grafana/grafana-oss)
-- **Docker Image Maintainer**: [Official Hub Registry](grafana/grafana-oss)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/grafana/grafana-oss)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

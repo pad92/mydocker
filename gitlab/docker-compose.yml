@@ -1,8 +1,13 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   gitlab:
     image: gitlab/gitlab-ce:latest
     container_name: gitlab
-    restart: always
+    restart: unless-stopped
     hostname: 'git.home.lan'
     environment:
       GITLAB_OMNIBUS_CONFIG: |
@@ -21,6 +26,7 @@ services:
       lan:
         ipv4_address: ${GITLAB_IP_2}
 
+    logging: *default-logging
 networks:
   lan:
     driver: macvlan

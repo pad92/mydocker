@@ -9,7 +9,7 @@ Service container running fnsys/dockhand.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/fnsys/dockhand](https://hub.docker.com/r/fnsys/dockhand)
-- **Docker Image Maintainer**: [Official Hub Registry](fnsys/dockhand)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/fnsys/dockhand)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

@@ -9,7 +9,7 @@ Service container running netdata/netdata.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/netdata/netdata](https://hub.docker.com/r/netdata/netdata)
-- **Docker Image Maintainer**: [Official Hub Registry](netdata/netdata)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/netdata/netdata)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

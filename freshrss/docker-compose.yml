@@ -1,4 +1,8 @@
----
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   freshrss:
     image: lscr.io/linuxserver/freshrss:latest
@@ -19,7 +23,7 @@ services:
       traefik.http.routers.freshrss.rule: "Host(`${FRESHRSS_DOMAIN}`)"
       traefik.http.routers.freshrss.entrypoints: "web"
       traefik.http.routers.freshrss.tls: "false"
-      
+    logging: *default-logging
 networks:
   traefik_gateway:
     external: true

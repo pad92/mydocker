@@ -1,3 +1,8 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   open-webui:
     container_name: open-webui
@@ -22,11 +27,11 @@ services:
       - traefik_gateway
     restart: unless-stopped
     labels:
-    - "traefik.enable=true"
-    - "traefik.docker.network=traefik_gateway"
-    - "traefik.http.routers.webui.rule=Host(`${OLLAMA_DOMAIN}`) && PathPrefix(`/`)"
-    - "traefik.http.services.webui.loadbalancer.server.port=8080"
-    
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik_gateway"
+      - "traefik.http.routers.webui.rule=Host(`${OLLAMA_DOMAIN}`) && PathPrefix(`/`)"
+      - "traefik.http.services.webui.loadbalancer.server.port=8080"
+    logging: *default-logging
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -52,6 +57,7 @@ services:
     networks:
       - ollama
 
+    logging: *default-logging
 networks:
   traefik_gateway:
     external: true

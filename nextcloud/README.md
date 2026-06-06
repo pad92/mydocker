@@ -9,7 +9,7 @@ Service container running lscr.io/linuxserver/nextcloud.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/lscr.io/linuxserver/nextcloud](https://hub.docker.com/r/lscr.io/linuxserver/nextcloud)
-- **Docker Image Maintainer**: [Official Hub Registry](lscr.io/linuxserver/nextcloud)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/lscr.io/linuxserver/nextcloud)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

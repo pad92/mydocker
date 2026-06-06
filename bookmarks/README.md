@@ -9,7 +9,7 @@ Service container running shaarli/shaarli.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/shaarli/shaarli](https://hub.docker.com/r/shaarli/shaarli)
-- **Docker Image Maintainer**: [Official Hub Registry](shaarli/shaarli)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/shaarli/shaarli)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

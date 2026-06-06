@@ -9,7 +9,7 @@ Service container running ghcr.io/manyfold3d/manyfold.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/ghcr.io/manyfold3d/manyfold](https://hub.docker.com/r/ghcr.io/manyfold3d/manyfold)
-- **Docker Image Maintainer**: [Official Hub Registry](ghcr.io/manyfold3d/manyfold)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/ghcr.io/manyfold3d/manyfold)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

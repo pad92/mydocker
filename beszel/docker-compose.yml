@@ -1,3 +1,8 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   beszel:
     image: henrygd/beszel:latest
@@ -18,13 +23,14 @@ services:
 
       traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
       traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
-      
+
       traefik.http.routers.beszel.rule: "Host(`${BESZEL_DOMAIN}`)"
       traefik.http.routers.beszel.entrypoints: "websecure"
       traefik.http.routers.beszel.tls: "true"
       traefik.http.routers.beszel.tls.certresolver: "stepca"
 
 
+    logging: *default-logging
   beszel-agent:
     # image: henrygd/beszel-agent-nvidia:0.17
     image: henrygd/beszel-agent-nvidia:latest
@@ -60,7 +66,7 @@ services:
       KEY: "${KEY}"
       TOKEN: "${TOKEN}"
       HUB_URL: "${HUB_URL}"
-      
+    logging: *default-logging
 networks:
   traefik_gateway:
     external: true

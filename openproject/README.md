@@ -1,14 +1,18 @@
 # Openproject Stack
 
-## Role
-Collaborative project management and tracking tool.
+This stack deploys the following services:
 
-## External Links
-- **Official Project**: [https://www.openproject.org/](https://www.openproject.org/)
-- **Docker Image Maintainer**: [OpenProject](https://hub.docker.com/r/openproject/community)
+## 1. Openproject (`openproject`)
 
-## Configuration Variables
-Define the following environment variables in your local `.env` file:
+### Role
+Service container running openproject/openproject.
+
+### External Links
+- **Official Project**: [https://hub.docker.com/r/openproject/openproject](https://hub.docker.com/r/openproject/openproject)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/openproject/openproject)
+
+### Service-Specific Configuration Variables
+Define these environment variables which are unique to this service:
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
@@ -18,4 +22,6 @@ Define the following environment variables in your local `.env` file:
 | `OPENPROJECT_HTTPS` | Configuration settings value for Openproject https. | *None (empty)* |
 | `OPENPROJECT_PGDATA_DATA_DIR` | Persistent host directory path for volume mount: OPENPROJECT_PGDATA_DATA_DIR. | *None (empty)* |
 | `OPENPROJECT_SECRET_KEY_BASE` | Secret authentication credentials, token, or key value. | `CHANGEME` |
+
+---
 

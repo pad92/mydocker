@@ -1,3 +1,8 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   photoprism:
     image: photoprism/photoprism:latest
@@ -63,13 +68,13 @@ services:
     # user: "1000:1000"
     ## Share hardware devices with FFmpeg and TensorFlow (optional):
     devices:
-     - "/dev/dri:/dev/dri"                         # Intel QSV
-     - "/dev/nvidia0:/dev/nvidia0"                 # Nvidia CUDA
-     - "/dev/nvidiactl:/dev/nvidiactl"
+      - "/dev/dri:/dev/dri"                        # Intel QSV
+      - "/dev/nvidia0:/dev/nvidia0"                # Nvidia CUDA
+      - "/dev/nvidiactl:/dev/nvidiactl"
     # - "/dev/nvidia-modeset:/dev/nvidia-modeset"
     # - "/dev/nvidia-nvswitchctl:/dev/nvidia-nvswitchctl"
-     - "/dev/nvidia-uvm:/dev/nvidia-uvm"
-     - "/dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools"
+      - "/dev/nvidia-uvm:/dev/nvidia-uvm"
+      - "/dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools"
     #  - "/dev/video11:/dev/video11"                 # Video4Linux Video Encode Device (h264_v4l2m2m)
     working_dir: "/photoprism" # do not change or remove
     volumes:
@@ -84,6 +89,7 @@ services:
       traefik.http.services.prowlarr.loadbalancer.server.port: "2342"
       traefik.http.routers.prowlarr-local.rule: "Host(`${PHOTOPRISM_DOMAIN}`)"
 
+    logging: *default-logging
   mariadb:
     image: mariadb:11
     ## If MariaDB gets stuck in a restart loop, this points to a memory or filesystem issue:
@@ -93,7 +99,10 @@ services:
     security_opt: # see https://github.com/MariaDB/mariadb-docker/issues/434#issuecomment-1136151239
       - seccomp:unconfined
       - apparmor:unconfined
-    command: --innodb-buffer-pool-size=512M --transaction-isolation=READ-COMMITTED --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --max-connections=512 --innodb-rollback-on-timeout=OFF --innodb-lock-wait-timeout=120
+    command: --innodb-buffer-pool-size=512M 
+      --transaction-isolation=READ-COMMITTED --character-set-server=utf8mb4 
+      --collation-server=utf8mb4_unicode_ci --max-connections=512 
+      --innodb-rollback-on-timeout=OFF --innodb-lock-wait-timeout=120
     ## Never store database files on an unreliable device such as a USB flash drive, an SD card, or a shared network folder:
     volumes:
       - "${CONF_DIR}/photoprism/database:/var/lib/mysql" # DO NOT REMOVE
@@ -107,6 +116,7 @@ services:
     networks:
       - photoprism
 
+    logging: *default-logging
 networks:
   photoprism:
   traefik_gateway:

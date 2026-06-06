@@ -9,7 +9,7 @@ Service container running lscr.io/linuxserver/code-server.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/lscr.io/linuxserver/code-server](https://hub.docker.com/r/lscr.io/linuxserver/code-server)
-- **Docker Image Maintainer**: [Official Hub Registry](lscr.io/linuxserver/code-server)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/lscr.io/linuxserver/code-server)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

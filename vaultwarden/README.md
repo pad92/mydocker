@@ -9,7 +9,7 @@ Service container running vaultwarden/server.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/vaultwarden/server](https://hub.docker.com/r/vaultwarden/server)
-- **Docker Image Maintainer**: [Official Hub Registry](vaultwarden/server)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/vaultwarden/server)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

@@ -9,7 +9,7 @@ Service container running gyarbij/plexist:main  # Or: ghcr.io/gyarbij/plexist.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/gyarbij/plexist:main  # Or: ghcr.io/gyarbij/plexist](https://hub.docker.com/r/gyarbij/plexist:main  # Or: ghcr.io/gyarbij/plexist)
-- **Docker Image Maintainer**: [Official Hub Registry](gyarbij/plexist:main  # Or: ghcr.io/gyarbij/plexist)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/gyarbij/plexist:main  # Or: ghcr.io/gyarbij/plexist)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

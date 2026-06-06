@@ -1,3 +1,9 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+x-localtime-volume: &localtime-volume "/etc/localtime:/etc/localtime:ro"
 services:
   traefik:
     image: traefik:v3.6
@@ -14,7 +20,7 @@ services:
       - LEGO_CA_CERTIFICATES=/etc/ssl/certs/${CA_CERT_NAME}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /etc/localtime:/etc/localtime:ro
+      - *localtime-volume
       - ${MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR}/${CA_CERT_NAME}:/etc/ssl/certs/${CA_CERT_NAME}:ro
       - ./traefik.toml:/etc/traefik/traefik.toml:ro
       - ./acme:/etc/traefik/acme
@@ -28,13 +34,15 @@ services:
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.traefik.loadbalancer.server.port: "80"
-      traefik.http.routers.traefik.rule: "Host(`${TRAEFIK_HOST_LOCAL}`) && (PathPrefix(`/traefik`) || PathPrefix(`/api`))"
+      traefik.http.routers.traefik.rule: "Host(`${TRAEFIK_HOST_LOCAL}`) && (PathPrefix(`/traefik`)
+        || PathPrefix(`/api`))"
       traefik.http.routers.traefik.service: "api@internal"
       traefik.http.routers.traefik.entrypoints: "web"
       traefik.http.routers.traefik.tls: "false"
       traefik.http.routers.traefik.middlewares: "traefik_strip"
       traefik.http.middlewares.traefik_strip.stripprefix.prefixes: "/traefik"
 
+    logging: *default-logging
   portainer:
     container_name: portainer
     image: portainer/portainer-ee:alpine-sts
@@ -47,7 +55,6 @@ services:
     labels:
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
-      
       traefik.http.routers.portainer_http.rule: "Host(`${PORTAINER_HOST_LOCAL}`)"
       traefik.http.routers.portainer_http.entrypoints: web
       traefik.http.routers.portainer_http.middlewares: redirect-https
@@ -119,6 +126,7 @@ services:
 #      traefik.http.services.homepage.loadbalancer.server.port: "3000"
 #      traefik.http.routers.homepage.rule: "Host(`${HOMEPAGE_HOST_LOCAL}`)"
 
+    logging: *default-logging
   uptime-kuma:
     image: louislam/uptime-kuma:2
     container_name: uptime-kuma
@@ -135,7 +143,6 @@ services:
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.uptime.loadbalancer.server.port: "3001"
-      
       traefik.http.routers.uptime_http.rule: "Host(`${UPTIME_HOST_LOCAL}`)"
       traefik.http.routers.uptime_http.entrypoints: web
       traefik.http.routers.uptime_http.middlewares: redirect-https
@@ -148,6 +155,7 @@ services:
       traefik.http.routers.uptime.tls: "true"
       traefik.http.routers.uptime.tls.certresolver: "stepca"
 
+    logging: *default-logging
 networks:
   traefik_gateway:
     name: traefik_gateway

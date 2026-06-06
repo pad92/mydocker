@@ -1,3 +1,8 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   sd-webui:
     image: goolashe/automatic1111-sd-webui
@@ -8,4 +13,5 @@ services:
       - ${STABLE_DIFFUSION_SD_DATA_DIR}:/stable-diffusion-webui/outputs
     environment:
       - CLI_ARGS=${CLI_ARGS}
-    restart: always
+    restart: unless-stopped
+    logging: *default-logging

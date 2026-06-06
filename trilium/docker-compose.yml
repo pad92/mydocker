@@ -1,3 +1,9 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+x-localtime-volume: &localtime-volume "/etc/localtime:/etc/localtime:ro"
 services:
   trilium:
     # Optionally, replace `latest` with a version tag like `v0.90.3`
@@ -21,7 +27,7 @@ services:
       # This can also be changed with by replacing the line below with `- /path/of/your/choice:/home/node/trilium-data
       - ${TRILIUM_DATA_DIR:-~/trilium-data}:/home/node/trilium-data
       - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
+      - *localtime-volume
     networks:
       - traefik_gateway
     labels:
@@ -35,12 +41,13 @@ services:
 
       traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
       traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
-      
+
       traefik.http.routers.trilium.rule: "Host(`${TRILIUM_DOMAIN}`)"
       traefik.http.routers.trilium.entrypoints: "websecure"
       traefik.http.routers.trilium.tls: "true"
       traefik.http.routers.trilium.tls.certresolver: "stepca"
 
+    logging: *default-logging
 networks:
   traefik_gateway:
     external: true

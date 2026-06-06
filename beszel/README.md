@@ -28,7 +28,7 @@ Service container running henrygd/beszel-agent-nvidia.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/henrygd/beszel-agent-nvidia](https://hub.docker.com/r/henrygd/beszel-agent-nvidia)
-- **Docker Image Maintainer**: [Official Hub Registry](henrygd/beszel-agent-nvidia)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/henrygd/beszel-agent-nvidia)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

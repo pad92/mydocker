@@ -9,7 +9,7 @@ Service container running goolashe/automatic1111-sd-webui.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/goolashe/automatic1111-sd-webui](https://hub.docker.com/r/goolashe/automatic1111-sd-webui)
-- **Docker Image Maintainer**: [Official Hub Registry](goolashe/automatic1111-sd-webui)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/goolashe/automatic1111-sd-webui)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

@@ -9,7 +9,7 @@ Service container running ghcr.io/blakeblackshear/frigate.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/ghcr.io/blakeblackshear/frigate](https://hub.docker.com/r/ghcr.io/blakeblackshear/frigate)
-- **Docker Image Maintainer**: [Official Hub Registry](ghcr.io/blakeblackshear/frigate)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/ghcr.io/blakeblackshear/frigate)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

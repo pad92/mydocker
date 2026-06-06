@@ -9,7 +9,7 @@ Service container running iib0011/omni-tools.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/iib0011/omni-tools](https://hub.docker.com/r/iib0011/omni-tools)
-- **Docker Image Maintainer**: [Official Hub Registry](iib0011/omni-tools)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/iib0011/omni-tools)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

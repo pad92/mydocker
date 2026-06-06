@@ -1,4 +1,8 @@
-
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   crowdsec:
     image: crowdsecurity/crowdsec
@@ -16,3 +20,4 @@ services:
     restart: unless-stopped
     labels:
       - traefik.enable=false
+    logging: *default-logging

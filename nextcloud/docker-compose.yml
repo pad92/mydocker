@@ -1,4 +1,8 @@
----
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   nextcloud:
     image: lscr.io/linuxserver/nextcloud:latest
@@ -34,6 +38,7 @@ services:
       - traefik.http.routers.nextcloud.rule=Host(`${NEXTCLOUD_DOMAIN}`)
       - traefik.http.services.nextcloud.loadbalancer.server.port=80
 
+    logging: *default-logging
 volumes:
   photo_nas:
     driver: local

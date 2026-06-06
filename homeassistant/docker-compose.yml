@@ -1,3 +1,8 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   homeassistant:
     image: homeassistant/home-assistant:stable
@@ -9,3 +14,4 @@ services:
     volumes:
       - ${HOMEASSISTANT_DATA_DIR}:/config
     restart: unless-stopped
+    logging: *default-logging

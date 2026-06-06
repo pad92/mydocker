@@ -1,8 +1,14 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
-   gitlab-runner:
+  gitlab-runner:
     restart: unless-stopped
     image: gitlab/gitlab-runner
     container_name: gitlab-runner
     volumes:
       - '/var/run/docker.sock:/var/run/docker.sock'
       - '${GITLAB_RUNNER_DATA_DIR}:/etc/gitlab-runner'
+    logging: *default-logging

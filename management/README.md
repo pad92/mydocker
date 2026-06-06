@@ -19,7 +19,7 @@ Service container running traefik.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/traefik](https://hub.docker.com/r/traefik)
-- **Docker Image Maintainer**: [Official Hub Registry](traefik)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/_/traefik)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:
@@ -39,7 +39,7 @@ Service container running portainer/portainer-ee.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/portainer/portainer-ee](https://hub.docker.com/r/portainer/portainer-ee)
-- **Docker Image Maintainer**: [Official Hub Registry](portainer/portainer-ee)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/portainer/portainer-ee)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

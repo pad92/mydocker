@@ -1,3 +1,8 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   shaarli:
     container_name: shaarli
@@ -19,6 +24,7 @@ services:
       traefik.http.middlewares.x-powered-by.headers.customresponseheaders.Server: ''
       traefik.http.middlewares.x-powered-by.headers.customresponseheaders.X-Powered-By: ''
 
+    logging: *default-logging
 networks:
   traefik_gateway:
     external: true

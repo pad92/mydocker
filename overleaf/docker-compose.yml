@@ -1,45 +1,49 @@
-
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
-    sharelatex:
-        restart: always
+  sharelatex:
+    restart: unless-stopped
         # Server Pro users:
         # image: quay.io/sharelatex/sharelatex-pro
-        image: sharelatex/sharelatex:latest
-        container_name: sharelatex
-        depends_on:
-            mongo:
-                condition: service_healthy
-            redis:
-                condition: service_started
+    image: sharelatex/sharelatex:latest
+    container_name: sharelatex
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_started
         # ports:
         #     - 80:80
-        stop_grace_period: 60s
-        volumes:
-            - ${OVERLEAF_SHARELATEX_DATA_DIR}:/var/lib/overleaf
+    stop_grace_period: 60s
+    volumes:
+      - ${OVERLEAF_SHARELATEX_DATA_DIR}:/var/lib/overleaf
             ########################################################################
             ####  Server Pro: Uncomment the following line to mount the docker  ####
             ####             socket, required for Sibling Containers to work    ####
             ########################################################################
             # - /var/run/docker.sock:/var/run/docker.sock
-        networks:
-            - overleaf
-            - traefik_gateway
-        environment:
-            OVERLEAF_APP_NAME: "${OVERLEAF_APP_NAME}"
-            OVERLEAF_MONGO_URL: "${OVERLEAF_MONGO_URL}"
+    networks:
+      - overleaf
+      - traefik_gateway
+    environment:
+      OVERLEAF_APP_NAME: "${OVERLEAF_APP_NAME}"
+      OVERLEAF_MONGO_URL: "${OVERLEAF_MONGO_URL}"
 
             # Same property, unfortunately with different names in
             # different locations
-            OVERLEAF_REDIS_HOST: "${OVERLEAF_REDIS_HOST}"
-            REDIS_HOST: "${REDIS_HOST}"
+      OVERLEAF_REDIS_HOST: "${OVERLEAF_REDIS_HOST}"
+      REDIS_HOST: "${REDIS_HOST}"
 
-            ENABLED_LINKED_FILE_TYPES: "${ENABLED_LINKED_FILE_TYPES}"
+      ENABLED_LINKED_FILE_TYPES: "${ENABLED_LINKED_FILE_TYPES}"
 
             # Enables Thumbnail generation using ImageMagick
-            ENABLE_CONVERSIONS: "${ENABLE_CONVERSIONS}"
+      ENABLE_CONVERSIONS: "${ENABLE_CONVERSIONS}"
 
             # Disables email confirmation requirement
-            EMAIL_CONFIRMATION_DISABLED: "${EMAIL_CONFIRMATION_DISABLED}"
+      EMAIL_CONFIRMATION_DISABLED: "${EMAIL_CONFIRMATION_DISABLED}"
 
             ## Set for SSL via nginx-proxy
             #VIRTUAL_HOST: 103.112.212.22
@@ -79,58 +83,63 @@ services:
             ## so the following environment variables must be commented out to avoid compile issues.
             ##
             ## Sandboxed Compiles: https://docs.overleaf.com/on-premises/configuration/overleaf-toolkit/server-pro-only-configuration/sandboxed-compiles
-            SANDBOXED_COMPILES: "${SANDBOXED_COMPILES}"
+      SANDBOXED_COMPILES: "${SANDBOXED_COMPILES}"
             ### Bind-mount source for /var/lib/overleaf/data/compiles inside the container.
-            SANDBOXED_COMPILES_HOST_DIR_COMPILES: "${SANDBOXED_COMPILES_HOST_DIR_COMPILES}"
+      SANDBOXED_COMPILES_HOST_DIR_COMPILES: "${SANDBOXED_COMPILES_HOST_DIR_COMPILES}"
             ### Bind-mount source for /var/lib/overleaf/data/output inside the container.
-            SANDBOXED_COMPILES_HOST_DIR_OUTPUT: "${SANDBOXED_COMPILES_HOST_DIR_OUTPUT}"
+      SANDBOXED_COMPILES_HOST_DIR_OUTPUT: "${SANDBOXED_COMPILES_HOST_DIR_OUTPUT}"
             ### Backwards compatibility (before Server Pro 5.5)
-            DOCKER_RUNNER: "${DOCKER_RUNNER}"
-            SANDBOXED_COMPILES_SIBLING_CONTAINERS: "${SANDBOXED_COMPILES_SIBLING_CONTAINERS}"
-        labels:
-            traefik.enable: "true"
-            traefik.docker.network: "traefik_gateway"
-            traefik.http.services.overleaf.loadbalancer.server.port: 80
-            traefik.http.routers.overleaf.rule: "Host(`${OVERLEAF_DOMAIN}`)"
+      DOCKER_RUNNER: "${DOCKER_RUNNER}"
+      SANDBOXED_COMPILES_SIBLING_CONTAINERS: "${SANDBOXED_COMPILES_SIBLING_CONTAINERS}"
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.overleaf.loadbalancer.server.port: 80
+      traefik.http.routers.overleaf.rule: "Host(`${OVERLEAF_DOMAIN}`)"
 
-    mongo:
-        restart: always
-        image: mongo:6.0
-        container_name: mongo
-        command: '--replSet overleaf --bind_ip_all'
-        volumes:
-            - ${OVERLEAF_MONGO_DATA_DIR}:/data/db
-        networks:
-            - overleaf
-        environment:
-          MONGO_INITDB_DATABASE: "${MONGO_INITDB_DATABASE}"
-        healthcheck:
-            test: echo 'db.stats().ok' | mongosh localhost:27017/test --quiet
-            interval: 10s
-            timeout: 10s
-            retries: 5
+    logging: *default-logging
+  mongo:
+    restart: unless-stopped
+    image: mongo:6.0
+    container_name: mongo
+    command: '--replSet overleaf --bind_ip_all'
+    volumes:
+      - ${OVERLEAF_MONGO_DATA_DIR}:/data/db
+    networks:
+      - overleaf
+    environment:
+      MONGO_INITDB_DATABASE: "${MONGO_INITDB_DATABASE}"
+    healthcheck:
+      test: echo 'db.stats().ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
-    mongo-init:
-        image: mongo:6.0
-        container_name: mongo-init
-        restart: "no"
-        depends_on:
-            mongo:
-                condition: service_healthy
-        command: >
-            mongosh --host mongo:27017 --eval 'rs.initiate({ _id: "overleaf", members: [{ _id: 0, host: "mongo:27017" }] })'
-        networks:
-            - overleaf
+    logging: *default-logging
+  mongo-init:
+    image: mongo:6.0
+    container_name: mongo-init
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    command: >
+      mongosh --host mongo:27017 --eval 'rs.initiate({ _id: "overleaf", members: [{
+      _id: 0, host: "mongo:27017" }] })'
+    networks:
+      - overleaf
 
-    redis:
-        restart: always
-        image: redis:6.2
-        container_name: redis
-        volumes:
-            - ${OVERLEAF_DATA_DIR}:/data
-        networks:
-            - overleaf
+    logging: *default-logging
+  redis:
+    restart: unless-stopped
+    image: redis:6.2
+    container_name: redis
+    volumes:
+      - ${OVERLEAF_DATA_DIR}:/data
+    networks:
+      - overleaf
 
+    logging: *default-logging
 networks:
   overleaf:
   traefik_gateway:

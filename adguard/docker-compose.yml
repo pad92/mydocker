@@ -1,4 +1,8 @@
-
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
 
   # adguard:
@@ -25,7 +29,6 @@ services:
   #     driver: "json-file"
   #     options:
   #       max-size: "10m"
-        
   adguardhome-sync:
     image: linuxserver/adguardhome-sync:latest
     container_name: adguard-sync
@@ -50,22 +53,4 @@ services:
     restart: unless-stopped
     # networks:
     #   adguardhome:
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-
-# networks:
-#   adguardhome:
-#   adguard:
-#     name: adguard
-#     driver: macvlan
-#     driver_opts:
-#       parent: enp6s0
-
-#     enable_ipv6: true
-#     ipam:
-#       config:
-#         - subnet: "192.168.0.0/24"
-#           ip_range: "192.168.0.98/32"
-#           gateway: "192.168.0.254"
+    logging: *default-logging

@@ -1,5 +1,9 @@
 
-
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   donetick:
     container_name: donetick
@@ -24,12 +28,13 @@ services:
 
       traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
       traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
-      
+
       traefik.http.routers.donetick.rule: "Host(`${TODO_DOMAIN}`)"
       traefik.http.routers.donetick.entrypoints: "websecure"
       traefik.http.routers.donetick.tls: "true"
       traefik.http.routers.donetick.tls.certresolver: "stepca"
 
+    logging: *default-logging
 networks:
   traefik_gateway:
     external: true

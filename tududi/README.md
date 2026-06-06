@@ -9,7 +9,7 @@ Service container running chrisvel/tududi.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/chrisvel/tududi](https://hub.docker.com/r/chrisvel/tududi)
-- **Docker Image Maintainer**: [Official Hub Registry](chrisvel/tududi)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/chrisvel/tududi)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

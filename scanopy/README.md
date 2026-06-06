@@ -21,7 +21,7 @@ Service container running ghcr.io/scanopy/scanopy/daemon.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/ghcr.io/scanopy/scanopy/daemon](https://hub.docker.com/r/ghcr.io/scanopy/scanopy/daemon)
-- **Docker Image Maintainer**: [Official Hub Registry](ghcr.io/scanopy/scanopy/daemon)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/ghcr.io/scanopy/scanopy/daemon)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:
@@ -64,7 +64,7 @@ Service container running ghcr.io/scanopy/scanopy/server.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/ghcr.io/scanopy/scanopy/server](https://hub.docker.com/r/ghcr.io/scanopy/scanopy/server)
-- **Docker Image Maintainer**: [Official Hub Registry](ghcr.io/scanopy/scanopy/server)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/ghcr.io/scanopy/scanopy/server)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

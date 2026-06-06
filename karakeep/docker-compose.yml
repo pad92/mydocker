@@ -1,3 +1,8 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   web:
     image: ghcr.io/karakeep-app/karakeep:${KARAKEEP_VERSION:-release}
@@ -21,6 +26,7 @@ services:
       traefik.http.middlewares.x-powered-by.headers.customresponseheaders.Server: ''
       traefik.http.middlewares.x-powered-by.headers.customresponseheaders.X-Powered-By: ''
 
+    logging: *default-logging
   chrome:
     image: gcr.io/zenika-hub/alpine-chrome:123
     restart: unless-stopped
@@ -34,6 +40,7 @@ services:
     networks:
       - karakeep
 
+    logging: *default-logging
   meilisearch:
     image: getmeili/meilisearch:v1.13.3
     restart: unless-stopped
@@ -44,7 +51,8 @@ services:
       - ${KARAKEEP_MEILISEARCH_DATA_DIR}:/meili_data
     networks:
       - karakeep
-      
+
+    logging: *default-logging
 networks:
   karakeep:
     name: karakeep

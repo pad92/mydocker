@@ -1,3 +1,9 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+x-localtime-volume: &localtime-volume "/etc/localtime:/etc/localtime:ro"
 services:
   gitea:
     image: gitea/gitea:latest
@@ -14,14 +20,14 @@ services:
       - GITEA__packages__ENABLED=${GITEA__packages__ENABLED}
       - GITEA__packages__DOCKER_V2_ENABLED=${GITEA__packages__DOCKER_V2_ENABLED}
       - GITEA__server__ROOT_URL=${GITEA__server__ROOT_URL}
-    restart: always
+    restart: unless-stopped
     networks:
       - gitea
       - traefik_gateway
     volumes:
       - ${GITEA_DATA_DIR}:/data
       - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
+      - *localtime-volume
     ports:
       - "2222:22"
     depends_on:
@@ -37,16 +43,17 @@ services:
 
       traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
       traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
-      
+
       traefik.http.routers.gitea.rule: "Host(`${GITEA_DOMAIN}`)"
       traefik.http.routers.gitea.entrypoints: "websecure"
       traefik.http.routers.gitea.tls: "true"
       traefik.http.routers.gitea.tls.certresolver: "stepca"
 
+    logging: *default-logging
   db:
     image: postgres:15
     container_name: gitea_db
-    restart: always
+    restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -56,24 +63,26 @@ services:
     volumes:
       - ${GITEA_DATA_DIR}:/var/lib/postgresql/data
 
+    logging: *default-logging
   runner:
-      image: gitea/act_runner:latest
-      container_name: gitea_runner
-      restart: always
-      depends_on:
-        - gitea
-      networks:
-        - gitea
-      volumes:
-        - ${GITEA_RUNNER_DATA_DIR}:/data
-        - /var/run/docker.sock:/var/run/docker.sock # Permet au runner de lancer des conteneurs Docker
-      environment:
-        - GITEA_INSTANCE_URL=${GITEA_INSTANCE_URL}
+    image: gitea/act_runner:latest
+    container_name: gitea_runner
+    restart: unless-stopped
+    depends_on:
+      - gitea
+    networks:
+      - gitea
+    volumes:
+      - ${GITEA_RUNNER_DATA_DIR}:/data
+      - /var/run/docker.sock:/var/run/docker.sock   # Permet au runner de lancer des conteneurs Docker
+    environment:
+      - GITEA_INSTANCE_URL=${GITEA_INSTANCE_URL}
         # Le token s'obtient dans l'interface Gitea (Admin > Actions > Runners)
-        - GITEA_RUNNER_REGISTRATION_TOKEN=${GITEA_RUNNER_REGISTRATION_TOKEN} 
-        - GITEA_RUNNER_NAME=${GITEA_RUNNER_NAME}
-        - GITEA_RUNNER_LABELS=${GITEA_RUNNER_LABELS}
+      - GITEA_RUNNER_REGISTRATION_TOKEN=${GITEA_RUNNER_REGISTRATION_TOKEN}
+      - GITEA_RUNNER_NAME=${GITEA_RUNNER_NAME}
+      - GITEA_RUNNER_LABELS=${GITEA_RUNNER_LABELS}
 
+    logging: *default-logging
 networks:
   gitea:
     external: false

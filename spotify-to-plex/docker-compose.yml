@@ -1,3 +1,8 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
 services:
   plexist:
     image: gyarbij/plexist:main  # Or: ghcr.io/gyarbij/plexist:latest
@@ -55,7 +60,6 @@ services:
 
     volumes:
       - ${SPOTIFY_TO_PLEX_PLEXIST_DATA_DIR}:/app/data  # For missing tracks, OAuth cache, and keys
-      
     # spotify-to-plex:
     #     container_name: spotify-to-plex
     #     restart: unless-stopped
@@ -74,3 +78,4 @@ services:
     #         - PLEX_APP_ID=eXf+f9ktw3CZ8i45OY468WxriOCtoFxuNPzVeDcAwfw=
     #     network_mode: "host"
     #     image: 'jjdenhertog/spotify-to-plex:latest'
+    logging: *default-logging

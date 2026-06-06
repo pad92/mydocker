@@ -1,3 +1,10 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+x-localtime-volume: &localtime-volume "/etc/localtime:/etc/localtime:ro"
+      # Optionally, also mount docker socket if you want to use the docker containers widget
 services:
   glance:
     container_name: glance
@@ -6,8 +13,7 @@ services:
     volumes:
       - ./config:/app/config
       - ./assets:/app/assets
-      - /etc/localtime:/etc/localtime:ro
-      # Optionally, also mount docker socket if you want to use the docker containers widget
+      - *localtime-volume
       - /var/run/docker.sock:/var/run/docker.sock:ro
     env_file: .env
     networks:
@@ -16,7 +22,7 @@ services:
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.glance.loadbalancer.server.port: 8080
-    
+
       traefik.http.routers.glance_http.rule: "Host(`${TRAEFIK_HOST_LOCAL}`)"
       traefik.http.routers.glance_http.entrypoints: web
       traefik.http.routers.glance_http.middlewares: redirect-https
@@ -29,6 +35,7 @@ services:
       traefik.http.routers.glance.tls: "true"
       traefik.http.routers.glance.tls.certresolver: "stepca"
 
+    logging: *default-logging
 networks:
   traefik_gateway:
     external: true

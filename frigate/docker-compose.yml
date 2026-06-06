@@ -1,3 +1,9 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+x-localtime-volume: &localtime-volume "/etc/localtime:/etc/localtime:ro"
 services:
   frigate:
     container_name: frigate
@@ -7,7 +13,7 @@ services:
     image: ghcr.io/blakeblackshear/frigate:stable
     shm_size: "512mb" # update for your cameras based on calculation above
     volumes:
-      - /etc/localtime:/etc/localtime:ro
+      - *localtime-volume
       - ${FRIGATE_DATA_DIR}:/config
       - ${FRIGATE_DATA_DIR}:/media/frigate
       - type: tmpfs # Optional: 1GB of memory, reduces SSD/SD Card wear
@@ -22,3 +28,4 @@ services:
       - "8555:8555/udp" # WebRTC over udp
     environment:
       FRIGATE_RTSP_PASSWORD: "${FRIGATE_RTSP_PASSWORD}"
+    logging: *default-logging

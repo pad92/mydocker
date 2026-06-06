@@ -9,7 +9,7 @@ Service container running nickfedor/watchtower.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/nickfedor/watchtower](https://hub.docker.com/r/nickfedor/watchtower)
-- **Docker Image Maintainer**: [Official Hub Registry](nickfedor/watchtower)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/nickfedor/watchtower)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:

@@ -1,4 +1,12 @@
----
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+x-common-env: &common-env
+  PGID: ${PGID}
+  PUID: ${PUID}
+  TZ: ${TZ}
 services:
   plex:
     image: linuxserver/plex:latest
@@ -11,13 +19,8 @@ services:
     #       devices:
     #         - capabilities: [gpu]
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-      - VERSION=${VERSION}
-    #   - NVIDIA_VISIBLE_DEVICES=all
-    # devices:
-    #   - "/dev/dri:/dev/dri"
+      <<: *common-env
+      VERSION: ${VERSION}
     privileged: true
     volumes:
       - ${PLEX_DATA_DIR}:/config
@@ -28,13 +31,12 @@ services:
       - /transcode
     restart: unless-stopped
 
+    logging: *default-logging
   tautulli:
     image: linuxserver/tautulli:latest
     container_name: tautulli
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
+      <<: *common-env
     volumes:
       - ${PLEX_TAUTULLI_DATA_DIR}:/config
       - ${PLEX_MEDIA_SERVER_LOGS_DATA_DIR}:/plex_logs:ro
@@ -53,6 +55,7 @@ services:
       homepage.description: Plex stats
       homepage.showStats: true
 
+    logging: *default-logging
 volumes:
   media_nas:
     driver: local

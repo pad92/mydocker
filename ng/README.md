@@ -115,7 +115,7 @@ Service container running linuxserver/prowlarr.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/linuxserver/prowlarr](https://hub.docker.com/r/linuxserver/prowlarr)
-- **Docker Image Maintainer**: [Official Hub Registry](linuxserver/prowlarr)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/linuxserver/prowlarr)
 
 ### Service-Specific Configuration Variables
 Define these environment variables which are unique to this service:
@@ -133,7 +133,7 @@ Service container running recyclarr/recyclarr.
 
 ### External Links
 - **Official Project**: [https://hub.docker.com/r/recyclarr/recyclarr](https://hub.docker.com/r/recyclarr/recyclarr)
-- **Docker Image Maintainer**: [Official Hub Registry](recyclarr/recyclarr)
+- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/recyclarr/recyclarr)
 
 ---
 
