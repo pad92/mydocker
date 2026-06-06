@@ -1,0 +1,91 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+
+services:
+  papermerge:
+    image: papermerge/papermerge:3.0.3
+    container_name: papermerge_web
+    restart: unless-stopped
+    environment:
+      - PAPERMERGE__SECURITY__SECRET_KEY=${PAPERMERGE_SECRET_KEY}
+      - PAPERMERGE__DATABASE__URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@papermerge_db:5432/${POSTGRES_DB}
+      - PAPERMERGE__REDIS__URL=redis://papermerge_redis:6379/0
+      - PAPERMERGE__AUTH__USERNAME=${PAPERMERGE_ADMIN_USER}
+      - PAPERMERGE__AUTH__PASSWORD=${PAPERMERGE_ADMIN_PASSWORD}
+    volumes:
+      - ${PAPERMERGE_MEDIA_DATA_DIR}:/core_app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - papermerge_net
+      - traefik_gateway
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.papermerge.loadbalancer.server.port: "80"
+      traefik.http.routers.papermerge.rule: "Host(`${PAPERMERGE_DOMAIN}`)"
+      traefik.http.routers.papermerge.entrypoints: "web"
+      traefik.http.routers.papermerge.tls: "false"
+    logging: *default-logging
+
+  worker:
+    image: papermerge/papermerge:3.0.3
+    container_name: papermerge_worker
+    command: worker
+    restart: unless-stopped
+    environment:
+      - PAPERMERGE__DATABASE__URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@papermerge_db:5432/${POSTGRES_DB}
+      - PAPERMERGE__REDIS__URL=redis://papermerge_redis:6379/0
+    volumes:
+      - ${PAPERMERGE_MEDIA_DATA_DIR}:/core_app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - papermerge_net
+    logging: *default-logging
+
+  db:
+    image: postgres:17-alpine
+    container_name: papermerge_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ${PAPERMERGE_DB_DATA_DIR}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - papermerge_net
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    container_name: papermerge_redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - papermerge_net
+    logging: *default-logging
+
+networks:
+  papermerge_net:
+  traefik_gateway:
+    external: true

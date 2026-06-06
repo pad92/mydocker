@@ -52,6 +52,7 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 | [**omni-tools**](./omni-tools/README.md) | A collection of handy daily utilities | Omni-Tools |
 | [**openproject**](./openproject/README.md) | Collaborative project management and tracking tool | OpenProject |
 | [**overleaf**](./overleaf/README.md) | Collaborative browser-based LaTeX compiler and editor | Overleaf (ShareLaTeX) |
+| [**papermerge**](./papermerge/README.md) | Open source document management system for digital archives | Papermerge DMS |
 | [**photoprism**](./photoprism/README.md) | AI-powered digital photo aggregation catalog manager | PhotoPrism |
 | [**plex**](./plex/README.md) | Centralized video, TV show, movie, and audio streaming hub server | Plex Media Server |
 | [**scanopy**](./scanopy/README.md) | Document digitization and archiving solution | Scanopy |
