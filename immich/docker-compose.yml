@@ -164,20 +164,20 @@ volumes:
     driver: local
     driver_opts:
       type: nfs
-      o: addr=pads918.home.lan,nolock,soft,ro,vers=4
-      device: :/volume1/photo
+      o: addr=${NFS_SERVER_IP},nolock,soft,ro,vers=4
+      device: :${PHOTO_NAS_PATH}
   photo_nas_pascal:
     driver: local
     driver_opts:
       type: nfs
-      o: addr=pads918.home.lan,nolock,soft,rw,vers=4
-      device: :/volume1/homes/pascal/Photos
+      o: addr=${NFS_SERVER_IP},nolock,soft,rw,vers=4
+      device: :${PHOTO_NAS_PASCAL_PATH}
   photo_nas_nath:
     driver: local
     driver_opts:
       type: nfs
-      o: addr=pads918.home.lan,nolock,soft,rw,vers=4
-      device: :/volume1/homes/nath/Photos
+      o: addr=${NFS_SERVER_IP},nolock,soft,rw,vers=4
+      device: :${PHOTO_NAS_NATH_PATH}
 networks:
   immich:
   traefik_gateway:

@@ -60,5 +60,9 @@ The following variables are defined in `.env.example` but are either global conf
 | :--- | :--- | :--- |
 | `DB_DATA_LOCATION` | Configuration settings value for Db data location. | *None (empty)* |
 | `DB_STORAGE_TYPE` | Configuration settings value for Db storage type. | *None (empty)* |
+| `NFS_SERVER_IP` | Network IP address configuration. | *None (empty)* |
+| `PHOTO_NAS_NATH_PATH` | Persistent host directory path for volume mount: PHOTO_NAS_NATH_PATH. | *None (empty)* |
+| `PHOTO_NAS_PASCAL_PATH` | Persistent host directory path for volume mount: PHOTO_NAS_PASCAL_PATH. | *None (empty)* |
+| `PHOTO_NAS_PATH` | Persistent host directory path for volume mount: PHOTO_NAS_PATH. | *None (empty)* |
 | `POSTGRES_INITDB_ARGS` | Configuration settings value for Postgres initdb args. | *None (empty)* |
 
