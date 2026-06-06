@@ -21,6 +21,7 @@ services:
 
       traefik.http.routers.shaarli-pub.rule: "Host(`${TRAEFIK_HOST_LOCAL}`) || Host(`${TRAEFIK_HOST_PUBLIC}`)"
       traefik.http.routers.shaarli-pub.middlewares: 'x-powered-by'
+      traefik.http.routers.shaarli-pub.entrypoints: web
       traefik.http.middlewares.x-powered-by.headers.customresponseheaders.Server: ''
       traefik.http.middlewares.x-powered-by.headers.customresponseheaders.X-Powered-By: ''
 
