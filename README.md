@@ -21,46 +21,46 @@ Voici la liste complète des stacks Docker Compose gérées dans ce dépôt :
 
 | Stack | Description | Service principal |
 | :--- | :--- | :--- |
-| [**adguard**](./adguard) | Bloqueur de publicités et traqueurs au niveau DNS | AdGuard Home |
-| [**audiomuse_ai**](./audiomuse_ai) | Suite d'outils audio alimentée par l'IA | Audiomuse AI |
-| [**beszel**](./beszel) | Outil léger de monitoring et tableaux de bord de serveurs | Beszel Hub |
-| [**beszel-agent**](./beszel-agent) | Agent de monitoring léger pour Beszel | Beszel Agent |
-| [**bookmarks**](./bookmarks) | Gestionnaire de favoris et partage de liens | Shaarli |
-| [**cloudflared**](./cloudflared) | Connecteur sécurisé pour tunnels Cloudflare | Cloudflare Tunnel |
-| [**code-server**](./code-server) | Environnement VS Code accessible via navigateur | VS Code Server |
-| [**crowdsec**](./crowdsec) | Moteur de détection d'intrusions et pare-feu collaboratif | CrowdSec |
-| [**dockhand**](./dockhand) | Automatisation de la gestion des conteneurs Docker | Dockhand |
-| [**freshrss**](./freshrss) | Agrégateur et lecteur de flux RSS auto-hébergé | FreshRSS |
-| [**frigate**](./frigate) | Système de NVR pour caméras avec détection d'objets par IA | Frigate |
-| [**gitea**](./gitea) | Serveur Git ultra-léger et auto-hébergé | Gitea |
-| [**gitlab**](./gitlab) | Plateforme DevOps complète et gestion de dépôt Git | GitLab |
-| [**gitlab-runner**](./gitlab-runner) | Exécuteur de tâches CI/CD pour GitLab | GitLab Runner |
-| [**glance**](./glance) | Tableau de bord personnel personnalisable | Glance Dashboard |
-| [**grafana**](./grafana) | Plateforme d'analyse et de visualisation de métriques | Grafana |
-| [**homeassistant**](./homeassistant) | Système domotique libre pour contrôler votre maison | Home Assistant |
-| [**immich**](./immich) | Solution d'auto-hébergement haute performance de photos & vidéos | Immich |
-| [**karakeep**](./karakeep) | Gestionnaire de favoris performant avec recherche | Karakeep |
-| [**manyfold**](./manyfold) | Gestionnaire de fichiers 3D pour l'impression 3D | Manyfold |
-| [**minio**](./minio) | Serveur de stockage d'objets compatible Amazon S3 | MinIO |
-| [**netbox**](./netbox) | Outil d'inventaire d'infrastructure réseau et DCIM | NetBox |
-| [**netdata**](./netdata) | Monitoring des performances système en temps réel | Netdata |
-| [**nextcloud**](./nextcloud) | Plateforme collaborative de stockage et partage de fichiers | Nextcloud |
-| [**ng**](./ng) | Suite de serveurs multimédias et de téléchargement | Arr Stack |
-| [**ollama**](./ollama) | Serveur d'inférence local de modèles d'IA (LLM) | Ollama |
-| [**omni-tools**](./omni-tools) | Ensemble de petits utilitaires pratiques du quotidien | Omni-Tools |
-| [**openproject**](./openproject) | Logiciel de gestion de projet collaboratif libre | OpenProject |
-| [**librespeed**](./librespeed) | Testeur de bande passante réseau local privé | LibreSpeed |
-| [**overleaf**](./overleaf) | Éditeur LaTeX collaboratif en ligne auto-hébergé | Overleaf (ShareLaTeX) |
-| [**photoprism**](./photoprism) | Gestionnaire de photos alimenté par l'IA | PhotoPrism |
-| [**plex**](./plex) | Serveur multimédia de diffusion de films et séries | Plex Media Server |
-| [**scanopy**](./scanopy) | Solution de numérisation et archivage de documents | Scanopy |
-| [**spotify-to-plex**](./spotify-to-plex) | Outil de synchronisation de playlists Spotify vers Plex | Spotify to Plex |
-| [**stable-diffusion**](./stable-diffusion) | Générateur d'images par IA | Stable Diffusion WebUI |
-| [**todo**](./todo) | Gestionnaire de tâches et de listes de choses à faire | Donetick |
-| [**trilium**](./trilium) | Base de connaissances hiérarchique personnelle pour notes | Trilium Notes |
-| [**tududi**](./tududi) | Gestionnaire de tâches personnel ultra-simple | Tududi |
-| [**vaultwarden**](./vaultwarden) | Gestionnaire de mots de passe compatible Bitwarden | Vaultwarden |
-| [**watchtower**](./watchtower) | Automatisation des mises à jour des conteneurs Docker | Watchtower |
+| [**adguard**](./adguard/README.md) | Bloqueur de publicités et traqueurs au niveau DNS | AdGuard Home |
+| [**audiomuse_ai**](./audiomuse_ai/README.md) | Suite d'outils audio alimentée par l'IA | Audiomuse AI |
+| [**beszel**](./beszel/README.md) | Outil léger de monitoring et tableaux de bord de serveurs | Beszel Hub |
+| [**beszel-agent**](./beszel-agent/README.md) | Agent de monitoring léger pour Beszel | Beszel Agent |
+| [**bookmarks**](./bookmarks/README.md) | Gestionnaire de favoris et partage de liens | Shaarli |
+| [**cloudflared**](./cloudflared/README.md) | Connecteur sécurisé pour tunnels Cloudflare | Cloudflare Tunnel |
+| [**code-server**](./code-server/README.md) | Environnement VS Code accessible via navigateur | VS Code Server |
+| [**crowdsec**](./crowdsec/README.md) | Moteur de détection d'intrusions et pare-feu collaboratif | CrowdSec |
+| [**dockhand**](./dockhand/README.md) | Automatisation de la gestion des conteneurs Docker | Dockhand |
+| [**freshrss**](./freshrss/README.md) | Agrégateur et lecteur de flux RSS auto-hébergé | FreshRSS |
+| [**frigate**](./frigate/README.md) | Système de NVR pour caméras avec détection d'objets par IA | Frigate |
+| [**gitea**](./gitea/README.md) | Serveur Git ultra-léger et auto-hébergé | Gitea |
+| [**gitlab**](./gitlab/README.md) | Plateforme DevOps complète et gestion de dépôt Git | GitLab |
+| [**gitlab-runner**](./gitlab-runner/README.md) | Exécuteur de tâches CI/CD pour GitLab | GitLab Runner |
+| [**glance**](./glance/README.md) | Tableau de bord personnel personnalisable | Glance Dashboard |
+| [**grafana**](./grafana/README.md) | Plateforme d'analyse et de visualisation de métriques | Grafana |
+| [**homeassistant**](./homeassistant/README.md) | Système domotique libre pour contrôler votre maison | Home Assistant |
+| [**immich**](./immich/README.md) | Solution d'auto-hébergement haute performance de photos & vidéos | Immich |
+| [**karakeep**](./karakeep/README.md) | Gestionnaire de favoris performant avec recherche | Karakeep |
+| [**manyfold**](./manyfold/README.md) | Gestionnaire de fichiers 3D pour l'impression 3D | Manyfold |
+| [**minio**](./minio/README.md) | Serveur de stockage d'objets compatible Amazon S3 | MinIO |
+| [**netbox**](./netbox/README.md) | Outil d'inventaire d'infrastructure réseau et DCIM | NetBox |
+| [**netdata**](./netdata/README.md) | Monitoring des performances système en temps réel | Netdata |
+| [**nextcloud**](./nextcloud/README.md) | Plateforme collaborative de stockage et partage de fichiers | Nextcloud |
+| [**ng**](./ng/README.md) | Suite de serveurs multimédias et de téléchargement | Arr Stack |
+| [**ollama**](./ollama/README.md) | Serveur d'inférence local de modèles d'IA (LLM) | Ollama |
+| [**omni-tools**](./omni-tools/README.md) | Ensemble de petits utilitaires pratiques du quotidien | Omni-Tools |
+| [**openproject**](./openproject/README.md) | Logiciel de gestion de projet collaboratif libre | OpenProject |
+| [**librespeed**](./librespeed/README.md) | Testeur de bande passante réseau local privé | LibreSpeed |
+| [**overleaf**](./overleaf/README.md) | Éditeur LaTeX collaboratif en ligne auto-hébergé | Overleaf (ShareLaTeX) |
+| [**photoprism**](./photoprism/README.md) | Gestionnaire de photos alimenté par l'IA | PhotoPrism |
+| [**plex**](./plex/README.md) | Serveur multimédia de diffusion de films et séries | Plex Media Server |
+| [**scanopy**](./scanopy/README.md) | Solution de numérisation et archivage de documents | Scanopy |
+| [**spotify-to-plex**](./spotify-to-plex/README.md) | Outil de synchronisation de playlists Spotify vers Plex | Spotify to Plex |
+| [**stable-diffusion**](./stable-diffusion/README.md) | Générateur d'images par IA | Stable Diffusion WebUI |
+| [**todo**](./todo/README.md) | Gestionnaire de tâches et de listes de choses à faire | Donetick |
+| [**trilium**](./trilium/README.md) | Base de connaissances hiérarchique personnelle pour notes | Trilium Notes |
+| [**tududi**](./tududi/README.md) | Gestionnaire de tâches personnel ultra-simple | Tududi |
+| [**vaultwarden**](./vaultwarden/README.md) | Gestionnaire de mots de passe compatible Bitwarden | Vaultwarden |
+| [**watchtower**](./watchtower/README.md) | Automatisation des mises à jour des conteneurs Docker | Watchtower |
 
 ---
 
