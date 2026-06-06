@@ -6,7 +6,7 @@ x-default-logging: &default-logging
 
 services:
   papermerge:
-    image: papermerge/papermerge:3.0.3
+    image: papermerge/papermerge:3.5.3
     container_name: papermerge_web
     restart: unless-stopped
     environment:
@@ -35,7 +35,7 @@ services:
     logging: *default-logging
 
   worker:
-    image: papermerge/papermerge:3.0.3
+    image: papermerge/papermerge:3.5.3
     container_name: papermerge_worker
     command: worker
     restart: unless-stopped

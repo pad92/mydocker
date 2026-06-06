@@ -5,11 +5,11 @@ This stack deploys the Papermerge document management system.
 ## Services
 
 ### 1. Web App (`papermerge`)
-- Image: `papermerge/papermerge:3.0.3`
+- Image: `papermerge/papermerge:3.5.3`
 - Role: Main application UI and FastAPI backend.
 
 ### 2. Worker (`worker`)
-- Image: `papermerge/papermerge:3.0.3` (running as `worker`)
+- Image: `papermerge/papermerge:3.5.3` (running as `worker`)
 - Role: Background task queue for CPU-intensive document processing and OCR.
 
 ### 3. Database (`db`)
