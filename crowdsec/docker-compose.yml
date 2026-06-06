@@ -1,0 +1,18 @@
+
+services:
+  crowdsec:
+    image: crowdsecurity/crowdsec
+    container_name: crowdsec
+    environment:
+      PGID: "${PGID}"
+      COLLECTIONS: "${COLLECTIONS}"
+    expose:
+      - "8080"
+    volumes:
+      - ${CROWDSEC_LOG_CROWDSEC_DATA_DIR}:${CROWDSEC_LOG_CROWDSEC_DATA_DIR}:ro
+      - ${CROWDSEC_OPT_CROWDSEC_DB_DATA_DIR}:/var/lib/crowdsec/data
+      - ${CROWDSEC_LOG_AUTH_LOG_DATA_DIR}:${CROWDSEC_LOG_AUTH_LOG_DATA_DIR}:ro
+      - ${CROWDSEC_OPT_CROWDSEC_DATA_DIR}:/etc/crowdsec
+    restart: unless-stopped
+    labels:
+      - traefik.enable=false

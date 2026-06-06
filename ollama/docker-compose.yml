@@ -1,0 +1,59 @@
+services:
+  open-webui:
+    container_name: open-webui
+    image: ghcr.io/open-webui/open-webui:main
+    environment:
+      - MODEL_DOWNLOAD_DIR=${MODEL_DOWNLOAD_DIR}
+      - OLLAMA_API_BASE_URL=${OLLAMA_API_BASE_URL}
+      - OLLAMA_API_URL=${OLLAMA_API_URL}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+    volumes:
+      - ${OLLAMA_OPEN_WEBUI_DATA_DIR}:/data
+      - ${OLLAMA_MODELS_DATA_DIR}:/models
+      - ${OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR}:/app/backend/data
+
+    depends_on:
+      - ollama
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ollama
+      - traefik_gateway
+    restart: unless-stopped
+    labels:
+    - "traefik.enable=true"
+    - "traefik.docker.network=traefik_gateway"
+    - "traefik.http.routers.webui.rule=Host(`${OLLAMA_DOMAIN}`) && PathPrefix(`/`)"
+    - "traefik.http.services.webui.loadbalancer.server.port=8080"
+    
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    runtime: nvidia
+    restart: unless-stopped
+    volumes:
+      - ${OLLAMA_OLLAMA_DATA_DIR}:/root/.ollama
+      - ${OLLAMA_MODELS_DATA_DIR}:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              count: all
+    environment:
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE}
+      - OLLAMA_HOST=${OLLAMA_HOST}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES}
+    ports:
+      - 11434:11434
+    networks:
+      - ollama
+
+networks:
+  traefik_gateway:
+    external: true
+  ollama:
+    driver: bridge

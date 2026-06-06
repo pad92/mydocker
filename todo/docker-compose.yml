@@ -1,0 +1,35 @@
+
+
+services:
+  donetick:
+    container_name: donetick
+    image: donetick/donetick:latest
+    restart: unless-stopped
+    volumes:
+      - ${TODO_DONETICK_DATA_DIR}:/donetick-data
+      - ${TODO_DONETICK_DATA_DIR}:/config
+    networks:
+      - traefik_gateway
+    environment:
+      - DT_ENV=${DT_ENV}
+      - DT_SQLITE_PATH=${DT_SQLITE_PATH}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.donetick.loadbalancer.server.port: "2021"
+
+      traefik.http.routers.donetick_http.rule: "Host(`${TODO_DOMAIN}`)"
+      traefik.http.routers.donetick_http.entrypoints: web
+      traefik.http.routers.donetick_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+      
+      traefik.http.routers.donetick.rule: "Host(`${TODO_DOMAIN}`)"
+      traefik.http.routers.donetick.entrypoints: "websecure"
+      traefik.http.routers.donetick.tls: "true"
+      traefik.http.routers.donetick.tls.certresolver: "stepca"
+
+networks:
+  traefik_gateway:
+    external: true

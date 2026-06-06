@@ -1,0 +1,70 @@
+---
+services:
+  nextcloud:
+    image: lscr.io/linuxserver/nextcloud:latest
+    container_name: nextcloud
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - NEXTCLOUD_ALLOW_INSECURE=${NEXTCLOUD_ALLOW_INSECURE}
+      - DOCKER_MODS=${DOCKER_MODS}
+    volumes:
+      - ${NEXTCLOUD_DATA_DIR}:/config
+      - ${NEXTCLOUD_DATA_DIR}:/data
+      - photo_nas:/mnt/photos:ro
+      - photo_nas_pascal:/mnt/photos_pascal:ro
+      - photo_nas_nath:/mnt/photos_nath:ro
+      - media_nas:/mnt/medias:ro
+      - music_nas:/mnt/music:ro
+    networks:
+      - traefik_gateway
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik_gateway
+      - traefik.http.routers.nextcloud.rule=Host(`${NEXTCLOUD_DOMAIN}`)
+      - traefik.http.services.nextcloud.loadbalancer.server.port=80
+
+volumes:
+  photo_nas:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${NEXTCLOUD_IP},nolock,soft,ro,vers=4
+      device: :/volume1/photo
+  photo_nas_pascal:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${NEXTCLOUD_IP},nolock,soft,rw,vers=4
+      device: :/volume1/homes/pascal/Photos
+  photo_nas_nath:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${NEXTCLOUD_IP},nolock,soft,rw,vers=4
+      device: :/volume1/homes/nath/Photos
+  media_nas:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${NEXTCLOUD_IP},nolock,soft,rw,vers=4
+      device: :/volume1/Medias
+  music_nas:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${NEXTCLOUD_IP},nolock,soft,ro,vers=4
+      device: :/volume1/music
+networks:
+  traefik_gateway:
+    external: true

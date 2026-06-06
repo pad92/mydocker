@@ -1,0 +1,54 @@
+[http]
+  [http.routers]
+    [http.routers.proxmox]
+      rule = "Host(`YOUR_PROXMOX_DOMAIN`)" # ex: proxmox.home.lan
+      entryPoints = ["websecure"]
+      service = "proxmox-svc"
+      [http.routers.proxmox.tls]
+        certResolver = "stepca"
+  
+  [http.services]
+    [http.services.proxmox-svc.loadBalancer]
+      # On lie le service au transport personnalisé ci-dessous
+      serversTransport = "pveTransport"
+      [[http.services.proxmox-svc.loadBalancer.servers]]
+        url = "https://YOUR_PROXMOX_IP:8006" # L'IP locale de votre Proxmox (ex: 192.168.1.100)
+  
+  [http.serversTransports.pveTransport]
+    # Indispensable car Proxmox utilise un certificat auto-signé par défaut
+    insecureSkipVerify = true
+
+
+  [http.middlewares.compression.compress]
+    excludedContentTypes = ["text/event-stream"]
+
+  [http.middlewares.security.headers]
+    browserXssFilter = true
+    contentTypeNosniff = true
+    forceSTSHeader = true
+    frameDeny = true
+    stsIncludeSubdomains = true
+    stsPreload = true
+    stsSeconds = 31536000
+    customFrameOptionsValue = "SAMEORIGIN"
+    referrerPolicy = "same-origin"
+    [http.middlewares.security.headers.customResponseHeaders]
+      X-Robots-Tag = "noindex, nofollow"
+
+  [http.middlewares.authdl.basicAuth]
+    users = ["YOUR_USERNAME:YOUR_APR1_MD5_PASSWORD_HASH"]
+
+# --- Configuration TLS (Certificats) ---
+[tls]
+
+  [tls.options]
+    [tls.options.default] # On définit les options par défaut pour tout le TLS
+      minVersion = "VersionTLS12"
+      cipherSuites = [
+        "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+        "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305",
+        "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305"
+      ]

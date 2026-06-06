@@ -1,0 +1,11 @@
+services:
+  sd-webui:
+    image: goolashe/automatic1111-sd-webui
+    container_name: sd-webui
+    ports:
+      - "7860:7860"
+    volumes:
+      - ${STABLE_DIFFUSION_SD_DATA_DIR}:/stable-diffusion-webui/outputs
+    environment:
+      - CLI_ARGS=${CLI_ARGS}
+    restart: always

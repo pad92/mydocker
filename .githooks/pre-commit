@@ -1,0 +1,8 @@
+#!/bin/bash
+# Pre-commit hook - Blocks validation if secrets/IPs are detected
+
+# Get the root of the git repository
+GIT_DIR=$(git rev-parse --show-toplevel)
+
+# Run the analyzer on indexed (staged) changes
+python3 "$GIT_DIR/.githooks/git-leak-shield.py" --staged

@@ -1,0 +1,32 @@
+services:
+  dockhand:
+    image: fnsys/dockhand:latest
+    container_name: dockhand
+    restart: unless-stopped
+    volumes:
+      - ${DOCKHAND_PORTAINER_DATA_DIR}:/import/portainer:ro
+      - ${DOCKHAND_COMPOSES_DATA_DIR}:/import/mydocker:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKHAND_DATA_DIR}:/app/data
+    networks:
+      - traefik_gateway
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.dockhand.loadbalancer.server.port: "3000"
+
+      traefik.http.routers.dockhand_http.rule: "Host(`${DOCKHAND_DOMAIN}`)"
+      traefik.http.routers.dockhand_http.entrypoints: web
+      traefik.http.routers.dockhand_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+      
+      traefik.http.routers.dockhand.rule: "Host(`${DOCKHAND_DOMAIN}`)"
+      traefik.http.routers.dockhand.entrypoints: "websecure"
+      traefik.http.routers.dockhand.tls: "true"
+      traefik.http.routers.dockhand.tls.certresolver: "stepca"
+
+networks:
+  traefik_gateway:
+    external: true

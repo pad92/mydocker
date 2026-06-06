@@ -1,0 +1,78 @@
+---
+services:
+  plex:
+    image: linuxserver/plex:latest
+    container_name: plex
+    network_mode: host
+    # runtime: nvidia
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: [gpu]
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - VERSION=${VERSION}
+    #   - NVIDIA_VISIBLE_DEVICES=all
+    # devices:
+    #   - "/dev/dri:/dev/dri"
+    privileged: true
+    volumes:
+      - ${PLEX_DATA_DIR}:/config
+      - media_nas:/opt/medias:rw
+      - photo_nas:/opt/photo:ro
+      - music_nas:/opt/music:ro
+    tmpfs:
+      - /transcode
+    restart: unless-stopped
+
+  tautulli:
+    image: linuxserver/tautulli:latest
+    container_name: tautulli
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${PLEX_TAUTULLI_DATA_DIR}:/config
+      - ${PLEX_MEDIA_SERVER_LOGS_DATA_DIR}:/plex_logs:ro
+    networks:
+      - traefik_gateway
+    restart: unless-stopped
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.tautulli.loadbalancer.server.port: "8181"
+      traefik.http.routers.tautulli.rule: "Host(`${PLEX_DOMAIN}`)"
+      homepage.group: Medias
+      homepage.name: Tautulli
+      homepage.icon: tautulli.png
+      homepage.href: http://${PLEX_DOMAIN}/
+      homepage.description: Plex stats
+      homepage.showStats: true
+
+volumes:
+  media_nas:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${PLEX_IP},nolock,soft,rw,vers=4
+      device: :/volume1/Medias
+  music_nas:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${PLEX_IP},nolock,soft,ro,vers=4
+      device: :/volume1/music
+  photo_nas:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${PLEX_IP},nolock,soft,ro,vers=4
+      device: :/volume1/photo
+
+networks:
+  traefik_gateway:
+    external: true

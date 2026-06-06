@@ -1,0 +1,33 @@
+---
+services:
+  code-server:
+    image: lscr.io/linuxserver/code-server:latest
+    container_name: code-server
+    environment:
+      PUID: "${PUID}"
+      PGID: "${PGID}"
+      TZ: "${TZ}"
+      PASSWORD: "${PASSWORD}"
+      SUDO_PASSWORD: "${SUDO_PASSWORD}"
+      PROXY_DOMAIN: "${PROXY_DOMAIN}" #optional
+      DEFAULT_WORKSPACE: "${DEFAULT_WORKSPACE}" #optional
+      DOCKER_MODS: "${DOCKER_MODS}"
+      VSCODE_EXTENSION_IDS: "${VSCODE_EXTENSION_IDS}"
+      EXTENSIONS_GALLERY: "${EXTENSIONS_GALLERY}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${CODE_SERVER_DATA_DIR}:/config
+      - ${CODE_SERVER_RECYCLARR_DATA_DIR}:/home/ng/recyclarr
+    networks:
+      - traefik_gateway
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vscode.rule=Host(`${CODE_SERVER_DOMAIN}`)"
+      - "traefik.http.routers.vscode.service=vscode"
+      - "traefik.http.services.vscode.loadbalancer.server.port=8443"
+      - "traefik.docker.network=traefik_gateway"
+      
+networks:
+  traefik_gateway:
+    external: true

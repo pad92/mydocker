@@ -1,0 +1,81 @@
+services:
+  gitea:
+    image: gitea/gitea:latest
+    container_name: gitea
+    environment:
+      - USER_UID=${USER_UID}
+      - USER_GID=${USER_GID}
+      - GITEA__database__DB_TYPE=${GITEA__database__DB_TYPE}
+      - GITEA__database__HOST=${GITEA__database__HOST}
+      - GITEA__database__NAME=${GITEA__database__NAME}
+      - GITEA__database__USER=${GITEA__database__USER}
+      - GITEA__database__PASSWD=${GITEA_DB_PASSWORD}
+      - GITEA__actions__ENABLED=${GITEA__actions__ENABLED}
+      - GITEA__packages__ENABLED=${GITEA__packages__ENABLED}
+      - GITEA__packages__DOCKER_V2_ENABLED=${GITEA__packages__DOCKER_V2_ENABLED}
+      - GITEA__server__ROOT_URL=${GITEA__server__ROOT_URL}
+    restart: always
+    networks:
+      - gitea
+      - traefik_gateway
+    volumes:
+      - ${GITEA_DATA_DIR}:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "2222:22"
+    depends_on:
+      - db
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.gitea.loadbalancer.server.port: "3000"
+
+      traefik.http.routers.gitea_http.rule: "Host(`${GITEA_DOMAIN}`)"
+      traefik.http.routers.gitea_http.entrypoints: web
+      traefik.http.routers.gitea_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+      
+      traefik.http.routers.gitea.rule: "Host(`${GITEA_DOMAIN}`)"
+      traefik.http.routers.gitea.entrypoints: "websecure"
+      traefik.http.routers.gitea.tls: "true"
+      traefik.http.routers.gitea.tls.certresolver: "stepca"
+
+  db:
+    image: postgres:15
+    container_name: gitea_db
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    networks:
+      - gitea
+    volumes:
+      - ${GITEA_DATA_DIR}:/var/lib/postgresql/data
+
+  runner:
+      image: gitea/act_runner:latest
+      container_name: gitea_runner
+      restart: always
+      depends_on:
+        - gitea
+      networks:
+        - gitea
+      volumes:
+        - ${GITEA_RUNNER_DATA_DIR}:/data
+        - /var/run/docker.sock:/var/run/docker.sock # Permet au runner de lancer des conteneurs Docker
+      environment:
+        - GITEA_INSTANCE_URL=${GITEA_INSTANCE_URL}
+        # Le token s'obtient dans l'interface Gitea (Admin > Actions > Runners)
+        - GITEA_RUNNER_REGISTRATION_TOKEN=${GITEA_RUNNER_REGISTRATION_TOKEN} 
+        - GITEA_RUNNER_NAME=${GITEA_RUNNER_NAME}
+        - GITEA_RUNNER_LABELS=${GITEA_RUNNER_LABELS}
+
+networks:
+  gitea:
+    external: false
+  traefik_gateway:
+    external: true

@@ -1,0 +1,147 @@
+services:
+  # Redis service for RQ (task queue)
+  redis:
+    image: redis:7-alpine
+    container_name: audiomuse-redis
+    networks:
+      - AudioMuse
+    ports:
+      - "${REDIS_PORT:-6379}:6379" # Expose Redis port to the host
+    volumes:
+      - ${AUDIOMUSE_AI_AUDIOMUSE_DATA_DIR}:/data # Persistent storage for Redis data
+    restart: unless-stopped
+
+  # PostgreSQL database service
+  postgres:
+    image: postgres:15-alpine
+    container_name: audiomuse-postgres
+    networks:
+      - AudioMuse
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-audiomuse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-audiomusepassword}
+      POSTGRES_DB: ${POSTGRES_DB:-audiomusedb}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432" # Expose PostgreSQL port to the host
+    volumes:
+      - ${AUDIOMUSE_AI_AUDIOMUSE_POSTGRESQL_DATA_DIR}:/var/lib/postgresql/data # Persistent storage for PostgreSQL data
+    restart: unless-stopped
+
+  # AudioMuse-AI Flask application service
+  audiomuse-ai-flask:
+    image: ghcr.io/neptunehub/audiomuse-ai:latest-nvidia
+    container_name: audiomuse-ai-flask-app
+    ports:
+      - "${FRONTEND_PORT:-8000}:8000" # Map host port 8000 to container port 8000
+    networks:
+      - AudioMuse
+      - traefik_gateway
+    environment:
+      SERVICE_TYPE: "${SERVICE_TYPE}" # Tells the container to run the Flask app
+      TZ: "${TZ:-UTC}"
+      MEDIASERVER_TYPE: "${MEDIASERVER_TYPE}" # Specify the media server type
+      JELLYFIN_USER_ID: "${JELLYFIN_USER_ID}"
+      JELLYFIN_TOKEN: "${JELLYFIN_TOKEN}"
+      JELLYFIN_URL: "${JELLYFIN_URL}"
+      # DATABASE_URL is now constructed by config.py from the following:
+      POSTGRES_USER: ${POSTGRES_USER:-audiomuse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-audiomusepassword}
+      POSTGRES_DB: ${POSTGRES_DB:-audiomusedb}
+      POSTGRES_HOST: "${POSTGRES_HOST}" # Service name of the postgres container
+      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}" # Connects to the 'redis' service
+      AI_MODEL_PROVIDER: "${AI_MODEL_PROVIDER}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      OPENAI_SERVER_URL: "${OPENAI_SERVER_URL}"
+      OPENAI_MODEL_NAME: "${OPENAI_MODEL_NAME}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      MISTRAL_API_KEY: "${MISTRAL_API_KEY}"
+      CLAP_ENABLED: "${CLAP_ENABLED:-true}" # Enable CLAP text search (set to false for slower systems)
+      TEMP_DIR: "${TEMP_DIR}"
+    volumes:
+      - temp-audio-flask:/app/temp_audio # Volume for temporary audio files
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.audiomuse.loadbalancer.server.port: 8000
+    
+      traefik.http.routers.audiomuse_http.rule: "Host(`${AUDIOMUSE_AI_DOMAIN}`)"
+      traefik.http.routers.audiomuse_http.entrypoints: web
+      traefik.http.routers.audiomuse_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.audiomuse.rule: "Host(`${AUDIOMUSE_AI_DOMAIN}`)"
+      traefik.http.routers.audiomuse.entrypoints: "websecure"
+      traefik.http.routers.audiomuse.tls: "true"
+      traefik.http.routers.audiomuse.tls.certresolver: "stepca"
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  # AudioMuse-AI RQ Worker service
+  audiomuse-ai-worker:
+    image: ghcr.io/neptunehub/audiomuse-ai:latest-nvidia
+    container_name: audiomuse-ai-worker-instance
+    environment:
+      SERVICE_TYPE: "${SERVICE_TYPE}" # Tells the container to run the RQ worker
+      TZ: "${TZ:-UTC}"
+      MEDIASERVER_TYPE: "${MEDIASERVER_TYPE}" # Specify the media server type
+      audiomuse_USER: "${AUDIOMUSE_USER}"
+      audiomuse_PASSWORD: "${AUDIOMUSE_PASSWORD}"
+      audiomuse_URL: "${AUDIOMUSE_URL}"
+      # DATABASE_URL is now constructed by config.py from the following:
+      POSTGRES_USER: ${POSTGRES_USER:-audiomuse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-audiomusepassword}
+      POSTGRES_DB: ${POSTGRES_DB:-audiomusedb}
+      POSTGRES_HOST: "${POSTGRES_HOST}" # Service name of the postgres container
+      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}" # Connects to the 'redis' service
+      AI_MODEL_PROVIDER: "${AI_MODEL_PROVIDER}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      OPENAI_SERVER_URL: "${OPENAI_SERVER_URL}"
+      OPENAI_MODEL_NAME: "${OPENAI_MODEL_NAME}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      MISTRAL_API_KEY: "${MISTRAL_API_KEY}"
+      CLAP_ENABLED: "${CLAP_ENABLED:-true}" # Enable CLAP text search (set to false for slower systems)
+      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES}"
+      NVIDIA_DRIVER_CAPABILITIES: "${NVIDIA_DRIVER_CAPABILITIES}"
+      USE_GPU_CLUSTERING: "${USE_GPU_CLUSTERING:-true}"
+      TEMP_DIR: "${TEMP_DIR}"
+    networks:
+      - AudioMuse
+    volumes:
+      - temp-audio-worker:/app/temp_audio # Volume for temporary audio files
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+# Define volumes for persistent data and temporary files
+volumes:
+  redis-data:
+  postgres-data:
+  temp-audio-flask: # Volume for Flask app's temporary audio
+  temp-audio-worker: # Volume for Worker's temporary audio
+
+networks:
+  AudioMuse:
+  traefik_gateway:
+    external: true

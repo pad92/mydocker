@@ -1,0 +1,31 @@
+---
+services:
+  omni-tools:
+    image: iib0011/omni-tools:latest
+    container_name: omni-tools
+    restart: unless-stopped
+    networks:
+      - traefik_gateway
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.omni-tools.loadbalancer.server.port: 80
+
+      traefik.http.routers.omni-tools_http.rule: "Host(`${TRAEFIK_HOST_LOCAL}`)"
+      traefik.http.routers.omni-tools_http.entrypoints: web
+      traefik.http.routers.omni-tools_http.middlewares: redirect-https
+
+      traefik.http.routers.omni-tools_pub.rule: "Host(`${TRAEFIK_HOST_PUBLIC}`)"
+      traefik.http.routers.omni-tools_pub.entrypoints: web
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+      
+      traefik.http.routers.omni-tools.rule: "Host(`${TRAEFIK_HOST_LOCAL}`)"
+      traefik.http.routers.omni-tools.entrypoints: "websecure"
+      traefik.http.routers.omni-tools.tls: "true"
+      traefik.http.routers.omni-tools.tls.certresolver: "stepca"
+
+networks:
+  traefik_gateway:
+    external: true

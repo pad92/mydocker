@@ -1,0 +1,29 @@
+name: openproject
+services:
+    openproject:
+        container_name: openproject
+        image: openproject/openproject:14
+        networks:
+          - traefik_gateway
+        volumes:
+          - /etc/localtime:/etc/localtime:ro
+          - ${OPENPROJECT_PGDATA_DATA_DIR}:/var/openproject/pgdata
+          - ${OPENPROJECT_ASSETS_DATA_DIR}:/var/openproject/assets
+        environment:
+          - OPENPROJECT_SECRET_KEY_BASE=$OPENPROJECT_SECRET_KEY_BASE
+          - OPENPROJECT_HOST__NAME=$OPENPROJECT_HOST__NAME
+          - OPENPROJECT_HTTPS=$OPENPROJECT_HTTPS
+          - OPENPROJECT_DEFAULT__LANGUAGE=$OPENPROJECT_DEFAULT__LANGUAGE
+        logging:
+          driver: "json-file"
+          options:
+            max-size: "10m"
+        labels:
+          traefik.enable: "true"
+          traefik.docker.network: "traefik_gateway"
+          traefik.http.services.openproject.loadbalancer.server.port: "80"
+          traefik.http.routers.openproject-local.rule: "Host(`${OPENPROJECT_HOST__NAME}`)"
+      
+networks:
+  traefik_gateway:
+    external: true

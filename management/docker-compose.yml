@@ -1,0 +1,153 @@
+services:
+  traefik:
+    image: traefik:v3.6
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api=true"
+      - "--certificatesresolvers.stepca.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.stepca.acme.caserver=${ACME_CA_SERVER}"
+    ports:
+      - 80:80
+      - 443:443
+    environment:
+      - LEGO_CA_CERTIFICATES=/etc/ssl/certs/${CA_CERT_NAME}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - ${MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR}/${CA_CERT_NAME}:/etc/ssl/certs/${CA_CERT_NAME}:ro
+      - ./traefik.toml:/etc/traefik/traefik.toml:ro
+      - ./acme:/etc/traefik/acme
+      - ./traefik_dynamic.toml:/etc/traefik/traefik_dynamic.toml:ro
+    networks:
+      traefik_gateway:
+    security_opt:
+      - apparmor=docker-default
+      - no-new-privileges:true
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.traefik.loadbalancer.server.port: "80"
+      traefik.http.routers.traefik.rule: "Host(`${TRAEFIK_HOST_LOCAL}`) && (PathPrefix(`/traefik`) || PathPrefix(`/api`))"
+      traefik.http.routers.traefik.service: "api@internal"
+      traefik.http.routers.traefik.entrypoints: "web"
+      traefik.http.routers.traefik.tls: "false"
+      traefik.http.routers.traefik.middlewares: "traefik_strip"
+      traefik.http.middlewares.traefik_strip.stripprefix.prefixes: "/traefik"
+
+  portainer:
+    container_name: portainer
+    image: portainer/portainer-ee:alpine-sts
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${MANAGEMENT_PORTAINER_DATA_DIR}:/data
+    networks:
+      - traefik_gateway
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      
+      traefik.http.routers.portainer_http.rule: "Host(`${PORTAINER_HOST_LOCAL}`)"
+      traefik.http.routers.portainer_http.entrypoints: web
+      traefik.http.routers.portainer_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.services.portainer.loadbalancer.server.port: "9000"
+      traefik.http.routers.portainer.rule: "Host(`${PORTAINER_HOST_LOCAL}`)"
+      traefik.http.routers.portainer.entrypoints: "websecure"
+      traefik.http.routers.portainer.tls: "true"
+      traefik.http.routers.portainer.tls.certresolver: "stepca"
+
+      traefik.http.middlewares.portainer-stripprefix.stripprefix.prefixes: "/portainer"
+      traefik.http.routers.portainer.middlewares: "portainer-stripprefix@docker"
+
+#  mirror:
+#    image: nginx:stable-alpine-slim
+#    container_name: mirror
+#    restart: unless-stopped
+#    volumes:
+#      - ./90-fancyindex.sh:/docker-entrypoint.d/90-fancyindex.sh:ro
+#      - ./nginx_default.conf:/etc/nginx/conf.d/default.conf:ro
+#      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+#      - /volume1/mirrors:/usr/share/nginx/html:ro
+#    environment:
+#      - TZ="Europe/Paris"
+#    networks:
+#      - traefik_gateway
+#    labels:
+#      traefik.enable: "true"
+#      traefik.docker.network: "traefik_gateway"
+#      traefik.http.services.mirror.loadbalancer.server.port: "80"
+#      traefik.http.routers.mirror.entrypoints: "web"
+#      traefik.http.routers.mirror.tls: "false"
+#      traefik.http.routers.mirror.rule: "Host(`${MIRROR_HOST_LOCAL}`)"
+
+#  homarr:
+#    container_name: homarr
+#    image: ghcr.io/homarr-labs/homarr:latest
+#    restart: unless-stopped
+#    volumes:
+#      - /var/run/docker.sock:/var/run/docker.sock
+#      - /rpool/docker/homarr:/appdata
+#    environment:
+#      - SECRET_ENCRYPTION_KEY=${HOMARR_SECRET_ENCRYPTION_KEY}
+#    networks:
+#      - traefik_gateway
+#    labels:
+#      traefik.enable: "true"
+#      traefik.docker.network: "traefik_gateway"
+#      traefik.http.services.homarr.loadbalancer.server.port: "7575"
+#      traefik.http.routers.homarr.rule: "Host(`${HOMARR_HOST_LOCAL}`)"
+
+#  homepage:
+#    image: ghcr.io/gethomepage/homepage:latest
+#    container_name: homepage
+#    volumes:
+#      - /rpool/docker/homepage:/app/config
+#      - /var/run/docker.sock:/var/run/docker.sock
+#    environment:
+#      HOMEPAGE_ALLOWED_HOSTS: ${HOMEPAGE_HOST_LOCAL}
+#    networks:
+#      - traefik_gateway
+#    restart: unless-stopped
+#    labels:
+#      traefik.enable: "true"
+#      traefik.docker.network: "traefik_gateway"
+#      traefik.http.services.homepage.loadbalancer.server.port: "3000"
+#      traefik.http.routers.homepage.rule: "Host(`${HOMEPAGE_HOST_LOCAL}`)"
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:2
+    container_name: uptime-kuma
+    volumes:
+      - ${MANAGEMENT_UPTIME_KUMA_DATA_DIR}:/app/data
+      - ${MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR}:/app/data/docker-tls:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - traefik_gateway
+    environment:
+      NODE_EXTRA_CA_CERTS: /app/data/docker-tls/${CA_CERT_NAME}
+    restart: unless-stopped
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.uptime.loadbalancer.server.port: "3001"
+      
+      traefik.http.routers.uptime_http.rule: "Host(`${UPTIME_HOST_LOCAL}`)"
+      traefik.http.routers.uptime_http.entrypoints: web
+      traefik.http.routers.uptime_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.uptime.rule: "Host(`${UPTIME_HOST_LOCAL}`)"
+      traefik.http.routers.uptime.entrypoints: "websecure"
+      traefik.http.routers.uptime.tls: "true"
+      traefik.http.routers.uptime.tls.certresolver: "stepca"
+
+networks:
+  traefik_gateway:
+    name: traefik_gateway

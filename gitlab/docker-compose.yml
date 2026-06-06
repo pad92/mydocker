@@ -1,0 +1,33 @@
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: gitlab
+    restart: always
+    hostname: 'git.home.lan'
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        # Add any other gitlab.rb configuration here, each on its own line
+        external_url 'http://git.home.lan'
+    ports:
+      - '${GITLAB_IP_2}:80:80'
+      - '${GITLAB_IP_2}:443:443'
+      - '${GITLAB_IP_2}:22:22'
+    volumes:
+      - '${GITLAB_DATA_DIR}:/etc/gitlab'
+      - '${GITLAB_LOGS_DATA_DIR}:/var/log/gitlab'
+      - '${GITLAB_DATA_DIR}:/var/opt/gitlab'
+    shm_size: '256m'
+    networks:
+      lan:
+        ipv4_address: ${GITLAB_IP_2}
+
+networks:
+  lan:
+    driver: macvlan
+    driver_opts:
+      parent: enp6s0
+    ipam:
+      config:
+        - subnet: "${GITLAB_IP_1}/24"
+          ip_range: "${GITLAB_IP_2}/31"
+          gateway: "${GITLAB_IP_3}"

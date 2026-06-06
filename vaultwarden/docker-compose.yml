@@ -1,0 +1,9 @@
+services:
+  server:
+    restart: always
+    container_name: vaultwarden
+    volumes:
+      - '${VAULTWARDEN_DATA_DIR}:/data/'
+    ports:
+      - '8000:80'
+    image: vaultwarden/server:latest

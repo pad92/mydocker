@@ -1,0 +1,52 @@
+services:
+  netdata:
+    image: netdata/netdata
+    container_name: netdata
+    hostname: chataigne
+    pid: host
+    networks:
+      - traefik_gateway
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    cap_add:
+      - SYS_PTRACE
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - ${DIR_DATAS}/netdata/etc:/etc/netdata
+      - ${DIR_DATAS}/netdata/lib:/var/lib/netdata
+      - ${DIR_DATAS}/netdata/cache:/var/cache/netdata
+      - /:/host/root:ro,rslave
+      - ${NETDATA_ETC_PASSWD_DATA_DIR}:/host${NETDATA_ETC_PASSWD_DATA_DIR}:ro
+      - ${NETDATA_ETC_GROUP_DATA_DIR}:/host${NETDATA_ETC_GROUP_DATA_DIR}:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - ${NETDATA_ETC_OS_RELEASE_DATA_DIR}:/host${NETDATA_ETC_OS_RELEASE_DATA_DIR}:ro
+      - ${NETDATA_VAR_LOG_DATA_DIR}:/host${NETDATA_VAR_LOG_DATA_DIR}:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${NETDATA_RUN_DBUS_DATA_DIR}:${NETDATA_RUN_DBUS_DATA_DIR}:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik_gateway"
+      - "traefik.http.routers.netdata.rule=Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/netdata`)"
+      - "traefik.http.routers.netdata.service=netdata"
+      - "traefik.http.services.netdata.loadbalancer.server.port=19999"
+      - "traefik.http.routers.netdata.middlewares=netdatapathstrip"
+      - "traefik.http.middlewares.netdatapathstrip.stripprefix.prefixes=/netdata"
+
+
+networks:
+  traefik_gateway:
+    external: true

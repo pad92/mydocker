@@ -1,0 +1,73 @@
+services:
+  netbox_postgres:
+    image: postgres:15-alpine
+    container_name: netbox_postgres
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-d", "netbox", "-U", "netbox"]
+      timeout: 45s
+      interval: 10s
+      retries: 10   
+    volumes:
+      - ${NETBOX_DATA_DIR}:/var/lib/postgresql/data
+    networks:
+      - netbox
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+
+  netbox_redis:
+    image: redis:7-alpine
+    user: 1030:100
+    command: redis-server
+    container_name: netbox_redis
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping || exit 1"]
+    restart: unless-stopped
+    networks:
+      - netbox
+    volumes:
+      - ${NETBOX_DATA_DIR}:/data
+      
+  netbox:
+    image: lscr.io/linuxserver/netbox:latest
+    container_name: netbox_server
+    environment:
+      - DOCKER_MODS=${DOCKER_MODS}
+      - INSTALL_PIP_PACKAGES=${INSTALL_PIP_PACKAGES}
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - SUPERUSER_EMAIL=${SUPERUSER_EMAIL}
+      - SUPERUSER_PASSWORD=${SUPERUSER_PASSWORD}
+      - ALLOWED_HOST=${ALLOWED_HOST}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_DB_TASK=${REDIS_DB_TASK}
+      - REDIS_DB_CACHE=${REDIS_DB_CACHE}
+    volumes:
+      - ${NETBOX_DATA_DIR}:/config
+    networks:
+      - netbox
+      - traefik_gateway
+    depends_on:
+      - netbox_postgres
+      - netbox_redis
+    restart: unless-stopped 
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.netbox.rule=Host(`${NETBOX_DOMAIN}`)"
+      - "traefik.http.routers.netbox.service=netbox"
+      - "traefik.http.services.netbox.loadbalancer.server.port=8000"
+      - "traefik.docker.network=traefik_gateway"
+
+networks:
+  netbox:
+  traefik_gateway:
+    external: true

@@ -1,0 +1,85 @@
+services:
+  manyfold:
+    image: ghcr.io/manyfold3d/manyfold:latest
+    container_name: manyfold
+    volumes:
+      # Uncomment to add a filesystem volume for your model library (or multiple if
+      # you want multiple libraries), in the form <local_path>:<container_path>.
+      # The local path could be a folder that already contains models, in which case Manyfold
+      # will scan and import them, or it could be empty.
+      # The container path can be anything; you will need to enter it in the "new library" form.
+      # - /local/path/to/your/models:/models
+      - ${MANYFOLD_MODELS_DATA_DIR}:/models
+    environment:
+      PUID: "${PUID}" # The ID of the user the app will run as
+      PGID: "${PGID}" # The ID of the group the app will run as
+      SECRET_KEY_BASE: "${SECRET_KEY_BASE}"
+      REDIS_URL: "${REDIS_URL}"
+
+      # Database connection details; we recommend using a separate PostgreSQL
+      # server for best performance
+      DATABASE_ADAPTER: "${DATABASE_ADAPTER}"
+      DATABASE_HOST: "${DATABASE_HOST}"
+      DATABASE_PORT: "${DATABASE_PORT}"
+      DATABASE_USER: "${DATABASE_USER}"
+      DATABASE_PASSWORD: "${DATABASE_PASSWORD}"
+      DATABASE_NAME: "${DATABASE_NAME}"
+
+      # "mysql2" is also available, and you can specify all details in a
+      # single DATABASE_URL variable if you prefer:
+      # DATABASE_URL: {adapter}://{user}:{password}@{host}/{name}
+
+      # You can also use the "sqlite3" adapter if you don't want to run a separate
+      # database server. If you do, specify a path to your database file in DATABASE_NAME,
+      # and make sure it's on a persistent volume! Host, user and password aren't required.
+      # DATABASE_URL: sqlite3:/config/manyfold.sqlite3
+
+      # For details of other optional environment variables, including features such
+      # as multiuser mode, visit https://manyfold.app/sysadmin/configuration.html
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - manyfold
+      - traefik_gateway
+    links:
+      - postgres
+      - redis
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.manyfold.loadbalancer.server.port: "3214"
+
+      traefik.http.routers.manyfold_http.rule: "Host(`${MANYFOLD_DOMAIN}`)"
+      traefik.http.routers.manyfold_http.entrypoints: web
+      traefik.http.routers.manyfold_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+      
+      traefik.http.routers.manyfold.rule: "Host(`${MANYFOLD_DOMAIN}`)"
+      traefik.http.routers.manyfold.entrypoints: "websecure"
+      traefik.http.routers.manyfold.tls: "true"
+      traefik.http.routers.manyfold.tls.certresolver: "stepca"
+
+  postgres:
+    image: postgres:15
+    volumes:
+      - ${MANYFOLD_DATA_DIR}:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    restart: on-failure
+    networks:
+      - manyfold
+
+  redis:
+    image: redis:7
+    restart: on-failure
+    networks:
+      - manyfold
+
+networks:
+  manyfold:
+  traefik_gateway:
+    external: true

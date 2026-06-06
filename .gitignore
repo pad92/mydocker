@@ -1,0 +1,16 @@
+
+# Protect credentials: ignore all .env files
+**/.env
+
+# Protect private infrastructure configuration
+management/traefik_dynamic.toml
+
+# Protect local glance assets and configurations
+glance/assets/
+glance/config/
+
+# Python cache files
+**/__pycache__/
+*.py[cod]
+*$py.class
+

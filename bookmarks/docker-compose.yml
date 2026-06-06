@@ -1,0 +1,24 @@
+services:
+  shaarli:
+    container_name: shaarli
+    image: shaarli/shaarli:latest
+    restart: unless-stopped
+    volumes:
+      - ${BOOKMARKS_SHAARLI_CACHE_DATA_DIR}:/var/www/shaarli/cache
+      - ${BOOKMARKS_SHAARLI_DATA_DIR}:/var/www/shaarli/data
+    networks:
+      - traefik_gateway
+
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.shaarli.loadbalancer.server.port: "80"
+
+      traefik.http.routers.shaarli-pub.rule: "Host(`${TRAEFIK_HOST_LOCAL}`) || Host(`${TRAEFIK_HOST_PUBLIC}`)"
+      traefik.http.routers.shaarli-pub.middlewares: 'x-powered-by'
+      traefik.http.middlewares.x-powered-by.headers.customresponseheaders.Server: ''
+      traefik.http.middlewares.x-powered-by.headers.customresponseheaders.X-Powered-By: ''
+
+networks:
+  traefik_gateway:
+    external: true

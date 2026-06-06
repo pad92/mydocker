@@ -1,0 +1,171 @@
+#
+# WARNING: To install Immich, follow our guide: https://immich.app/docs/install/docker-compose
+#
+# Make sure to use the docker-compose.yml of the current release:
+#
+# https://github.com/immich-app/immich/releases/latest/download/docker-compose.yml
+#
+# The compose file on main may not be compatible with the latest release.
+
+name: immich
+
+services:
+  immich-server:
+    container_name: immich_server
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    environment:
+      DB_HOSTNAME: database
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_DATABASE_NAME: ${DB_DATABASE_NAME}
+      REDIS_HOSTNAME: redis
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu
+                - compute
+                - video
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      # Do not edit the next line. If you want to change the media storage location on your system, edit the value of UPLOAD_LOCATION in the stack.env file
+      - ${UPLOAD_LOCATION}:/usr/src/app/upload
+#      - /volume1/photos:/photos:rw
+      - photo_nas:/photos:ro
+      - photo_nas_pascal:/photos_pascal:rw
+      - photo_nas_nath:/photos_nath:rw
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+
+    depends_on:
+      - redis
+      - database
+    restart: always
+    networks:
+      - immich
+      - traefik_gateway
+    healthcheck:
+      disable: false
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.immich.loadbalancer.server.port: 2283
+
+      traefik.http.routers.immich_http.rule: "Host(`${TRAEFIK_HOST_LOCAL}`)"
+      traefik.http.routers.immich_http.entrypoints: web
+      traefik.http.routers.immich_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.immich.rule: "Host(`${TRAEFIK_HOST_LOCAL}`)"
+      traefik.http.routers.immich.entrypoints: "websecure"
+      traefik.http.routers.immich.tls: "true"
+      traefik.http.routers.immich.tls.certresolver: "stepca"
+
+  immich-public-proxy:
+    image: alangrainger/immich-public-proxy:latest
+    container_name: immich-public-proxy
+    restart: always
+    environment:
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL}"
+      IMMICH_URL: "${IMMICH_URL}"
+    healthcheck:
+      test: curl -s http://localhost:3000/share/healthcheck -o /dev/null || exit 1
+      start_period: 10s
+      timeout: 5s
+    networks:
+      - immich
+      - traefik_gateway
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.immich_proxy.loadbalancer.server.port: 3000
+    
+      traefik.http.routers.immich_http_pub.rule: "Host(`${TRAEFIK_HOST_PUBLIC}`)"
+      traefik.http.routers.immich_http_pub.entrypoints: web
+
+
+  immich-machine-learning:
+    container_name: immich_machine_learning
+    # For hardware acceleration, add one of -[armnn, cuda, rocm, openvino, rknn] to the image tag.
+    # Example tag: ${IMMICH_VERSION:-release}-cuda
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}-cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu
+    volumes:
+      - model-cache:/cache
+    networks:
+      - immich
+
+    devices:
+      - /dev/dri:/dev/dri
+    restart: always
+    healthcheck:
+      disable: false
+
+  redis:
+    container_name: immich_redis
+    image: docker.io/valkey/valkey:9@sha256:3eeb09785cd61ec8e3be35f8804c8892080f3ca21934d628abc24ee4ed1698f6
+    networks:
+      - immich
+    healthcheck:
+      test: redis-cli ping || exit 1
+    restart: always
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      
+  database:
+    container_name: immich_postgres
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_DB: ${DB_DATABASE_NAME}
+      POSTGRES_INITDB_ARGS: "${POSTGRES_INITDB_ARGS}"
+      DB_STORAGE_TYPE: "${DB_STORAGE_TYPE}"
+    volumes:
+      # Do not edit the next line. If you want to change the database storage location on your system, edit the value of DB_DATA_LOCATION in the stack.env file
+      - ${DB_DATA_LOCATION}:/var/lib/postgresql/data
+    shm_size: 128mb
+    restart: always
+    networks:
+      - immich
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      
+volumes:
+  model-cache:
+  photo_nas:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=pads918.home.lan,nolock,soft,ro,vers=4
+      device: :/volume1/photo
+  photo_nas_pascal:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=pads918.home.lan,nolock,soft,rw,vers=4
+      device: :/volume1/homes/pascal/Photos
+  photo_nas_nath:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=pads918.home.lan,nolock,soft,rw,vers=4
+      device: :/volume1/homes/nath/Photos
+networks:
+  immich:
+  traefik_gateway:
+    external: true

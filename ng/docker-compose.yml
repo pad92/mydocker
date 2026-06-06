@@ -1,0 +1,328 @@
+
+x-common-env: &common-env
+  PUID: ${PUID}
+  PGID: ${PGID}
+  TZ: ${TZ}
+
+x-localtime-volume: &localtime-volume /etc/localtime:/etc/localtime:ro
+
+x-default-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+
+x-traefik-labels: &traefik-labels
+  traefik.enable: "true"
+  traefik.docker.network: "traefik_gateway"
+
+x-nfs-driver-opts: &nfs-driver-opts
+  type: nfs
+  o: addr=${NFS_SERVER_IP},rw,noatime,proto=tcp,clientaddr=${NFS_CLIENT_IP}
+  
+services:
+  radarr: # Films
+    image: linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      <<: *common-env
+    volumes:
+      - *localtime-volume
+      - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
+      - ${DOCKER_CONFIG_PATH}/radarr:/config
+      - movies:/movies
+      - movies_family:/movies_family
+      - download:/download
+      - ${TORRENTS_PATH}:/torrents
+      - trash:/trash
+      - backups:/config/Backups
+    restart: unless-stopped
+    networks:
+      - traefik_gateway
+      - ng
+    logging: *default-logging
+    labels:
+      <<: *traefik-labels
+      traefik.http.services.radarr.loadbalancer.server.port: "${RADARR_PORT}"
+
+      traefik.http.routers.radarr_http.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/radarr`)"
+      traefik.http.routers.radarr_http.entrypoints: web
+      traefik.http.routers.radarr_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.radarr.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/radarr`)"
+      traefik.http.routers.radarr.entrypoints: "websecure"
+      traefik.http.routers.radarr.tls: "true"
+      traefik.http.routers.radarr.tls.certresolver: "stepca"
+
+  sonarr: # Series
+    container_name: sonarr
+    image: linuxserver/sonarr:latest
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    volumes:
+      - *localtime-volume
+      - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
+      - ${DOCKER_CONFIG_PATH}/sonarr:/config
+      - ${SERIES_LOCAL_PATH}:/tv_local
+      - series:/tv
+      - series_family:/tv_family
+      - download:/my-media/download
+      - ${TORRENTS_PATH}:/torrents
+      - trash:/trash
+      - backups:/config/Backups
+    networks:
+      - traefik_gateway
+      - ng
+    logging: *default-logging
+    labels:
+      <<: *traefik-labels
+      traefik.http.services.sonarr.loadbalancer.server.port: "${SONARR_PORT}"
+            
+      traefik.http.routers.sonarr_http.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/sonarr`)"
+      traefik.http.routers.sonarr_http.entrypoints: web
+      traefik.http.routers.sonarr_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.sonarr.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/sonarr`)"
+      traefik.http.routers.sonarr.entrypoints: "websecure"
+      traefik.http.routers.sonarr.tls: "true"
+      traefik.http.routers.sonarr.tls.certresolver: "stepca"
+
+  bazarr: # sous titres
+    image: linuxserver/bazarr:latest
+    container_name: bazarr
+    environment:
+      <<: *common-env
+    volumes:
+      - *localtime-volume
+      - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
+      - ${DOCKER_CONFIG_PATH}/bazarr:/config
+      - movies:/movies
+      - movies_family:/movies_family
+      - series:/tv
+      - series_family:/tv_family
+      - ${SERIES_LOCAL_PATH}:/tv_local
+      - backups:/config/backup
+    restart: unless-stopped
+    networks:
+      - traefik_gateway
+      - ng
+    logging: *default-logging
+    labels:
+      <<: *traefik-labels
+      traefik.http.services.bazarr.loadbalancer.server.port: "${BAZARR_PORT}"
+      
+      traefik.http.routers.bazarr_http.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/bazarr`)"
+      traefik.http.routers.bazarr_http.entrypoints: web
+      traefik.http.routers.bazarr_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.bazarr.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/bazarr`)"
+      traefik.http.routers.bazarr.entrypoints: "websecure"
+      traefik.http.routers.bazarr.tls: "true"
+      traefik.http.routers.bazarr.tls.certresolver: "stepca"
+
+
+  # lidarr-db:
+  #   image: postgres:14
+  #   container_name: lidarr-db
+  #   environment:
+  #     POSTGRES_PASSWORD: ${LIDAR_POSTGRES_PASSWORD}
+  #     POSTGRES_USER: ${LIDAR_POSTGRES_USER}
+  #     POSTGRES_DB: ${LIDAR_POSTGRES_DB}
+  #   volumes:
+  #     - ${DOCKER_CONFIG_PATH}/lidarr-db:/var/lib/postgresql/data
+  #   networks:
+  #     - ng
+
+  lidarr: # Music
+    container_name: lidarr
+    image: linuxserver/lidarr:latest
+    environment:
+      <<: *common-env
+    volumes:
+      - *localtime-volume
+      - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
+      - ${DOCKER_CONFIG_PATH}/lidarr:/config
+      - music:/music
+      - download:/downloads # Note: Specific container path
+      - ${TORRENTS_PATH}:/torrents
+      - backups:/config/Backups
+    networks:
+      - traefik_gateway
+      - ng
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m" # Note: Specific size retained
+    restart: unless-stopped
+    labels:
+      <<: *traefik-labels
+      traefik.http.services.lidarr.loadbalancer.server.port: "${LIDARR_PORT}"
+      
+      traefik.http.routers.lidarr_http.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/lidarr`)"
+      traefik.http.routers.lidarr_http.entrypoints: web
+      traefik.http.routers.lidarr_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.lidarr.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/lidarr`)"
+      traefik.http.routers.lidarr.entrypoints: "websecure"
+      traefik.http.routers.lidarr.tls: "true"
+      traefik.http.routers.lidarr.tls.certresolver: "stepca"
+
+  sabnzbd: # NZB Download
+    container_name: sabnzbd
+    image: linuxserver/sabnzbd:latest
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    volumes:
+      - *localtime-volume
+      - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
+      - ${DOCKER_CONFIG_PATH}/sabnzbd:/config
+      - ${DOCKER_CONFIG_PATH}/sabnzbd_custom-cont-init.d:/custom-cont-init.d:ro
+      - music:/my-media/Music
+      - movies:/my-media/Movie
+      - series:/my-media/TV
+      - download:/my-media/download
+      - download_incomming:/my-media/incomming
+    networks:
+      - traefik_gateway
+      - ng
+    logging: *default-logging
+    labels:
+      <<: *traefik-labels
+      traefik.http.services.sabnzbd.loadbalancer.server.port: "${SABNZBD_PORT}"
+
+      traefik.http.routers.sabnzbd_http.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/sabnzbd`)"
+      traefik.http.routers.sabnzbd_http.entrypoints: web
+      traefik.http.routers.sabnzbd_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.sabnzbd.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/sabnzbd`)"
+      traefik.http.routers.sabnzbd.entrypoints: "websecure"
+      traefik.http.routers.sabnzbd.tls: "true"
+      traefik.http.routers.sabnzbd.tls.certresolver: "stepca"
+
+  prowlarr: # NZB Proxy
+    image: linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    volumes:
+      - *localtime-volume
+      - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
+      - ${DOCKER_CONFIG_PATH}/prowlarr:/config
+      - backups:/config/Backups
+    networks:
+      - traefik_gateway
+      - ng
+    logging: *default-logging
+    labels:
+      <<: *traefik-labels
+      traefik.http.services.prowlarr.loadbalancer.server.port: "${PROWLARR_PORT}"
+
+      traefik.http.routers.prowlarr_http.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/prowlarr`)"
+      traefik.http.routers.prowlarr_http.entrypoints: web
+      traefik.http.routers.prowlarr_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.prowlarr.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/prowlarr`)"
+      traefik.http.routers.prowlarr.entrypoints: "websecure"
+      traefik.http.routers.prowlarr.tls: "true"
+      traefik.http.routers.prowlarr.tls.certresolver: "stepca"
+
+  recyclarr:
+    image: recyclarr/recyclarr:latest
+    container_name: recyclarr
+    restart: unless-stopped
+    init: true
+    user: ${PUID}:${PGID} # Note: User retained as it's specific
+    networks:
+      - ng # Note: Network retained
+    volumes:
+      - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
+      - ${DOCKER_CONFIG_PATH}/recyclarr:/config # Note: Specific volume retained
+    environment:
+      <<: *common-env
+    logging: *default-logging
+
+  # kometa:
+  #   image: kometateam/kometa:latest
+  #   container_name: kometa
+  #   restart: unless-stopped
+  #   networks:
+  #     - ng # Note: Network retained
+  #   volumes:
+  #     - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
+  #     - ${DOCKER_CONFIG_PATH}/kometa:/config
+  #   environment:
+  #     <<: *common-env
+  #   logging: *default-logging
+
+volumes:
+  download:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${DOWNLOAD_PATH}
+  download_incomming:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${SABNZBD_DOWNLOAD_PATH}
+  movies_family:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${MEDIA_BASE_PATH}/Movies_Family
+  movies:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${MEDIA_BASE_PATH}/Movies
+  series_family:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${MEDIA_BASE_PATH}/Series_Family
+  series:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${MEDIA_BASE_PATH}/Series
+  music:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${MUSIC_PATH}
+  trash:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${MEDIA_BASE_PATH}/#recycle
+  backups:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${BACKUPS_PATH}
+
+networks:
+  traefik_gateway:
+    external: true
+  ng:

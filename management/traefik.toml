@@ -1,0 +1,45 @@
+[global]
+  sendAnonymousUsage = false
+  checkNewVersion = true
+
+[log]
+  level = "INFO"
+
+[api]
+  dashboard = true
+  insecure = false
+
+[providers]
+  [providers.docker]
+    endpoint = "unix:///var/run/docker.sock"
+    exposedByDefault = false
+
+  [providers.file]
+    filename = "/etc/traefik/traefik_dynamic.toml"
+    watch = true
+
+[entryPoints]
+  [entryPoints.web]
+    address = ":80"
+    [entryPoints.web.transport]
+      [entryPoints.web.transport.respondingTimeouts]
+        readTimeout = "600s"
+        idleTimeout = "600s"
+
+  [entryPoints.websecure]
+    address = ":443"
+    [entryPoints.websecure.transport]
+      [entryPoints.websecure.transport.respondingTimeouts]
+        readTimeout = "600s"
+        idleTimeout = "600s"
+
+[accessLog]
+  filePath = "/dev/stdout"
+  format = "json"
+
+
+[certificatesResolvers]
+  [certificatesResolvers.stepca.acme]
+    storage = "/etc/traefik/acme/acme.json"
+    
+    [certificatesResolvers.stepca.acme.tlsChallenge]

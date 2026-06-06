@@ -1,0 +1,76 @@
+services:
+  plexist:
+    image: gyarbij/plexist:main  # Or: ghcr.io/gyarbij/plexist:latest
+    container_name: plexist
+    restart: unless-stopped
+    environment:
+      # === Core Settings ===
+      PLEX_URL: "${PLEX_URL}"
+      PLEX_TOKEN: "${PLEX_TOKEN}"
+      SECONDS_TO_WAIT: "${SECONDS_TO_WAIT}"
+      LOG_LEVEL: "${LOG_LEVEL}"
+      LOG_FORMAT: "${LOG_FORMAT}"
+
+      # === Playlist Options ===
+      WRITE_MISSING_AS_CSV: "${WRITE_MISSING_AS_CSV}"
+      WRITE_MISSING_AS_JSON: "${WRITE_MISSING_AS_JSON}"
+      ADD_PLAYLIST_POSTER: "${ADD_PLAYLIST_POSTER}"
+      ADD_PLAYLIST_DESCRIPTION: "${ADD_PLAYLIST_DESCRIPTION}"
+      APPEND_INSTEAD_OF_SYNC: "${APPEND_INSTEAD_OF_SYNC}"
+      SYNC_LIKED_TRACKS: "${SYNC_LIKED_TRACKS}"
+      SYNC_PAIRS: "${SYNC_PAIRS}" # Multi-service sync (optional)
+
+      # === Performance ===
+      MAX_REQUESTS_PER_SECOND: "${MAX_REQUESTS_PER_SECOND}"
+      MAX_CONCURRENT_REQUESTS: "${MAX_CONCURRENT_REQUESTS}"
+
+      # === Spotify (remove if not used) ===
+      SPOTIFY_CLIENT_ID: "${SPOTIFY_CLIENT_ID}"
+      SPOTIFY_CLIENT_SECRET: "${SPOTIFY_CLIENT_SECRET}"
+      SPOTIFY_USER_ID: "${SPOTIFY_USER_ID}"
+      SPOTIFY_REDIRECT_URI: "${SPOTIFY_REDIRECT_URI}"
+      SPOTIFY_CACHE_PATH: "${SPOTIFY_CACHE_PATH}"
+
+      # === Deezer (remove if not used) ===
+      # DEEZER_USER_ID: your-user-id
+      # DEEZER_PLAYLIST_ID: playlist-id-1 playlist-id-2
+
+      # === Apple Music (remove if not used) ===
+      # APPLE_MUSIC_TEAM_ID: your-team-id
+      # APPLE_MUSIC_KEY_ID: your-key-id
+      # APPLE_MUSIC_PRIVATE_KEY: /app/data/AuthKey.p8
+      # APPLE_MUSIC_USER_TOKEN: your-user-token
+      # APPLE_MUSIC_STOREFRONT: us
+
+      # === Tidal (remove if not used) ===
+      # TIDAL_ACCESS_TOKEN: your-access-token
+      # TIDAL_REFRESH_TOKEN: your-refresh-token
+      # TIDAL_TOKEN_EXPIRY: 2026-12-31T23:59:59
+
+      # === Qobuz (remove if not used) ===
+      # QOBUZ_APP_ID: your-app-id
+      # QOBUZ_APP_SECRET: your-app-secret
+      # QOBUZ_USERNAME: your-email
+      # QOBUZ_PASSWORD: your-password
+
+    volumes:
+      - ${SPOTIFY_TO_PLEX_PLEXIST_DATA_DIR}:/app/data  # For missing tracks, OAuth cache, and keys
+      
+    # spotify-to-plex:
+    #     container_name: spotify-to-plex
+    #     restart: unless-stopped
+    #     volumes:
+    #         - '/volume1/docker/spotify-to-plex:/app/config'
+    #     environment:
+    #         - PORT=9030
+    #         - SPOTIFY_API_CLIENT_ID=PASTE_YOUR_SPOTIFY_CLIENT_ID_HERE
+    #         - SPOTIFY_API_CLIENT_SECRET=PASTE_YOUR_SPOTIFY_CLIENT_SECRET_HERE
+    #         - SPOTIFY_API_REDIRECT_URI=https://[IP_OF_SPOTIFY_TO_PLEX]:9030/api/spotify/token
+    #         - TIDAL_API_CLIENT_ID=PASTE_YOUR_TIDAL_CLIENT_ID_HERE
+    #         - TIDAL_API_CLIENT_SECRET=PASTE_YOUR_TIDAL_CLIENT_SECRET_HERE
+    #         - LIDARR_API_KEY=PASTE_YOUR_LIDARR_API_KEY_HERE
+    #         - SLSKD_API_KEY=PASTE_YOUR_SLSKD_API_KEY_HERE
+    #         - ENCRYPTION_KEY=e279393bfcba956f5f5ba35cd306fe48e6489f6f5ad40ddc277f939dcf37114c
+    #         - PLEX_APP_ID=eXf+f9ktw3CZ8i45OY468WxriOCtoFxuNPzVeDcAwfw=
+    #     network_mode: "host"
+    #     image: 'jjdenhertog/spotify-to-plex:latest'
