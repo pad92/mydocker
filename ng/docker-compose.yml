@@ -20,7 +20,8 @@ x-nfs-driver-opts: &nfs-driver-opts
   o: addr=${NFS_SERVER_IP},rw,noatime,proto=tcp,clientaddr=${NFS_CLIENT_IP}
 
 services:
-  radarr: # Films
+  radarr:
+    # Films
     image: linuxserver/radarr:latest
     container_name: radarr
     environment:
@@ -56,7 +57,8 @@ services:
       traefik.http.routers.radarr.tls: "true"
       traefik.http.routers.radarr.tls.certresolver: "stepca"
 
-  sonarr: # Series
+  sonarr:
+    # Series
     container_name: sonarr
     image: linuxserver/sonarr:latest
     restart: unless-stopped
@@ -92,7 +94,8 @@ services:
       traefik.http.routers.sonarr.tls: "true"
       traefik.http.routers.sonarr.tls.certresolver: "stepca"
 
-  bazarr: # sous titres
+  bazarr:
+    # sous titres
     image: linuxserver/bazarr:latest
     container_name: bazarr
     environment:
@@ -127,20 +130,8 @@ services:
       traefik.http.routers.bazarr.tls: "true"
       traefik.http.routers.bazarr.tls.certresolver: "stepca"
 
-
-  # lidarr-db:
-  #   image: postgres:14
-  #   container_name: lidarr-db
-  #   environment:
-  #     POSTGRES_PASSWORD: ${LIDAR_POSTGRES_PASSWORD}
-  #     POSTGRES_USER: ${LIDAR_POSTGRES_USER}
-  #     POSTGRES_DB: ${LIDAR_POSTGRES_DB}
-  #   volumes:
-  #     - ${DOCKER_CONFIG_PATH}/lidarr-db:/var/lib/postgresql/data
-  #   networks:
-  #     - ng
-
-  lidarr: # Music
+  lidarr:
+    # Music
     container_name: lidarr
     image: linuxserver/lidarr:latest
     environment:
@@ -173,7 +164,8 @@ services:
       traefik.http.routers.lidarr.tls: "true"
       traefik.http.routers.lidarr.tls.certresolver: "stepca"
 
-  sabnzbd: # NZB Download
+  sabnzbd:
+    # NZB Download
     container_name: sabnzbd
     image: linuxserver/sabnzbd:latest
     restart: unless-stopped
@@ -209,7 +201,8 @@ services:
       traefik.http.routers.sabnzbd.tls: "true"
       traefik.http.routers.sabnzbd.tls.certresolver: "stepca"
 
-  prowlarr: # NZB Proxy
+  prowlarr:
+    # NZB Proxy
     image: linuxserver/prowlarr:latest
     container_name: prowlarr
     restart: unless-stopped
@@ -254,19 +247,6 @@ services:
     environment:
       <<: *common-env
     logging: *default-logging
-
-  # kometa:
-  #   image: kometateam/kometa:latest
-  #   container_name: kometa
-  #   restart: unless-stopped
-  #   networks:
-  #     - ng # Note: Network retained
-  #   volumes:
-  #     - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
-  #     - ${DOCKER_CONFIG_PATH}/kometa:/config
-  #   environment:
-  #     <<: *common-env
-  #   logging: *default-logging
 
 volumes:
   download:
