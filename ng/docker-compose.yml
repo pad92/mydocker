@@ -258,7 +258,6 @@ services:
       - *localtime-volume
       - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
       - ${DOCKER_CONFIG_PATH}/h5ai/cache:/usr/share/h5ai/_h5ai/public/cache
-      - download:/share/download:ro
       - movies:/share/movies:ro
       - series:/share/series:ro
       - music:/share/music:ro
