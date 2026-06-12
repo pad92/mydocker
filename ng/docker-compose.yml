@@ -248,6 +248,39 @@ services:
       <<: *common-env
     logging: *default-logging
 
+  h5ai:
+    image: pad92/docker-h5ai:latest
+    container_name: h5ai
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    volumes:
+      - *localtime-volume
+      - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
+      - ${DOCKER_CONFIG_PATH}/h5ai/cache:/usr/share/h5ai/_h5ai/public/cache
+      - download:/share/download:ro
+      - movies:/share/movies:ro
+      - series:/share/series:ro
+      - music:/share/music:ro
+    networks:
+      - traefik_gateway
+    logging: *default-logging
+    labels:
+      <<: *traefik-labels
+      traefik.http.services.h5ai.loadbalancer.server.port: "80"
+
+      traefik.http.routers.h5ai_http.rule: "Host(`${TRAEFIK_FQDN}`)"
+      traefik.http.routers.h5ai_http.entrypoints: web
+      traefik.http.routers.h5ai_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.h5ai.rule: "Host(`${TRAEFIK_FQDN}`)"
+      traefik.http.routers.h5ai.entrypoints: "websecure"
+      traefik.http.routers.h5ai.tls: "true"
+      traefik.http.routers.h5ai.tls.certresolver: "stepca"
+
 volumes:
   download:
     driver: local
