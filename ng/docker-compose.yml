@@ -260,7 +260,7 @@ services:
       - ${DOCKER_CONFIG_PATH}/h5ai/cache:/usr/share/h5ai/_h5ai/public/cache
       - movies:/share/movies:ro
       - series:/share/series:ro
-      - music:/share/music:ro
+      - music_library:/share/music:ro
     networks:
       - traefik_gateway
     logging: *default-logging
