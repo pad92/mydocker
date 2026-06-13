@@ -22,7 +22,7 @@ x-nfs-driver-opts: &nfs-driver-opts
 services:
   radarr:
     # Films
-    image: linuxserver/radarr:devel
+    image: linuxserver/radarr:latest
     container_name: radarr
     environment:
       <<: *common-env
@@ -284,7 +284,7 @@ services:
     logging: *default-logging
 
   h5ai:
-    image: pad92/docker-h5ai:latest
+    image: pad92/docker-h5ai:devel
     container_name: h5ai
     restart: unless-stopped
     environment:
