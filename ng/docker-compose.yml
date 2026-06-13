@@ -40,6 +40,11 @@ services:
     networks:
       - traefik_gateway
       - ng
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
     logging: *default-logging
     labels:
       <<: *traefik-labels
@@ -78,6 +83,11 @@ services:
     networks:
       - traefik_gateway
       - ng
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
     logging: *default-logging
     labels:
       <<: *traefik-labels
@@ -114,6 +124,11 @@ services:
     networks:
       - traefik_gateway
       - ng
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
     logging: *default-logging
     labels:
       <<: *traefik-labels
@@ -147,6 +162,11 @@ services:
     networks:
       - traefik_gateway
       - ng
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 4G
     logging: *default-logging
     restart: unless-stopped
     labels:
@@ -184,6 +204,11 @@ services:
     networks:
       - traefik_gateway
       - ng
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
     logging: *default-logging
     labels:
       <<: *traefik-labels
@@ -216,6 +241,11 @@ services:
     networks:
       - traefik_gateway
       - ng
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
     logging: *default-logging
     labels:
       <<: *traefik-labels
@@ -246,6 +276,11 @@ services:
       - ${DOCKER_CONFIG_PATH}/recyclarr:/config # Note: Specific volume retained
     environment:
       <<: *common-env
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
     logging: *default-logging
 
   h5ai:
@@ -271,9 +306,6 @@ services:
         limits:
           cpus: '1.0'
           memory: 1G
-        reservations:
-          cpus: '0.25'
-          memory: 256M
     logging: *default-logging
     labels:
       <<: *traefik-labels

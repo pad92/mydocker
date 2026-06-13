@@ -1,5 +1,31 @@
 # Ng Stack
 
+This stack deploys the media management and download suite services.
+
+## Stack Resource Allocations
+
+To ensure system stability and host resource protection, resource limits are configured for all services in this stack.
+
+### Global Resource Footprint
+
+*   **Total CPU Limits**: `8.0 Cores` (Maximum capacity across all services)
+*   **Total Memory Limits**: `14.75 GB` (Maximum capacity across all services)
+
+### Service-Specific Allocation Table
+
+| Service | CPU Limit | Memory Limit |
+| :--- | :---: | :---: |
+| `radarr` | `1.0` | `2 GB` |
+| `sonarr` | `1.0` | `2 GB` |
+| `bazarr` | `0.5` | `512 MB` |
+| `lidarr` | `1.0` | `4 GB` |
+| `sabnzbd` | `2.0` | `4 GB` |
+| `prowlarr` | `1.0` | `1 GB` |
+| `recyclarr` | `0.5` | `256 MB` |
+| `h5ai` | `1.0` | `1 GB` |
+
+---
+
 This stack deploys the following services:
 
 ## Common Configuration Variables
