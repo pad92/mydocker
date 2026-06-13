@@ -22,7 +22,7 @@ x-nfs-driver-opts: &nfs-driver-opts
 services:
   radarr:
     # Films
-    image: linuxserver/radarr:latest
+    image: linuxserver/radarr:devel
     container_name: radarr
     environment:
       <<: *common-env
