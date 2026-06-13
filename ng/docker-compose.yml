@@ -263,7 +263,7 @@ services:
       - series:/share/series:ro
       - series_family:/share/series_family:ro
       - music_library:/share/music:ro
-      - photos:/share/photos:ro
+      - ${PHOTOS_PATH}:/share/photos:ro
     networks:
       - traefik_gateway
     deploy:
@@ -333,11 +333,6 @@ volumes:
     driver_opts:
       <<: *nfs-driver-opts
       device: :${MUSIC_LIBRARY_PATH}
-  photos:
-    driver: local
-    driver_opts:
-      <<: *nfs-driver-opts
-      device: :${PHOTOS_PATH}
   trash:
     driver: local
     driver_opts:
