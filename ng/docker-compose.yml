@@ -265,6 +265,14 @@ services:
       - music_library:/share/music:ro
     networks:
       - traefik_gateway
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     logging: *default-logging
     labels:
       <<: *traefik-labels
