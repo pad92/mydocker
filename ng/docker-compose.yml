@@ -284,7 +284,7 @@ services:
     logging: *default-logging
 
   h5ai:
-    image: pad92/docker-h5ai:devel
+    image: pad92/docker-h5ai:latest
     container_name: h5ai
     restart: unless-stopped
     environment:
