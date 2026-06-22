@@ -2,14 +2,11 @@
 """
 Portainer Stack Exporter
 ========================
-This script exports all docker-compose stacks from a Portainer instance
+Exports all docker-compose stacks from a Portainer instance
 into a structured Git-ready directory layout:
-  nomstack/docker-compose.yml
-  nomstack/.env
-  nomstack/.env.example
-
-It uses Python's standard library (no external dependencies required)
-and supports both Portainer API keys and Username/Password auth.
+  stack_name/docker-compose.yml
+  stack_name/.env
+  stack_name/.env.example
 """
 
 import argparse
@@ -23,9 +20,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+HTTP_TIMEOUT = 30
+SECRET_PATTERN = re.compile(r"password|secret|token|key|api", re.IGNORECASE)
+SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9_\-]")
+MULTI_UNDERSCORE_RE = re.compile(r"_+")
+PORTAINER_IMPORT_RE = re.compile(
+    r"\n*# Imported from Portainer on \d{4}-\d{2}-\d{2}.*?(?=\n[^#\n]|\Z)",
+    re.DOTALL,
+)
+
 
 def parse_arguments():
-    """Parses command-line arguments for the script."""
     parser = argparse.ArgumentParser(
         description="Export Portainer docker-compose stacks with environment variables."
     )
@@ -66,49 +71,26 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def get_ssl_context(insecure):
-    """Creates SSL context based on verification preference."""
-    if insecure:
-        # Create unverified context to bypass self-signed certificate warnings
-        ctx = ssl._create_unverified_context()
-        return ctx
-    return ssl.create_default_context()
-
-
-def sanitize_filename(name):
-    """Sanitizes the stack name to be safe for directory creation across all OS platforms."""
-    # Keep only alphanumeric characters, dashes, and underscores
-    sanitized = re.sub(r"[^a-zA-Z0-9_\-]", "_", name)
-    # Avoid double underscores or leading/trailing underscores/dashes
-    sanitized = re.sub(r"_+", "_", sanitized)
-    return sanitized.strip("_").lower()
-
-
 def make_request(url, headers=None, data=None, method="GET", context=None):
-    """Performs HTTP requests and handles errors gracefully."""
     if headers is None:
         headers = {}
-
     headers.setdefault("Content-Type", "application/json")
     headers.setdefault("User-Agent", "PortainerStackExporter/1.0")
 
-    req_data = None
-    if data is not None:
-        req_data = json.dumps(data).encode("utf-8")
-
-    req = urllib.request.Request(url, data=req_data, headers=headers, method=method)
-
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(data).encode("utf-8") if data is not None else None,
+        headers=headers,
+        method=method,
+    )
     try:
-        with urllib.request.urlopen(req, context=context) as response:
-            res_content = response.read().decode("utf-8")
-            if not res_content:
-                return {}
-            return json.loads(res_content)
+        with urllib.request.urlopen(req, context=context, timeout=HTTP_TIMEOUT) as resp:
+            body = resp.read().decode("utf-8")
+            return json.loads(body) if body else {}
     except urllib.error.HTTPError as e:
         sys.stderr.write(f"HTTP Error {e.code}: {e.reason}\n")
         try:
-            error_body = e.read().decode("utf-8")
-            sys.stderr.write(f"Server response: {error_body}\n")
+            sys.stderr.write(f"Server response: {e.read().decode('utf-8')}\n")
         except Exception:
             pass
         raise
@@ -118,155 +100,135 @@ def make_request(url, headers=None, data=None, method="GET", context=None):
 
 
 def authenticate(base_url, username, password, context):
-    """Authenticates using username/password and returns a JWT token."""
     print("No API Key provided. Attempting Username/Password authentication...")
-    auth_url = f"{base_url.rstrip('/')}/api/auth"
-    payload = {"username": username, "password": password}
-
-    res = make_request(auth_url, data=payload, method="POST", context=context)
+    url = f"{base_url.rstrip('/')}/api/auth"
+    res = make_request(url, data={"username": username, "password": password}, method="POST", context=context)
     jwt = res.get("jwt")
     if not jwt:
         raise ValueError("Failed to retrieve JWT token from authentication response")
     return jwt
 
 
-def fetch_stacks(base_url, headers, context):
-    """Fetches list of all stacks from Portainer."""
-    print("Fetching stacks list from Portainer...")
-    stacks_url = f"{base_url.rstrip('/')}/api/stacks"
-    # Portainer stacks API returns a list of stack records
-    return make_request(stacks_url, headers=headers, context=context)
+def sanitize_filename(name):
+    sanitized = SAFE_NAME_RE.sub("_", name)
+    sanitized = MULTI_UNDERSCORE_RE.sub("_", sanitized).strip("_").lower()
+    if not sanitized:
+        raise ValueError(f"Stack name '{name}' produces an empty directory name after sanitization")
+    return sanitized
 
 
-def fetch_stack_file(base_url, headers, stack_id, context):
-    """Retrieves the raw docker-compose file content for a given stack ID."""
-    file_url = f"{base_url.rstrip('/')}/api/stacks/{stack_id}/file"
-    res = make_request(file_url, headers=headers, context=context)
-    return res.get("StackFileContent", "")
+def is_secret_key(name):
+    return bool(SECRET_PATTERN.search(name))
 
 
-def write_stack_files(output_base, stack_name, compose_content, env_variables, only_env=False):
-    """Writes docker-compose and environment files for a single stack."""
+def format_env_lines(env_vars, with_values=True, comment=False):
+    lines = []
+    for item in env_vars:
+        name = item.get("name", "")
+        if not name:
+            continue
+        if with_values:
+            val = item.get("value", "")
+            line = f"{name}={val}"
+        else:
+            line = f"{name}={'CHANGEME' if is_secret_key(name) else ''}"
+        lines.append(f"# {line}" if comment else line)
+    return lines
+
+
+def write_env_files(stack_dir, stack_name, env_vars, current_date):
+    if not env_vars:
+        return False
+
+    sorted_env = sorted(env_vars, key=lambda x: x.get("name", ""))
+    env_path = os.path.join(stack_dir, ".env")
+    example_path = os.path.join(stack_dir, ".env.example")
+
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        content = PORTAINER_IMPORT_RE.sub("", content).rstrip("\n")
+        import_lines = format_env_lines(sorted_env, with_values=True, comment=True)
+        content += f"\n\n# Imported from Portainer on {current_date} (commented because .env already existed):\n"
+        content += "\n".join(import_lines) + "\n"
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(content)
+    else:
+        lines = format_env_lines(sorted_env, with_values=True)
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(f"# Environment configuration for stack: {stack_name}\n")
+            f.write("\n".join(lines) + "\n")
+
+    example_lines = format_env_lines(sorted_env, with_values=False)
+    with open(example_path, "w", encoding="utf-8") as f:
+        f.write(f"# Template configuration for stack: {stack_name} (Fill in values for local deployment)\n")
+        f.write("\n".join(example_lines) + "\n")
+
+    return True
+
+
+def write_stack(output_base, stack_name, compose_content, env_vars, only_env, current_date):
     safe_name = sanitize_filename(stack_name)
     stack_dir = os.path.join(output_base, safe_name)
-
-    # Ensure output directory exists
     os.makedirs(stack_dir, exist_ok=True)
 
-    # 1. Write docker-compose.yml
     if not only_env:
-        compose_path = os.path.join(stack_dir, "docker-compose.yml")
-        with open(compose_path, "w", encoding="utf-8") as f:
+        with open(os.path.join(stack_dir, "docker-compose.yml"), "w", encoding="utf-8") as f:
             f.write(compose_content)
 
-    # 2. Write environment files if they exist
-    if env_variables:
-        env_path = os.path.join(stack_dir, ".env")
-        env_example_path = os.path.join(stack_dir, ".env.example")
+    has_env = write_env_files(stack_dir, stack_name, env_vars, current_date)
 
-        # Sort env variables by name for consistency
-        sorted_env = sorted(env_variables, key=lambda x: x.get("name", ""))
-
-        env_exists = os.path.exists(env_path)
-        from datetime import datetime
-        current_date = datetime.now().strftime("%Y-%m-%d")
-
-        if env_exists:
-            # Read existing content to check if it ends with a newline
-            with open(env_path, "r", encoding="utf-8") as f:
-                existing_content = f.read()
-
-            with open(env_path, "a", encoding="utf-8") as f_env:
-                if existing_content and not existing_content.endswith("\n"):
-                    f_env.write("\n")
-                
-                f_env.write(f"\n# Imported from Portainer on {current_date} (commented because .env already existed):\n")
-                for item in sorted_env:
-                    name = item.get("name", "")
-                    val = item.get("value", "")
-                    if name:
-                        f_env.write(f"# {name}={val} # {current_date}\n")
-
-            # Still overwrite/write .env.example
-            with open(env_example_path, "w", encoding="utf-8") as f_example:
-                f_example.write("# Exported template (Fill in values for local deployment)\n")
-                for item in sorted_env:
-                    name = item.get("name", "")
-                    if name:
-                        f_example.write(f"{name}=\n")
-        else:
-            with open(env_path, "w", encoding="utf-8") as f_env, open(
-                env_example_path, "w", encoding="utf-8"
-            ) as f_example:
-                f_env.write("# Exported from Portainer\n")
-                f_example.write("# Exported template (Fill in values for local deployment)\n")
-
-                for item in sorted_env:
-                    name = item.get("name", "")
-                    val = item.get("value", "")
-                    if name:
-                        # Write real values to .env
-                        f_env.write(f"{name}={val}\n")
-                        # Write placeholder keys to .env.example
-                        f_example.write(f"{name}=\n")
-
-        if only_env:
-            print(f"  -> Exported: {safe_name}/ (.env + .env.example only)")
-        else:
-            print(f"  -> Exported: {safe_name}/ (compose + .env + .env.example)")
+    if only_env:
+        suffix = ".env + .env.example only" if has_env else "no env variables to export"
+        action = "Exported" if has_env else "Skipped"
     else:
-        if only_env:
-            print(f"  -> Skipped: {safe_name}/ (no env variables to export)")
-        else:
-            print(f"  -> Exported: {safe_name}/ (compose only)")
+        suffix = "compose + .env + .env.example" if has_env else "compose only"
+        action = "Exported"
+    print(f"  -> {action}: {safe_name}/ ({suffix})")
 
 
-def write_global_gitignore(output_base):
-    """Generates a top-level .gitignore to prevent accidental commit of credentials in .env."""
-    gitignore_path = os.path.join(output_base, ".gitignore")
-
-    # If gitignore already exists, check if it already ignores .env
-    if os.path.exists(gitignore_path):
-        with open(gitignore_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        if "**/.env" in content or ".env" in content:
-            return
-
-    # Create/append .gitignore to ensure safety
-    with open(gitignore_path, "a", encoding="utf-8") as f:
-        f.write("\n# Protect credentials: ignore all .env files\n")
-        f.write("**/.env\n")
+def ensure_gitignore(output_base):
+    path = os.path.join(output_base, ".gitignore")
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            if "**/.env" in f.read():
+                return
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("\n# Protect credentials: ignore all .env files\n**/.env\n")
     print("\n[Security] Added global .gitignore protecting all subfolder '.env' files.")
+
+
+def build_auth_headers(args, context):
+    if args.api_key:
+        return {"X-API-Key": args.api_key}
+
+    if not args.username:
+        sys.stderr.write("Error: You must provide either an API Key (--token) or a Username (--username).\n")
+        sys.exit(1)
+
+    if args.password:
+        print("WARNING: Password passed via command line is visible in process list and shell history.", file=sys.stderr)
+        print("         Consider omitting --password to use the secure interactive prompt.\n", file=sys.stderr)
+        password = args.password
+    else:
+        password = getpass.getpass("Enter Portainer password: ")
+
+    try:
+        jwt_token = authenticate(args.url, args.username, password, context)
+    except Exception as e:
+        sys.stderr.write(f"Authentication failed: {e}\n")
+        sys.exit(1)
+    return {"Authorization": f"Bearer {jwt_token}"}
 
 
 def main():
     args = parse_arguments()
-    context = get_ssl_context(args.insecure)
-
-    # Initialize headers
-    headers = {}
-
-    # Set up authentication headers
-    if args.api_key:
-        headers["X-API-Key"] = args.api_key
-    elif args.username:
-        password = args.password
-        if not password:
-            password = getpass.getpass("Enter Portainer password: ")
-        try:
-            jwt_token = authenticate(args.url, args.username, password, context)
-            headers["Authorization"] = f"Bearer {jwt_token}"
-        except Exception as e:
-            sys.stderr.write(f"Authentication failed: {e}\n")
-            sys.exit(1)
-    else:
-        sys.stderr.write(
-            "Error: You must provide either an API Key (--token) or a Username (--username).\n"
-        )
-        sys.exit(1)
+    context = ssl._create_unverified_context() if args.insecure else ssl.create_default_context()
+    headers = build_auth_headers(args, context)
+    base_url = args.url.rstrip("/")
 
     try:
-        stacks = fetch_stacks(args.url, headers, context)
+        stacks = make_request(f"{base_url}/api/stacks", headers=headers, context=context)
     except Exception as e:
         sys.stderr.write(f"Error fetching stacks: {e}\n")
         sys.exit(1)
@@ -277,39 +239,41 @@ def main():
 
     print(f"Found {len(stacks)} stacks. Starting export...")
 
-    exported_count = 0
+    from datetime import datetime
+    current_date = datetime.now().strftime("%Y-%m-%d")
+
+    exported = 0
     for idx, stack in enumerate(stacks, 1):
         stack_id = stack.get("Id")
         stack_name = stack.get("Name")
-        env_vars = stack.get("Env", [])
-
-        # Filter out invalid records
         if not stack_name or stack_id is None:
             continue
 
         print(f"[{idx}/{len(stacks)}] Processing stack '{stack_name}' (ID: {stack_id})...")
 
         try:
+            compose_content = ""
             if not args.only_env:
-                compose_content = fetch_stack_file(args.url, headers, stack_id, context)
+                compose_content = make_request(
+                    f"{base_url}/api/stacks/{stack_id}/file",
+                    headers=headers,
+                    context=context,
+                ).get("StackFileContent", "")
                 if not compose_content.strip():
                     print(f"  WARNING: Compose content is empty for '{stack_name}', skipping.")
                     continue
-            else:
-                compose_content = ""
 
-            write_stack_files(args.output, stack_name, compose_content, env_vars, only_env=args.only_env)
-            exported_count += 1
+            write_stack(args.output, stack_name, compose_content, stack.get("Env", []), args.only_env, current_date)
+            exported += 1
         except Exception as e:
             sys.stderr.write(f"  Error exporting stack '{stack_name}': {e}\n")
 
-    # Generate a root gitignore to protect generated environment variables
     try:
-        write_global_gitignore(args.output)
+        ensure_gitignore(args.output)
     except Exception as e:
         sys.stderr.write(f"Could not write .gitignore: {e}\n")
 
-    print(f"\nSuccessfully migrated {exported_count}/{len(stacks)} stacks to '{args.output}'.")
+    print(f"\nSuccessfully migrated {exported}/{len(stacks)} stacks to '{args.output}'.")
 
 
 if __name__ == "__main__":

@@ -115,7 +115,9 @@ def inspect_line(line, filepath, line_num):
         if match:
             # Avoid placeholder values
             val = match.group(2) if len(match.groups()) >= 2 else match.group(0)
-            if not any(ph in val.lower() for ph in ["placeholder", "your_", "insert_", "xxx", "template", "valeur", "value"]):
+            runtime_read = ["getpass", "args.", "os.environ", "os.getenv", "input(", "sys.stdin"]
+            if not any(ph in val.lower() for ph in ["placeholder", "your_", "insert_", "xxx", "template", "valeur", "value"]) \
+               and not any(rt in val for rt in runtime_read):
                 findings.append({
                     "type": "SECRET",
                     "desc": f"{description} (detected value: '{val[:3]}...{val[-3:] if len(val) > 6 else ''}')",
@@ -159,13 +161,15 @@ def inspect_line(line, filepath, line_num):
             "match": ip
         })
 
-    # 4. Internal Domains
-    for domain in INTERNAL_DOMAINS_RE.findall(line):
-        findings.append({
-            "type": "INTERNAL_DOMAIN",
-            "desc": "Internal domain name or network suffix (.lan, .local, etc.)",
-            "match": domain[0] if isinstance(domain, tuple) else domain
-        })
+    # 4. Internal Domains (skip example URLs in help text and comments)
+    is_help_or_comment = re.search(r'(help\s*=|#.*e\.g\.|#.*example|#.*for instance)', line, re.IGNORECASE)
+    if not is_help_or_comment:
+        for domain in INTERNAL_DOMAINS_RE.findall(line):
+            findings.append({
+                "type": "INTERNAL_DOMAIN",
+                "desc": "Internal domain name or network suffix (.lan, .local, etc.)",
+                "match": domain[0] if isinstance(domain, tuple) else domain
+            })
 
     # 5. Hardcoded Volumes and Domains in docker-compose.yml
     is_compose = filepath.endswith("docker-compose.yml") or filepath.endswith("docker-compose.yaml")

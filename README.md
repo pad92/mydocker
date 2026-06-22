@@ -1,6 +1,6 @@
 # Portainer Stacks Migrator to Git
 
-This project contains a self-contained Python script to cleanly export all configuration settings from your **Portainer stacks** (both `docker-compose.yml` files and environment variables) to version control them in a Git repository.
+This project contains self-contained Python scripts to cleanly export and migrate all configuration settings from your **Portainer stacks** (both `docker-compose.yml` files and environment variables) to version control them in a Git repository.
 
 ## Features
 
@@ -12,6 +12,7 @@ This project contains a self-contained Python script to cleanly export all confi
 - 🔑 **Dual Authentication Methods**: Supports Portainer API access tokens (recommended) or classic Username/Password authentication.
 - 🛡️ **Flexible SSL Support**: Option to bypass SSL verification if your Portainer instance uses self-signed certificates.
 - 🗂️ **Clean Structure**: Organizes the export in the format of `stack_name/docker-compose.yml`.
+- 🔄 **Automated Git Migration**: Switches Portainer stacks from "Web Editor" to "Git Repository" mode via the API, with zero data loss.
 
 ---
 
@@ -66,6 +67,15 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 
 ---
 
+## Scripts Overview
+
+| Script | Purpose |
+| :--- | :--- |
+| [`export_portainer.py`](#exporting-stacks) | Export docker-compose files and environment variables from Portainer into local directories |
+| [`migrate_to_git.py`](#automated-migration-to-git-mode) | Switch Portainer stacks from "Web Editor" to "Git Repository" mode via the API |
+
+---
+
 ## Prerequisites
 
 - **Python 3.x** installed on your machine.
@@ -74,9 +84,9 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 
 ---
 
-## Usage
+## Exporting Stacks
 
-Navigate to the directory of the script and run it using one of the following options:
+Use `export_portainer.py` to download all stack configurations from Portainer into local directories:
 
 ### Option A: Authentication via API Key (Recommended & Secure)
 
@@ -105,6 +115,88 @@ The script will prompt you for your password interactively and securely:
   ```bash
   ./export_portainer.py --url "..." --token "..." --output "./stacks-export"
   ```
+
+---
+
+## Automated Migration to Git Mode
+
+Once your stacks are exported and committed to Git, use `migrate_to_git.py` to automatically switch Portainer stacks from "Web Editor" mode to "Git Repository" mode via the API.
+
+> [!IMPORTANT]
+> Only stacks that already have a local directory (with `docker-compose.yml`) in this repository will be migrated. Stacks without a matching folder are skipped.
+
+### Step 1: Preview with Dry Run
+
+Always start with `--dry-run` to see a report of what would happen without making any changes:
+
+```bash
+./migrate_to_git.py \
+  --url "https://portainer.your-domain.com" \
+  --token "ptr_xxx" \
+  --repo-url "https://gitea.your-domain.com/user/stacks.git" \
+  --insecure \
+  --dry-run
+```
+
+The report classifies each Portainer stack into one of four categories:
+
+| Category | Description |
+| :--- | :--- |
+| `[git]` | Already managed via Git — no action needed |
+| `[skip]` | No local directory found — will not be migrated |
+| `[excl]` | Explicitly excluded via `--exclude` |
+| `[migrate]` | Ready to be migrated to Git mode |
+
+### Step 2: Run the Migration
+
+```bash
+./migrate_to_git.py \
+  --url "https://portainer.your-domain.com" \
+  --token "ptr_xxx" \
+  --repo-url "https://gitea.your-domain.com/user/stacks.git" \
+  --insecure
+```
+
+For each stack to migrate, the script will:
+1. **Delete** the existing stack in Portainer (containers stop, but volumes and data are preserved).
+2. **Wait** a few seconds (configurable with `--delay`).
+3. **Recreate** the stack in "Repository" mode, pointing to the Git repository with the original environment variables.
+
+### Migration Options
+
+| Option | Description |
+| :--- | :--- |
+| `--dry-run` | Preview changes without modifying anything |
+| `--exclude stack1 stack2` | Exclude specific stacks from migration |
+| `--only stack1 stack2` | Only migrate the specified stacks |
+| `--repo-ref refs/heads/main` | Git branch reference (default: `refs/heads/main`) |
+| `--repo-username` / `--repo-password` | Git authentication (if the repository is private) |
+| `--repo-insecure` | Skip TLS verification for the Git repository |
+| `--auto-update` | Enable automatic Git polling in Portainer (5 min interval) |
+| `--delay 3` | Seconds to wait between delete and recreate (default: 3) |
+| `-y` | Skip the confirmation prompt |
+
+### Example: Migrate Only Specific Stacks
+
+```bash
+./migrate_to_git.py \
+  --url "https://portainer.local:9443" \
+  --token "ptr_xxx" \
+  --repo-url "https://gitea.local/pascal/mydocker.git" \
+  --only plex immich grafana \
+  --insecure
+```
+
+### Example: Migrate All Except Some Stacks
+
+```bash
+./migrate_to_git.py \
+  --url "https://portainer.local:9443" \
+  --token "ptr_xxx" \
+  --repo-url "https://gitea.local/pascal/mydocker.git" \
+  --exclude management cloudflared \
+  --insecure
+```
 
 ---
 
@@ -156,7 +248,15 @@ Here is the complete method to version control your configurations and transitio
 
 ---
 
-### Step 1: Initialize and Push the Git Repository
+### Step 1: Export Stacks from Portainer
+
+Use `export_portainer.py` to download all stack configurations:
+
+```bash
+./export_portainer.py --url "https://portainer.local:9443" --token "ptr_xxx" --insecure
+```
+
+### Step 2: Initialize and Push the Git Repository
 
 Thanks to the root `.gitignore` file, your real environment variables (`.env`) will never be pushed to Git. Only your deployment files and their templates (`.env.example`) will be versioned.
 
@@ -178,7 +278,7 @@ git push -u origin main
 
 ---
 
-### Step 2: Understand Data Persistence
+### Step 3: Understand Data Persistence
 
 > [!NOTE]
 > In Docker, databases and configuration files are stored in **volumes** or **local folders (bind mounts)**.
@@ -186,9 +286,33 @@ git push -u origin main
 
 ---
 
-### Step 3: Migrate an Existing Stack to Git Mode
+### Step 4: Migrate Stacks to Git Mode
 
-To convert a stack from "Web Editor" mode to "Git Repository" mode without losing configurations:
+#### Option A: Automated Migration (Recommended)
+
+Use `migrate_to_git.py` to migrate all eligible stacks in one command:
+
+```bash
+# Preview first
+./migrate_to_git.py \
+  --url "https://portainer.local:9443" \
+  --token "ptr_xxx" \
+  --repo-url "https://gitea.home.lan/pascal/stacks.git" \
+  --insecure --dry-run
+
+# Then migrate
+./migrate_to_git.py \
+  --url "https://portainer.local:9443" \
+  --token "ptr_xxx" \
+  --repo-url "https://gitea.home.lan/pascal/stacks.git" \
+  --insecure
+```
+
+See [Automated Migration to Git Mode](#automated-migration-to-git-mode) for all available options.
+
+#### Option B: Manual Migration (Per Stack)
+
+To convert a single stack from "Web Editor" mode to "Git Repository" mode manually:
 
 1. **Copy the environment variables**:
    - Open the local folder of the exported stack (e.g., `./plex/`).
