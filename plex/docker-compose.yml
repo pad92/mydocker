@@ -24,6 +24,7 @@ services:
     privileged: true
     volumes:
       - ${PLEX_DATA_DIR}:/config
+      - /volume1/medias:/opt/medias_local:ro
       - media_nas:/opt/medias:rw
       - photo_nas:/opt/photo:ro
       - music_nas:/opt/music:ro

@@ -296,8 +296,10 @@ services:
       - ${DOCKER_CONFIG_PATH}/h5ai/cache:/usr/share/h5ai/_h5ai/public/cache
       - movies:/share/movies:ro
       - movies_family:/share/movies_family:ro
+      - /volume1/medias/movies:/share/moviez:ro
       - series:/share/series:ro
       - series_family:/share/series_family:ro
+      - /volume1/medias/series:/share/series:ro
       - music_library:/share/music:ro
       - ${PHOTOS_PATH}:/share/photos:ro
     networks:
