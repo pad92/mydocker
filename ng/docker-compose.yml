@@ -299,7 +299,7 @@ services:
       - /volume1/medias/movies:/share/moviez:ro
       - series:/share/series:ro
       - series_family:/share/series_family:ro
-      - /volume1/medias/series:/share/series:ro
+      - /volume1/medias/series:/share/seriez:ro
       - music_library:/share/music:ro
       - ${PHOTOS_PATH}:/share/photos:ro
     networks:

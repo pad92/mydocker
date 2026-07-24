@@ -32,7 +32,49 @@ Define these environment variables which are unique to this service:
 
 ---
 
-## 2. Portainer (`portainer`)
+## 2. CrowdSec (`crowdsec`)
+
+### Role
+Open-source security engine that analyzes Traefik access logs and blocks malicious IPs via the bouncer plugin.
+
+### External Links
+- **Official Project**: [https://www.crowdsec.net](https://www.crowdsec.net)
+- **Traefik Bouncer Plugin**: [https://plugins.traefik.io/plugins/6335346ca4caa9ddeffda116/crowdsec-bouncer-traefik-plugin](https://plugins.traefik.io/plugins/6335346ca4caa9ddeffda116/crowdsec-bouncer-traefik-plugin)
+- **Docker Image**: [crowdsecurity/crowdsec](https://hub.docker.com/r/crowdsecurity/crowdsec)
+
+### Service-Specific Configuration Variables
+
+| Variable Name | Description | Placeholder / Default |
+| :--- | :--- | :--- |
+| `CROWDSEC_BOUNCER_API_KEY` | API key for the Traefik bouncer to query the CrowdSec LAPI. | *None (empty)* |
+| `MANAGEMENT_CROWDSEC_CONFIG_DIR` | Persistent host directory path for CrowdSec configuration. | *None (empty)* |
+| `MANAGEMENT_CROWDSEC_DATA_DIR` | Persistent host directory path for CrowdSec data. | *None (empty)* |
+
+### Obtaining `CROWDSEC_BOUNCER_API_KEY`
+
+**Option A** — Use the `BOUNCER_KEY_traefik` environment variable (already set in `docker-compose.yml`):
+choose a random key, set it in your `.env` file, and CrowdSec will register it automatically on first start.
+
+```bash
+# Generate a random key
+openssl rand -base64 32
+```
+
+**Option B** — Generate the key from a running CrowdSec instance:
+
+```bash
+docker exec crowdsec cscli bouncers add traefik-bouncer
+```
+
+Copy the displayed API key into `CROWDSEC_BOUNCER_API_KEY` in your `.env` file.
+In this case, remove the `BOUNCER_KEY_traefik` environment variable from the `crowdsec` service in `docker-compose.yml` to avoid conflicts.
+
+### Usage
+The middleware `crowdsec@file` can be applied to any Traefik router (file provider or Docker labels) to enforce CrowdSec decisions.
+
+---
+
+## 3. Portainer (`portainer`)
 
 ### Role
 Service container running portainer/portainer-ee.
@@ -51,7 +93,7 @@ Define these environment variables which are unique to this service:
 
 ---
 
-## 3. Uptime Kuma (`uptime-kuma`)
+## 4. Uptime Kuma (`uptime-kuma`)
 
 ### Role
 Self-hosted network host ping monitor and service status monitor.
