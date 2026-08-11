@@ -264,7 +264,7 @@ services:
       traefik.http.routers.prowlarr.tls.certresolver: "stepca"
 
   recyclarr:
-    image: recyclarr/recyclarr:latest
+    image: ghcr.io/recyclarr/recyclarr:8
     container_name: recyclarr
     restart: unless-stopped
     init: true

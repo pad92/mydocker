@@ -155,11 +155,11 @@ Define these environment variables which are unique to this service:
 ## 7. Recyclarr (`recyclarr`)
 
 ### Role
-Service container running recyclarr/recyclarr.
+Service container running ghcr.io/recyclarr/recyclarr:8.
 
 ### External Links
-- **Official Project**: [https://hub.docker.com/r/recyclarr/recyclarr](https://hub.docker.com/r/recyclarr/recyclarr)
-- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/recyclarr/recyclarr)
+- **Official Project**: [https://github.com/recyclarr/recyclarr](https://github.com/recyclarr/recyclarr)
+- **Docker Image Maintainer**: [GitHub Container Registry](https://github.com/recyclarr/recyclarr/pkgs/container/recyclarr)
 
 ---
 
