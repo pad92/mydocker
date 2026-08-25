@@ -8,8 +8,8 @@ To ensure system stability and host resource protection, resource limits are con
 
 ### Global Resource Footprint
 
-*   **Total CPU Limits**: `8.0 Cores` (Maximum capacity across all services)
-*   **Total Memory Limits**: `14.75 GB` (Maximum capacity across all services)
+*   **Total CPU Limits**: `9.0 Cores` (Maximum capacity across all services)
+*   **Total Memory Limits**: `15.75 GB` (Maximum capacity across all services)
 
 ### Service-Specific Allocation Table
 
@@ -23,6 +23,7 @@ To ensure system stability and host resource protection, resource limits are con
 | `prowlarr` | `1.0` | `1 GB` |
 | `recyclarr` | `0.5` | `256 MB` |
 | `h5ai` | `1.0` | `1 GB` |
+| `seerr` | `1.0` | `1 GB` |
 
 ---
 
@@ -160,6 +161,30 @@ Service container running ghcr.io/recyclarr/recyclarr:8.
 ### External Links
 - **Official Project**: [https://github.com/recyclarr/recyclarr](https://github.com/recyclarr/recyclarr)
 - **Docker Image Maintainer**: [GitHub Container Registry](https://github.com/recyclarr/recyclarr/pkgs/container/recyclarr)
+
+---
+
+## 8. Seerr (`seerr`)
+
+### Role
+User-facing request manager for movies and TV shows: end users browse and request content, which is forwarded to Radarr/Sonarr for automatic download. Requires Plex for authentication and library sync. (Project formerly known as Overseerr.)
+
+### External Links
+- **Official Project**: [https://seerr.dev/](https://seerr.dev/)
+- **Docker Image Maintainer**: [seerr-team (GHCR)](https://github.com/orgs/seerr-team/packages/container/package/seerr)
+
+### Service-Specific Configuration Variables
+Define these environment variables which are unique to this service:
+
+| Variable Name | Description | Placeholder / Default |
+| :--- | :--- | :--- |
+| `SEERR_DOMAIN` | Dedicated FQDN routed to Seerr (e.g. `requests.home.lan`). | *None (empty)* |
+| `SEERR_PORT` | Configuration settings value for Seerr port. | `5055` |
+
+### Notes
+- Radarr/Sonarr connections and the Plex link are configured from the Seerr web UI after first boot (no API key variable needed here).
+- Unlike the other services in this stack, the Seerr image runs as a fixed `node` user (UID/GID 1000) — it does not honor `PUID`/`PGID`. `chown 1000:1000` the `${DOCKER_CONFIG_PATH}/seerr` host directory before first start, or the container will fail to write its config.
+- Seerr does not support being served from a subpath (its client-side routing always navigates to root-relative paths, e.g. `/setup` instead of `/seerr/setup`). It is therefore routed on its own dedicated subdomain (`SEERR_DOMAIN`) rather than a `PathPrefix` under `TRAEFIK_FQDN`, consistent with other single-purpose stacks in this repo (e.g. `gitea`, `trilium`). Point `SEERR_DOMAIN` at the host via DNS before deploying.
 
 ---
 

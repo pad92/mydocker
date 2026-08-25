@@ -22,7 +22,7 @@ x-nfs-driver-opts: &nfs-driver-opts
 services:
   radarr:
     # Films
-    image: linuxserver/radarr:latest
+    image: lscr.io/linuxserver/radarr:latest
     container_name: radarr
     environment:
       <<: *common-env
@@ -65,7 +65,7 @@ services:
   sonarr:
     # Series
     container_name: sonarr
-    image: linuxserver/sonarr:latest
+    image: lscr.io/linuxserver/sonarr:latest
     restart: unless-stopped
     environment:
       <<: *common-env
@@ -106,7 +106,7 @@ services:
 
   bazarr:
     # sous titres
-    image: linuxserver/bazarr:latest
+    image: lscr.io/linuxserver/bazarr:latest
     container_name: bazarr
     environment:
       <<: *common-env
@@ -148,7 +148,7 @@ services:
   lidarr:
     # Music
     container_name: lidarr
-    image: linuxserver/lidarr:latest
+    image: lscr.io/linuxserver/lidarr:latest
     environment:
       <<: *common-env
     volumes:
@@ -187,7 +187,7 @@ services:
   sabnzbd:
     # NZB Download
     container_name: sabnzbd
-    image: linuxserver/sabnzbd:latest
+    image: lscr.io/linuxserver/sabnzbd:latest
     restart: unless-stopped
     environment:
       <<: *common-env
@@ -228,7 +228,7 @@ services:
 
   prowlarr:
     # NZB Proxy
-    image: linuxserver/prowlarr:latest
+    image: lscr.io/linuxserver/prowlarr:latest
     container_name: prowlarr
     restart: unless-stopped
     environment:
@@ -262,6 +262,44 @@ services:
       traefik.http.routers.prowlarr.entrypoints: "websecure"
       traefik.http.routers.prowlarr.tls: "true"
       traefik.http.routers.prowlarr.tls.certresolver: "stepca"
+
+  seerr:
+    # Demandes de films/séries par les utilisateurs (Plex + Radarr/Sonarr)
+    image: ghcr.io/seerr-team/seerr:latest
+    container_name: seerr
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      # Pas de PUID/PGID : l'image tourne en utilisateur fixe "node" (UID 1000).
+      # Le dossier ${DOCKER_CONFIG_PATH}/seerr doit lui appartenir (chown 1000:1000).
+    volumes:
+      - *localtime-volume
+      - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
+      - ${DOCKER_CONFIG_PATH}/seerr:/app/config
+    networks:
+      - traefik_gateway
+      - ng
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+    logging: *default-logging
+    labels:
+      <<: *traefik-labels
+      traefik.http.services.seerr.loadbalancer.server.port: "${SEERR_PORT}"
+
+      traefik.http.routers.seerr_http.rule: "Host(`${SEERR_DOMAIN}`)"
+      traefik.http.routers.seerr_http.entrypoints: web
+      traefik.http.routers.seerr_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.seerr.rule: "Host(`${SEERR_DOMAIN}`)"
+      traefik.http.routers.seerr.entrypoints: "websecure"
+      traefik.http.routers.seerr.tls: "true"
+      traefik.http.routers.seerr.tls.certresolver: "stepca"
 
   recyclarr:
     image: ghcr.io/recyclarr/recyclarr:8
