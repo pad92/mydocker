@@ -40,7 +40,7 @@ Define these environment variables which are unique to this service:
 ## 2. PostgreSQL Database (`postgres`)
 
 ### Role
-Powerful, open-source object-relational SQL database storage server.
+Open-source object-relational SQL database storage server.
 
 ### External Links
 - **Official Project**: [https://www.postgresql.org/](https://www.postgresql.org/)

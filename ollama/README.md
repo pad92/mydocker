@@ -14,7 +14,7 @@ These environment variables are shared and used by multiple services in this sta
 ## 1. Open WebUI (`open-webui`)
 
 ### Role
-Beautiful chat interface client for local Ollama and OpenAI API model endpoints.
+Chat interface client for local Ollama and OpenAI API model endpoints.
 
 ### External Links
 - **Official Project**: [https://github.com/open-webui/open-webui](https://github.com/open-webui/open-webui)

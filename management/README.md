@@ -52,15 +52,15 @@ Open-source security engine that analyzes Traefik access logs and blocks malicio
 
 ### Obtaining `CROWDSEC_BOUNCER_API_KEY`
 
-**Option A** — Use the `BOUNCER_KEY_traefik` environment variable (already set in `docker-compose.yml`):
-choose a random key, set it in your `.env` file, and CrowdSec will register it automatically on first start.
+**Option A**: use the `BOUNCER_KEY_traefik` environment variable (already set in `docker-compose.yml`).
+Choose a random key, set it in your `.env` file, and CrowdSec will register it automatically on first start.
 
 ```bash
 # Generate a random key
 openssl rand -base64 32
 ```
 
-**Option B** — Generate the key from a running CrowdSec instance:
+**Option B**: generate the key from a running CrowdSec instance.
 
 ```bash
 docker exec crowdsec cscli bouncers add traefik-bouncer

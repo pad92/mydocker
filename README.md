@@ -4,15 +4,12 @@ This project contains self-contained Python scripts to cleanly export and migrat
 
 ## Features
 
-- 🚀 **Zero dependencies**: Works with the standard Python 3 library. No need for `pip` or virtual environments.
-- 🔐 **Enhanced Security**:
-  - Generates a `.env` file with the real values of your environment variables.
-  - Generates a `.env.example` template containing only keys (without sensitive values) so you can safely commit it to Git.
-  - Automatically creates a root `.gitignore` file that excludes `.env` files to prevent accidental leaks of passwords or API keys.
-- 🔑 **Dual Authentication Methods**: Supports Portainer API access tokens (recommended) or classic Username/Password authentication.
-- 🛡️ **Flexible SSL Support**: Option to bypass SSL verification if your Portainer instance uses self-signed certificates.
-- 🗂️ **Clean Structure**: Organizes the export in the format of `stack_name/docker-compose.yml`.
-- 🔄 **Automated Git Migration**: Switches Portainer stacks from "Web Editor" to "Git Repository" mode via the API, with zero data loss.
+- No dependencies beyond the standard Python 3 library, so there's no need for `pip` or virtual environments.
+- Security is handled for you: it writes a `.env` file with the real values, a `.env.example` template with only the keys so it's safe to commit, and a root `.gitignore` that excludes `.env` files automatically.
+- Supports both Portainer API access tokens (recommended) and classic username/password authentication.
+- Can skip SSL verification for Portainer instances using self-signed certificates.
+- Exports each stack as `stack_name/docker-compose.yml`.
+- Switches Portainer stacks from "Web Editor" to "Git Repository" mode via the API without losing data.
 
 ---
 
@@ -244,7 +241,7 @@ mydocker/
 
 ## Zero-Downtime Git & Portainer Migration Guide
 
-Here is the complete method to version control your configurations and transition your existing Portainer stacks into Git-managed stacks, **with no data loss and under 10 seconds of downtime**.
+Here is the complete method to version control your configurations and transition your existing Portainer stacks into Git-managed stacks, with no data loss and under 10 seconds of downtime.
 
 ---
 
@@ -334,4 +331,4 @@ To convert a single stack from "Web Editor" mode to "Git Repository" mode manual
      - **Paste** the entire content of the `.env` file copied in step 1.
    - Click **Deploy the stack**.
 
-Docker will recreate the stack in seconds. Your containers will restart identically, connected to their existing volumes, but now linked to your Git for all future updates!
+Docker recreates the stack within seconds. The containers restart identically, connected to their existing volumes, but now linked to your Git repository for future updates.

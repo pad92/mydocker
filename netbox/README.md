@@ -14,7 +14,7 @@ These environment variables are shared and used by multiple services in this sta
 ## 1. PostgreSQL Database (`netbox_postgres`)
 
 ### Role
-Powerful, open-source object-relational SQL database storage server.
+Open-source object-relational SQL database storage server.
 
 ### External Links
 - **Official Project**: [https://www.postgresql.org/](https://www.postgresql.org/)
