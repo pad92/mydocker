@@ -41,7 +41,7 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 | [**librespeed**](./librespeed/README.md) | Self-hosted speed test server | LibreSpeed |
 | [**management**](./management/README.md) | Portainer CE/EE, Traefik routing gateway, and service status monitors stack | Portainer & Traefik |
 | [**manyfold**](./manyfold/README.md) | Multi-user digital asset manager for 3D printing STL and CAD files | Manyfold |
-| [**minio**](./minio/README.md) | High-performance Amazon S3-compatible object storage server | MinIO |
+| [**s3**](./s3/README.md) | High-performance Rust-based S3-compatible object storage server | RustFS |
 | [**netbox**](./netbox/README.md) | Network resource management and infrastructure documentation (IPAM / DCIM) platform | NetBox |
 | [**netdata**](./netdata/README.md) | Real-time system performance monitoring and troubleshooting | Netdata |
 | [**nextcloud**](./nextcloud/README.md) | Safe home storage storage system and document sharing suite | Nextcloud |
