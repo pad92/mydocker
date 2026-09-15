@@ -7,27 +7,33 @@ x-common-env: &common-env
   PGID: ${PGID}
   PUID: ${PUID}
   TZ: ${TZ}
+x-plex-volumes: &plex-volumes
+  - ${PLEX_DATA_DIR}:/config
+  - ${PLEX_LOCAL_MEDIA_DIR}:/opt/medias_local:ro
+  # Séries et films
+  - media_nas:/opt/medias:ro
+  - photo_nas:/opt/photo:ro
+  - music_nas:/opt/music:ro
 services:
   plex:
-    image: linuxserver/plex:latest
+    image: plexinc/pms-docker:latest
     container_name: plex
     network_mode: host
-    # runtime: nvidia
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - capabilities: [gpu]
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
     environment:
-      <<: *common-env
-      VERSION: ${VERSION}
-    privileged: true
-    volumes:
-      - ${PLEX_DATA_DIR}:/config
-      - /volume1/medias:/opt/medias_local:ro
-      - media_nas:/opt/medias:rw
-      - photo_nas:/opt/photo:ro
-      - music_nas:/opt/music:ro
+      PLEX_UID: ${PUID}
+      PLEX_GID: ${PGID}
+      TZ: ${TZ}
+      NVIDIA_VISIBLE_DEVICES: all
+      PLEX_CLAIM: ${PLEX_CLAIM:-}
+    devices:
+      - /dev/dri:/dev/dri
+    volumes: *plex-volumes
     tmpfs:
       - /transcode
     restart: unless-stopped
@@ -49,6 +55,8 @@ services:
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.tautulli.loadbalancer.server.port: "8181"
       traefik.http.routers.tautulli.rule: "Host(`${PLEX_DOMAIN}`)"
+      traefik.http.routers.tautulli.entrypoints: "web"
+      traefik.http.routers.tautulli.tls: "false"
       homepage.group: Medias
       homepage.name: Tautulli
       homepage.icon: tautulli.png
@@ -63,19 +71,19 @@ volumes:
     driver_opts:
       type: nfs
       o: addr=${PLEX_IP},nolock,soft,rw,vers=4
-      device: :/volume1/Medias
+      device: :${PLEX_MEDIA_NFS_PATH}
   music_nas:
     driver: local
     driver_opts:
       type: nfs
       o: addr=${PLEX_IP},nolock,soft,ro,vers=4
-      device: :/volume1/music
+      device: :${PLEX_MUSIC_NFS_PATH}
   photo_nas:
     driver: local
     driver_opts:
       type: nfs
       o: addr=${PLEX_IP},nolock,soft,ro,vers=4
-      device: :/volume1/photo
+      device: :${PLEX_PHOTO_NFS_PATH}
 
 networks:
   traefik_gateway:
