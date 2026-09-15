@@ -5,17 +5,19 @@ x-default-logging: &default-logging
     max-file: '3'
 services:
   s3:
-    container_name: minio
+    container_name: s3
     image: rustfs/rustfs:latest
     restart: unless-stopped
     command: ["/data"]
     volumes:
       - ${MINIO_S3_DATA_DIR}:/data
     environment:
-      # Keep the existing variable names for a transparent migration while
-      # using RustFS's canonical credentials configuration.
-      RUSTFS_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      RUSTFS_SECRET_KEY: ${MINIO_SECRET_KEY}
+      # Prefer the canonical RustFS variables; fall back to the legacy MinIO
+      # names so existing .env files continue to work during migration.
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-${MINIO_ACCESS_KEY}}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-${MINIO_SECRET_KEY}}
+      RUSTFS_UID: ${RUSTFS_UID:-10001}
+      RUSTFS_GID: ${RUSTFS_GID:-10001}
     ports:
       - "9000:9000"
     logging: *default-logging
