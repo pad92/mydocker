@@ -10,14 +10,27 @@ services:
     restart: unless-stopped
     command: ["/data"]
     volumes:
-      - ${MINIO_S3_DATA_DIR}:/data
+      - ${RUSTFS_DATA_DIR}:/data
     environment:
-      # Prefer the canonical RustFS variables; fall back to the legacy MinIO
-      # names so existing .env files continue to work during migration.
-      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-${MINIO_ACCESS_KEY}}
-      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-${MINIO_SECRET_KEY}}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
       RUSTFS_UID: ${RUSTFS_UID:-10001}
       RUSTFS_GID: ${RUSTFS_GID:-10001}
-    ports:
-      - "9000:9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+    networks:
+      - traefik_gateway
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik_gateway"
+      - "traefik.http.routers.rustfs-api.rule=Host(`${RUSTFS_S3_HOST}`)"
+      - "traefik.http.routers.rustfs-api.service=rustfs-api-svc"
+      - "traefik.http.services.rustfs-api-svc.loadbalancer.server.port=9000"
+      - "traefik.http.routers.rustfs-console.rule=Host(`${RUSTFS_CONSOLE_HOST}`)"
+      - "traefik.http.routers.rustfs-console.service=rustfs-console-svc"
+      - "traefik.http.services.rustfs-console-svc.loadbalancer.server.port=9001"
     logging: *default-logging
+networks:
+  traefik_gateway:
+    external: true
