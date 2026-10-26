@@ -186,7 +186,7 @@ services:
 
   deemix:
     # Client de téléchargement Deezer pour le plugin Lidarr Deemix
-    image: ghcr.io/bambanah/deemix:latest
+    image: registry.gitlab.com/bockiii/deemix-docker:latest
     container_name: deemix
     restart: unless-stopped
     environment:
@@ -196,6 +196,7 @@ services:
       DEEMIX_DATA_DIR: /config
       DEEMIX_MUSIC_DIR: /downloads
       DEEMIX_SERVER_PORT: "6595"
+      DEEMIX_LOCATION_BASE: /deemix/
       DEEMIX_SINGLE_USER: "true"
     volumes:
       - *localtime-volume
