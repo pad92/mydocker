@@ -202,6 +202,7 @@ services:
       - ${DOCKER_CONFIG_PATH}/deemix:/config
       - download:/downloads
     networks:
+      - traefik_gateway
       - ng
     deploy:
       resources:
@@ -209,6 +210,21 @@ services:
           cpus: '1.0'
           memory: 1G
     logging: *default-logging
+    labels:
+      <<: *traefik-labels
+      traefik.http.services.deemix.loadbalancer.server.port: "6595"
+
+      traefik.http.routers.deemix_http.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/deemix`)"
+      traefik.http.routers.deemix_http.entrypoints: web
+      traefik.http.routers.deemix_http.middlewares: redirect-https
+
+      traefik.http.routers.deemix.rule: "Host(`${TRAEFIK_FQDN}`) && PathPrefix(`/deemix`)"
+      traefik.http.routers.deemix.entrypoints: "websecure"
+      traefik.http.routers.deemix.tls: "true"
+      traefik.http.routers.deemix.tls.certresolver: "stepca"
+      traefik.http.routers.deemix.middlewares: deemix-strip-prefix
+
+      traefik.http.middlewares.deemix-strip-prefix.stripprefix.prefixes: "/deemix"
 
   sabnzbd:
     # NZB Download
