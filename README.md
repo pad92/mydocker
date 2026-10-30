@@ -60,6 +60,7 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 | [**trilium**](./trilium/README.md) | Hierarchical personal note-taking application focusing on large personal knowledge bases | Trilium Notes |
 | [**tududi**](./tududi/README.md) | Minimal personal task manager interface | Tududi |
 | [**vaultwarden**](./vaultwarden/README.md) | Alternative lightweight Bitwarden password vault server in Rust | Vaultwarden |
+| [**vikunja**](./vikunja/README.md) | Self-hosted task and project management application | Vikunja |
 | [**watchtower**](./watchtower/README.md) | Automated helper daemon to keep running docker container images up to date | Watchtower |
 
 ---

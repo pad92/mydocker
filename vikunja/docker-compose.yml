@@ -1,0 +1,69 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+
+services:
+  vikunja:
+    container_name: vikunja
+    image: vikunja/vikunja:latest
+    restart: unless-stopped
+    environment:
+      VIKUNJA_SERVICE_PUBLICURL: https://${VIKUNJA_DOMAIN}/
+      VIKUNJA_SERVICE_SECRET: ${VIKUNJA_SERVICE_SECRET}
+      VIKUNJA_DATABASE_HOST: db
+      VIKUNJA_DATABASE_TYPE: postgres
+      VIKUNJA_DATABASE_USER: ${VIKUNJA_POSTGRES_USER}
+      VIKUNJA_DATABASE_PASSWORD: ${VIKUNJA_POSTGRES_PASSWORD}
+      VIKUNJA_DATABASE_DATABASE: ${VIKUNJA_POSTGRES_DB}
+    volumes:
+      - ${VIKUNJA_FILES_DATA_DIR}:/app/vikunja/files
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - vikunja
+      - traefik_gateway
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.vikunja.loadbalancer.server.port: "3456"
+
+      traefik.http.routers.vikunja_http.rule: "Host(`${VIKUNJA_DOMAIN}`)"
+      traefik.http.routers.vikunja_http.entrypoints: web
+      traefik.http.routers.vikunja_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.vikunja.rule: "Host(`${VIKUNJA_DOMAIN}`)"
+      traefik.http.routers.vikunja.entrypoints: websecure
+      traefik.http.routers.vikunja.tls: "true"
+      traefik.http.routers.vikunja.tls.certresolver: stepca
+    logging: *default-logging
+
+  db:
+    container_name: vikunja_db
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${VIKUNJA_POSTGRES_DB}
+      POSTGRES_USER: ${VIKUNJA_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${VIKUNJA_POSTGRES_PASSWORD}
+    volumes:
+      - ${VIKUNJA_DB_DATA_DIR}:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - vikunja
+    logging: *default-logging
+
+networks:
+  vikunja:
+  traefik_gateway:
+    external: true
