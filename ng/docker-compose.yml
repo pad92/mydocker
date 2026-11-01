@@ -332,6 +332,9 @@ services:
       - *localtime-volume
       - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
       - ${DOCKER_CONFIG_PATH}/h5ai/cache:/usr/share/h5ai/_h5ai/public/cache
+      # Thumbnail index, remembered capture failures and folder sizes. Kept
+      # apart from the public cache, which is served over HTTP.
+      - ${DOCKER_CONFIG_PATH}/h5ai/cache-private:/usr/share/h5ai/_h5ai/private/cache
       - movies:/share/movies:ro
       - movies_family:/share/movies_family:ro
       - /volume1/medias/movies:/share/moviez:ro
