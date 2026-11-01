@@ -328,6 +328,9 @@ services:
     environment:
       <<: *common-env
       REAL_IP_FROM: "172.18.0.0/16"
+      # Admin page password, hashed at each start. Empty keeps the stored
+      # passhash (login disabled if that hash is empty too).
+      H5AI_ADMIN_PASSWORD: ${H5AI_ADMIN_PASSWORD:-}
     volumes:
       - *localtime-volume
       - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
