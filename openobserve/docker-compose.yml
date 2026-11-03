@@ -1,0 +1,49 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+services:
+  openobserve:
+    # OSS edition (AGPL-3.0). The o2cr.ai "openobserve-enterprise" image from the
+    # upstream quickstart is under a commercial license.
+    image: public.ecr.aws/zinclabs/openobserve:latest
+    container_name: openobserve
+    restart: unless-stopped
+    environment:
+      ZO_DATA_DIR: /data
+      # Only read on the first start, when the root user does not exist yet.
+      ZO_ROOT_USER_EMAIL: "${ZO_ROOT_USER_EMAIL:?Set ZO_ROOT_USER_EMAIL}"
+      ZO_ROOT_USER_PASSWORD: "${ZO_ROOT_USER_PASSWORD:?Set ZO_ROOT_USER_PASSWORD}"
+      ZO_WEB_URL: "https://${OPENOBSERVE_DOMAIN:?Set OPENOBSERVE_DOMAIN}"
+      # Served over HTTPS by Traefik only, so the auth cookie must never travel in clear.
+      ZO_COOKIE_SECURE_ONLY: "true"
+      # Upstream default is true: anonymous usage data is sent to the vendor.
+      ZO_TELEMETRY: "false"
+      # Upstream default is 3650 days, which can fill the data disk.
+      ZO_COMPACT_DATA_RETENTION_DAYS: "${ZO_COMPACT_DATA_RETENTION_DAYS:-30}"
+    volumes:
+      - ${OPENOBSERVE_DATA_DIR:?Set OPENOBSERVE_DATA_DIR}:/data
+    networks:
+      - traefik_gateway
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.openobserve.loadbalancer.server.port: "5080"
+
+      traefik.http.routers.openobserve_http.rule: "Host(`${OPENOBSERVE_DOMAIN:?Set OPENOBSERVE_DOMAIN}`)"
+      traefik.http.routers.openobserve_http.entrypoints: web
+      traefik.http.routers.openobserve_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.openobserve.rule: "Host(`${OPENOBSERVE_DOMAIN:?Set OPENOBSERVE_DOMAIN}`)"
+      traefik.http.routers.openobserve.entrypoints: "websecure"
+      traefik.http.routers.openobserve.tls: "true"
+      traefik.http.routers.openobserve.tls.certresolver: "stepca"
+
+    logging: *default-logging
+networks:
+  traefik_gateway:
+    external: true
