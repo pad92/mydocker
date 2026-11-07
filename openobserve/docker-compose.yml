@@ -3,7 +3,6 @@ x-default-logging: &default-logging
   options:
     max-size: 10m
     max-file: '3'
-x-openobserve-owner: &openobserve-owner "1030:100"
 services:
   # Gives the data directory to the OpenObserve user before each start. Docker
   # creates a missing bind-mount source as root, and an earlier root run leaves
@@ -17,9 +16,10 @@ services:
     command:
       - sh
       - -c
-      - find /data \( ! -user "$${OWNER%:*}" -o ! -group "$${OWNER#*:}" \) -exec chown -h "$$OWNER" {} +
+      - find /data \( ! -user "$$PUID" -o ! -group "$$PGID" \) -exec chown -h "$$PUID:$$PGID" {} +
     environment:
-      OWNER: *openobserve-owner
+      PUID: "${PUID:?Set PUID}"
+      PGID: "${PGID:?Set PGID}"
     volumes:
       - ${OPENOBSERVE_DATA_DIR:?Set OPENOBSERVE_DATA_DIR}:/data
     security_opt:
@@ -33,7 +33,7 @@ services:
     container_name: openobserve
     restart: unless-stopped
     # The image runs as root by default; openobserve-init gives /data to this user.
-    user: *openobserve-owner
+    user: "${PUID:?Set PUID}:${PGID:?Set PGID}"
     depends_on:
       openobserve-init:
         condition: service_completed_successfully
