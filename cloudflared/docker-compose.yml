@@ -15,7 +15,7 @@ services:
     command: tunnel run                               # Command to start the Cloudflare tunnel
     volumes:
       - *localtime-volume
-      - ${CA_CERT_PATH}:/etc/ssl/certs/Pads_Home_CA.pem:ro
+      - ${CA_CERT_PATH}:/etc/ssl/certs/home-lan-root-ca.pem:ro
     environment:
       - "TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}"     # Pass the Cloudflare Tunnel token from environment variable
     dns:
