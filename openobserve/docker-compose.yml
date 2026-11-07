@@ -3,7 +3,28 @@ x-default-logging: &default-logging
   options:
     max-size: 10m
     max-file: '3'
+x-openobserve-owner: &openobserve-owner "1030:100"
 services:
+  # Gives the data directory to the OpenObserve user before each start. Docker
+  # creates a missing bind-mount source as root, and an earlier root run leaves
+  # root-owned files; both make OpenObserve panic with "Permission denied".
+  openobserve-init:
+    image: busybox:1.37
+    container_name: openobserve-init
+    user: "0:0"
+    network_mode: none
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - find /data \( ! -user "$${OWNER%:*}" -o ! -group "$${OWNER#*:}" \) -exec chown -h "$$OWNER" {} +
+    environment:
+      OWNER: *openobserve-owner
+    volumes:
+      - ${OPENOBSERVE_DATA_DIR:?Set OPENOBSERVE_DATA_DIR}:/data
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
   openobserve:
     # OSS edition (AGPL-3.0). The o2cr.ai "openobserve-enterprise" image from the
     # upstream quickstart is under a commercial license.
@@ -11,8 +32,11 @@ services:
     image: public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_VERSION:-v1.1.1}
     container_name: openobserve
     restart: unless-stopped
-    # The image runs as root by default. The data directory must be owned by this user.
-    user: "1030:100"
+    # The image runs as root by default; openobserve-init gives /data to this user.
+    user: *openobserve-owner
+    depends_on:
+      openobserve-init:
+        condition: service_completed_successfully
     security_opt:
       - no-new-privileges:true
     environment:

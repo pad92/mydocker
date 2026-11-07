@@ -21,7 +21,7 @@ The web UI and the HTTP ingestion API are both served on port `5080` and publish
 | :--- | :--- | :--- |
 | `OPENOBSERVE_VERSION` | Image tag. | `v1.1.1` |
 | `OPENOBSERVE_DOMAIN` | Hostname routed by Traefik. Also used to build `ZO_WEB_URL`. | `openobserve.example.com` |
-| `OPENOBSERVE_DATA_DIR` | Host directory mounted on `/data` (Parquet data and SQLite metadata). Must be owned by `1030:100`. | `/srv/openobserve/data` |
+| `OPENOBSERVE_DATA_DIR` | Host directory mounted on `/data` (Parquet data and SQLite metadata). Its ownership is set to `1030:100` by `openobserve-init` on each start. | `/srv/openobserve/data` |
 | `ZO_ROOT_USER_EMAIL` | Email of the root user, created on first start. | `admin@example.com` |
 | `ZO_ROOT_USER_PASSWORD` | Password of the root user, created on first start. 8 to 128 characters with a lowercase letter, an uppercase letter, a digit and a special character, otherwise the container exits on startup. | `CHANGEME` |
 | `ZO_COMPACT_DATA_RETENTION_DAYS` | Days of data kept before automatic deletion (minimum 3). Can be overridden per stream in the UI. | `30` |
@@ -36,10 +36,9 @@ The web UI and the HTTP ingestion API are both served on port `5080` and publish
 
 ### First Deployment
 
-The container runs as `1030:100`, so create the data directory with that owner first:
+OpenObserve runs as `1030:100`. Before it starts, the one-shot `openobserve-init` container (busybox, root, no network) gives every file in `OPENOBSERVE_DATA_DIR` that is not already owned by `1030:100` to that user. This covers a directory created as root by Docker and files left by an earlier root run, which otherwise make OpenObserve exit with `create cache dir /data/cache/: Permission denied`. Symlinks are changed themselves, never their targets.
 
 ```bash
-mkdir -p "$OPENOBSERVE_DATA_DIR" && chown 1030:100 "$OPENOBSERVE_DATA_DIR"
 docker compose up -d
 curl -fsS "https://$OPENOBSERVE_DOMAIN/healthz"
 ```
