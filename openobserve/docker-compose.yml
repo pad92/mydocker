@@ -7,9 +7,14 @@ services:
   openobserve:
     # OSS edition (AGPL-3.0). The o2cr.ai "openobserve-enterprise" image from the
     # upstream quickstart is under a commercial license.
-    image: public.ecr.aws/zinclabs/openobserve:latest
+    # v1.1.2 is not published on public.ecr.aws yet (checked 2026-11-07).
+    image: public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_VERSION:-v1.1.1}
     container_name: openobserve
     restart: unless-stopped
+    # The image runs as root by default. The data directory must be owned by this user.
+    user: "1030:100"
+    security_opt:
+      - no-new-privileges:true
     environment:
       ZO_DATA_DIR: /data
       # Only read on the first start, when the root user does not exist yet.
