@@ -73,6 +73,33 @@ services:
       traefik.http.routers.openobserve.tls.certresolver: "stepca"
 
     logging: *default-logging
+  # Syslog receiver (UDP) forwarding to OpenObserve over HTTP. See vector.yaml.
+  openobserve-syslog:
+    image: timberio/vector:${VECTOR_VERSION:-0.61.0}-distroless-libc
+    container_name: openobserve-syslog
+    restart: unless-stopped
+    user: "${PUID:?Set PUID}:${PGID:?Set PGID}"
+    tmpfs:
+      - /var/lib/vector
+    ports:
+      - "${OPENOBSERVE_SYSLOG_PORT:-514}:5514/udp"
+    secrets:
+      - openobserve_ingest_user
+      - openobserve_ingest_password
+    volumes:
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
+    networks:
+      - traefik_gateway
+    depends_on:
+      - openobserve
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
 networks:
   traefik_gateway:
     external: true
+secrets:
+  openobserve_ingest_user:
+    environment: OPENOBSERVE_INGEST_USER
+  openobserve_ingest_password:
+    environment: OPENOBSERVE_INGEST_PASSWORD

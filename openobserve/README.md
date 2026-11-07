@@ -1,6 +1,6 @@
 # OpenObserve Stack
 
-This stack deploys the following service:
+This stack deploys the following services:
 
 ## 1. OpenObserve (`openobserve`)
 
@@ -51,3 +51,34 @@ curl -fsS "https://$OPENOBSERVE_DOMAIN/healthz"
 - The upstream retention default is 3650 days. Size `OPENOBSERVE_DATA_DIR` according to the retention you set.
 - OTLP over gRPC (port `5081`) is not published. Add a Traefik TCP/h2c route or a host port if a client needs it; OTLP over HTTP works through the existing route at `https://<OPENOBSERVE_DOMAIN>/api/<org>/v1/{logs,metrics,traces}`.
 - Ingestion clients authenticate with HTTP Basic auth. The ready-to-use credentials are shown in the UI under *Data Sources*.
+
+---
+
+## 2. Syslog Receiver (`openobserve-syslog`)
+
+### Role
+OpenObserve removed its built-in syslog listener in v0.16.0. This [Vector](https://vector.dev/) container receives syslog over UDP (UniFi, switches, firewalls) and forwards it to OpenObserve over HTTP, in the `syslog` stream of the `default` organization.
+
+- RFC 3164 and RFC 5424 messages are parsed into `hostname`, `appname`, `severity`, `facility`, `message`, etc.
+- Messages in another format (UniFi CEF, for example) are kept as is in `message`, with a `parse_error` field.
+- `_timestamp` is the time Vector received the message. The time sent by the device is kept in `syslog_timestamp`: device clocks drift, RFC 3164 has no year, and OpenObserve rejects events that are too old.
+- `source_ip` is the address of the sending device.
+
+The pipeline is defined in [`vector.yaml`](./vector.yaml). Vector 0.61 no longer expands `${VAR}` in its configuration, so the ingestion credentials reach it as Compose secrets (`/run/secrets`), not as environment variables.
+
+### External Links
+- **Official Project**: [https://vector.dev/](https://vector.dev/)
+- **Docker Image Maintainer**: [Datadog (timberio/vector)](https://hub.docker.com/r/timberio/vector)
+- **OpenObserve syslog documentation**: [https://openobserve.ai/docs/ingestion/logs/syslog/](https://openobserve.ai/docs/ingestion/logs/syslog/)
+
+### Service-Specific Configuration Variables
+
+| Variable Name | Description | Placeholder / Default |
+| :--- | :--- | :--- |
+| `VECTOR_VERSION` | Vector version (the `-distroless-libc` suffix is added by the compose file). | `0.61.0` |
+| `OPENOBSERVE_SYSLOG_PORT` | UDP port published on the host. Nothing else on the host may listen on it (rsyslog, for example). | `514` |
+| `OPENOBSERVE_INGEST_USER` | OpenObserve user used to send the logs. | `admin@example.com` |
+| `OPENOBSERVE_INGEST_PASSWORD` | Its ingestion passcode, shown in the UI under *Data Sources*. Prefer it to the account password. | `CHANGEME` |
+
+### UniFi Setup
+In UniFi Network, *Settings > CyberSecure > Traffic Logging* (or *System > Remote Logging* depending on the version): enable *SIEM Server* or *Syslog*, then set the host address and port `514`.
