@@ -1,0 +1,58 @@
+# Syslog relay: OpenObserve removed its own syslog listener in v0.16.0.
+# Receives UDP syslog (UniFi, network gear) and forwards it to OpenObserve.
+data_dir: /var/lib/vector
+
+# Vector does not expand ${VAR} by default. Credentials come from the Compose
+# secrets mounted in /run/secrets (see docker-compose.yml).
+secret:
+  compose:
+    type: directory
+    path: /run/secrets
+    remove_trailing_whitespace: true
+
+sources:
+  syslog_udp:
+    # Raw socket instead of the "syslog" source, so messages that are not valid
+    # RFC 3164/5424 (CEF, vendor formats) are kept instead of being dropped.
+    type: socket
+    mode: udp
+    address: 0.0.0.0:5514
+    host_key: source_ip
+    port_key: source_port
+
+transforms:
+  parse_syslog:
+    type: remap
+    inputs: [syslog_udp]
+    source: |
+      parsed, err = parse_syslog(string!(.message))
+      if err == null {
+        # Device clocks drift and RFC 3164 has no year, while OpenObserve rejects
+        # old timestamps: keep the receive time as _timestamp.
+        parsed.syslog_timestamp = del(parsed.timestamp)
+        . = merge(., parsed)
+      } else {
+        .parse_error = err
+      }
+      ._timestamp = del(.timestamp)
+      del(.source_type)
+
+sinks:
+  openobserve:
+    type: http
+    inputs: [parse_syslog]
+    uri: http://openobserve:5080/api/default/syslog/_json
+    method: post
+    auth:
+      strategy: basic
+      user: SECRET[compose.openobserve_ingest_user]
+      password: SECRET[compose.openobserve_ingest_password]
+    encoding:
+      codec: json
+      timestamp_format: rfc3339
+    batch:
+      max_events: 1000
+      timeout_secs: 5
+    # OpenObserve may still be starting; events are retried, not lost.
+    healthcheck:
+      enabled: false
