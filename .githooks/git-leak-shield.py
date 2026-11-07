@@ -26,8 +26,14 @@ IGNORED_FILES_PATTERNS = [
 
 # Legitimate public IPs (known DNS, standard gateways) to ignore
 IP_WHITELIST = {
-    "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112"
+    "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112",
+    # Wildcard listen address ("all interfaces"): reveals nothing about the network.
+    "0.0.0.0"
 }
+
+# Values that reference a secret stored elsewhere instead of containing it
+# (Vector: SECRET[backend.key]).
+SECRET_REFERENCE_RE = re.compile(r"^SECRET\[[A-Za-z0-9_.-]+\]$")
 
 # --- Detection RegEx Patterns ---
 
@@ -117,7 +123,8 @@ def inspect_line(line, filepath, line_num):
             val = match.group(2) if len(match.groups()) >= 2 else match.group(0)
             runtime_read = ["getpass", "args.", "os.environ", "os.getenv", "input(", "sys.stdin"]
             if not any(ph in val.lower() for ph in ["placeholder", "your_", "insert_", "xxx", "template", "valeur", "value"]) \
-               and not any(rt in val for rt in runtime_read):
+               and not any(rt in val for rt in runtime_read) \
+               and not SECRET_REFERENCE_RE.match(val):
                 findings.append({
                     "type": "SECRET",
                     "desc": f"{description} (detected value: '{val[:3]}...{val[-3:] if len(val) > 6 else ''}')",
