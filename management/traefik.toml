@@ -34,15 +34,8 @@
         idleTimeout = "600s"
 
 [accessLog]
-  filePath = "/var/log/traefik/access.log"
+  filePath = "/dev/stdout"
   format = "json"
-
-
-[experimental]
-  [experimental.plugins]
-    [experimental.plugins.bouncer]
-      moduleName = "github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
-      version = "v1.6.0"
 
 [certificatesResolvers]
   [certificatesResolvers.stepca.acme]

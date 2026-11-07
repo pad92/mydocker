@@ -4,7 +4,6 @@
       rule = "Host(`YOUR_PROXMOX_DOMAIN`)" # ex: proxmox.home.lan
       entryPoints = ["websecure"]
       service = "proxmox-svc"
-      middlewares = ["crowdsec@file"]
       [http.routers.proxmox.tls]
         certResolver = "stepca"
   
@@ -19,13 +18,6 @@
     # Indispensable car Proxmox utilise un certificat auto-signé par défaut
     insecureSkipVerify = true
 
-
-  [http.middlewares.crowdsec.plugin.bouncer]
-    enabled = true
-    crowdsecMode = "live"
-    crowdsecLapiScheme = "http"
-    crowdsecLapiHost = "crowdsec:8080"
-    crowdsecLapiKey = "YOUR_CROWDSEC_BOUNCER_API_KEY"
 
   [http.middlewares.compression.compress]
     excludedContentTypes = ["text/event-stream"]

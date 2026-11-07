@@ -1,12 +1,7 @@
-x-default-logging: &default-logging
-  driver: json-file
-  options:
-    max-size: 10m
-    max-file: '3'
 x-localtime-volume: &localtime-volume "/etc/localtime:/etc/localtime:ro"
 services:
   traefik:
-    image: traefik:v3.6
+    image: traefik:v3.7.17
     container_name: traefik
     restart: unless-stopped
     command:
@@ -25,7 +20,6 @@ services:
       - ./traefik.toml:/etc/traefik/traefik.toml:ro
       - ./acme:/etc/traefik/acme
       - ./traefik_dynamic.toml:/etc/traefik/traefik_dynamic.toml:ro
-      - traefik-logs:/var/log/traefik
     networks:
       traefik_gateway:
     security_opt:
@@ -43,28 +37,6 @@ services:
       traefik.http.routers.traefik.middlewares: "traefik_strip"
       traefik.http.middlewares.traefik_strip.stripprefix.prefixes: "/traefik"
 
-    depends_on:
-      - crowdsec
-    logging: *default-logging
-  crowdsec:
-    image: crowdsecurity/crowdsec:latest
-    container_name: crowdsec
-    restart: unless-stopped
-    environment:
-      - COLLECTIONS=crowdsecurity/traefik crowdsecurity/http-cve
-      - BOUNCER_KEY_traefik=${CROWDSEC_BOUNCER_API_KEY}
-    volumes:
-      - *localtime-volume
-      - ${MANAGEMENT_CROWDSEC_CONFIG_DIR}:/etc/crowdsec
-      - ${MANAGEMENT_CROWDSEC_DATA_DIR}:/var/lib/crowdsec/data
-      - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.d/traefik.yaml:ro
-      - traefik-logs:/var/log/traefik:ro
-    networks:
-      - traefik_gateway
-    security_opt:
-      - apparmor=docker-default
-      - no-new-privileges:true
-    logging: *default-logging
   portainer:
     container_name: portainer
     image: portainer/portainer-ee:alpine-sts
@@ -148,7 +120,6 @@ services:
 #      traefik.http.services.homepage.loadbalancer.server.port: "3000"
 #      traefik.http.routers.homepage.rule: "Host(`${HOMEPAGE_HOST_LOCAL}`)"
 
-    logging: *default-logging
   uptime-kuma:
     image: louislam/uptime-kuma:2
     container_name: uptime-kuma
@@ -177,9 +148,6 @@ services:
       traefik.http.routers.uptime.tls: "true"
       traefik.http.routers.uptime.tls.certresolver: "stepca"
 
-    logging: *default-logging
-volumes:
-  traefik-logs:
 networks:
   traefik_gateway:
     name: traefik_gateway
