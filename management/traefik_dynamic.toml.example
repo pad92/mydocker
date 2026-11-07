@@ -1,7 +1,7 @@
 [http]
   [http.routers]
     [http.routers.proxmox]
-      rule = "Host(`YOUR_PROXMOX_DOMAIN`)" # ex: proxmox.home.lan
+      rule = 'Host(`{{ env "PROXMOX_HOST_LOCAL" }}`)'
       entryPoints = ["websecure"]
       service = "proxmox-svc"
       [http.routers.proxmox.tls]
@@ -12,7 +12,7 @@
       # On lie le service au transport personnalisé ci-dessous
       serversTransport = "pveTransport"
       [[http.services.proxmox-svc.loadBalancer.servers]]
-        url = "https://YOUR_PROXMOX_IP:8006" # L'IP locale de votre Proxmox (ex: 192.168.1.100)
+        url = '{{ env "PROXMOX_UPSTREAM_URL" }}'
   
   [http.serversTransports.pveTransport]
     # Indispensable car Proxmox utilise un certificat auto-signé par défaut

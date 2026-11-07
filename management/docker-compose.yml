@@ -13,6 +13,8 @@ services:
       - 443:443
     environment:
       - LEGO_CA_CERTIFICATES=/etc/ssl/certs/${CA_CERT_NAME}
+      - PROXMOX_HOST_LOCAL=${PROXMOX_HOST_LOCAL:?Set PROXMOX_HOST_LOCAL in .env}
+      - PROXMOX_UPSTREAM_URL=${PROXMOX_UPSTREAM_URL:?Set PROXMOX_UPSTREAM_URL in .env}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - *localtime-volume
