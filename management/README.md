@@ -7,8 +7,8 @@ These environment variables are shared and used by multiple services in this sta
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
-| `CA_CERT_NAME` | Configuration settings value for Ca cert name. | *None (empty)* |
-| `MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR` | Persistent host directory path for volume mount: MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR. | *None (empty)* |
+| `CA_CERT_NAME` | Configuration settings value for Ca cert name. | `home-lan-root-ca.crt` |
+| `MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR` | Persistent host directory path for volume mount: MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR. | `/usr/local/share/ca-certificates` |
 
 ---
 
