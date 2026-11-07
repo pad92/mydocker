@@ -29,12 +29,19 @@ services:
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.traefik.loadbalancer.server.port: "80"
+      traefik.http.routers.traefik_http.rule: "Host(`${TRAEFIK_HOST_LOCAL}`) && (PathPrefix(`/traefik`)
+        || PathPrefix(`/api`))"
+      traefik.http.routers.traefik_http.entrypoints: "web"
+      traefik.http.routers.traefik_http.middlewares: "redirect-https"
       traefik.http.routers.traefik.rule: "Host(`${TRAEFIK_HOST_LOCAL}`) && (PathPrefix(`/traefik`)
         || PathPrefix(`/api`))"
       traefik.http.routers.traefik.service: "api@internal"
-      traefik.http.routers.traefik.entrypoints: "web"
-      traefik.http.routers.traefik.tls: "false"
+      traefik.http.routers.traefik.entrypoints: "websecure"
+      traefik.http.routers.traefik.tls: "true"
+      traefik.http.routers.traefik.tls.certresolver: "stepca"
       traefik.http.routers.traefik.middlewares: "traefik_strip"
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
       traefik.http.middlewares.traefik_strip.stripprefix.prefixes: "/traefik"
 
   portainer:
