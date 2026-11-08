@@ -19,9 +19,17 @@ services:
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.shaarli.loadbalancer.server.port: "80"
 
-      traefik.http.routers.shaarli-pub.rule: "Host(`${TRAEFIK_HOST_LOCAL}`) || Host(`${TRAEFIK_HOST_PUBLIC}`)"
+      traefik.http.routers.shaarli-pub-http.rule: "Host(`${TRAEFIK_HOST_PUBLIC}`)"
+      traefik.http.routers.shaarli-pub-http.entrypoints: web
+      traefik.http.routers.shaarli-pub-http.middlewares: 'shaarli-redirect-https,x-powered-by'
+      traefik.http.middlewares.shaarli-redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.shaarli-redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.shaarli-pub.rule: "Host(`${TRAEFIK_HOST_PUBLIC}`)"
+      traefik.http.routers.shaarli-pub.entrypoints: websecure
       traefik.http.routers.shaarli-pub.middlewares: 'x-powered-by'
-      traefik.http.routers.shaarli-pub.entrypoints: web
+      traefik.http.routers.shaarli-pub.tls: "true"
+      traefik.http.routers.shaarli-pub.tls.certresolver: stepca
       traefik.http.middlewares.x-powered-by.headers.customresponseheaders.Server: ''
       traefik.http.middlewares.x-powered-by.headers.customresponseheaders.X-Powered-By: ''
 
