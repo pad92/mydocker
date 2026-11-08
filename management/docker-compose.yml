@@ -20,7 +20,7 @@ services:
       - *localtime-volume
       - ${MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR}/${CA_CERT_NAME}:/etc/ssl/certs/${CA_CERT_NAME}:ro
       - ./traefik.toml:/etc/traefik/traefik.toml:ro
-      - ./acme:/etc/traefik/acme
+      - /rpool/docker/traefik/acme:/etc/traefik/acme
       - ./traefik_dynamic.toml:/etc/traefik/traefik_dynamic.toml:ro
     networks:
       traefik_gateway:
