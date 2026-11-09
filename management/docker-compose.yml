@@ -4,10 +4,32 @@ services:
     image: traefik:v3.7.17
     container_name: traefik
     restart: unless-stopped
+    # Static configuration lives only in these flags. Traefik reads a single
+    # static source and a mounted traefik.toml would make it ignore them all.
     command:
+      - "--global.sendAnonymousUsage=false"
+      - "--global.checkNewVersion=true"
+      - "--log.level=INFO"
       - "--api=true"
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+      - "--providers.docker.exposedByDefault=false"
+      - "--providers.file.filename=/etc/traefik/traefik_dynamic.toml"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.transport.respondingTimeouts.readTimeout=600s"
+      - "--entrypoints.web.transport.respondingTimeouts.idleTimeout=600s"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.transport.respondingTimeouts.readTimeout=600s"
+      - "--entrypoints.websecure.transport.respondingTimeouts.idleTimeout=600s"
+      - "--accesslog=true"
+      - "--accesslog.filePath=/dev/stdout"
+      - "--accesslog.format=json"
+      - "--certificatesresolvers.stepca.acme.storage=/etc/traefik/acme/acme.json"
+      - "--certificatesresolvers.stepca.acme.tlschallenge=true"
       - "--certificatesresolvers.stepca.acme.email=${ACME_EMAIL}"
-      - "--certificatesresolvers.stepca.acme.caserver=${ACME_CA_SERVER}"
+      - "--certificatesresolvers.stepca.acme.caserver=${ACME_CA_SERVER:?Set ACME_CA_SERVER to the step-ca ACME directory URL in .env}"
     ports:
       - 80:80
       - 443:443
@@ -19,7 +41,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - *localtime-volume
       - ${MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR}/${CA_CERT_NAME}:/etc/ssl/certs/${CA_CERT_NAME}:ro
-      - ./traefik.toml:/etc/traefik/traefik.toml:ro
       - /rpool/docker/traefik/acme:/etc/traefik/acme
       - ./traefik_dynamic.toml:/etc/traefik/traefik_dynamic.toml:ro
     networks:
