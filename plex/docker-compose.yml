@@ -55,14 +55,14 @@ services:
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.tautulli.loadbalancer.server.port: "8181"
 
-      traefik.http.routers.tautulli_http.rule: "Host(`${PLEX_DOMAIN}`)"
+      traefik.http.routers.tautulli_http.rule: "Host(`${TAUTULLI_DOMAIN:?Set TAUTULLI_DOMAIN in .env}`)"
       traefik.http.routers.tautulli_http.entrypoints: "web"
       traefik.http.routers.tautulli_http.middlewares: "redirect-https"
 
       traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
       traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
 
-      traefik.http.routers.tautulli.rule: "Host(`${PLEX_DOMAIN}`)"
+      traefik.http.routers.tautulli.rule: "Host(`${TAUTULLI_DOMAIN:?Set TAUTULLI_DOMAIN in .env}`)"
       traefik.http.routers.tautulli.entrypoints: "websecure"
       traefik.http.routers.tautulli.tls: "true"
       traefik.http.routers.tautulli.tls.certresolver: "stepca"
@@ -70,7 +70,7 @@ services:
       homepage.group: Medias
       homepage.name: Tautulli
       homepage.icon: tautulli.png
-      homepage.href: https://${PLEX_DOMAIN}/
+      homepage.href: https://${TAUTULLI_DOMAIN:?Set TAUTULLI_DOMAIN in .env}/
       homepage.description: Plex stats
       homepage.showStats: true
 
