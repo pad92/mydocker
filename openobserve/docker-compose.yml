@@ -332,6 +332,46 @@ configs:
                 .cef_parse_error = cef_err
               }
             }
+            # UniFi gateway firewall logs (iptables LOG lines with the rule as prefix):
+            # [LAN_WAN-D-40001] DESCR="block-dns" IN=br0 OUT=eth6 SRC=... PROTO=UDP DPT=53 LEN=40
+            # Fields get a fw_ prefix: they never collide with the CEF src/dst/proto.
+            # message stays untouched.
+            fw, fw_err = parse_regex(raw, r'^\[(?P<rule>(?P<ruleset>[A-Za-z0-9_]+)-(?P<code>[A-Z])-(?P<rule_id>\d+))\]\s+(?P<fields>.*SRC=.*)$$')
+            if fw_err == null {
+              # The quoted original packet of ICMP errors ("[SRC=... ]") would repeat
+              # the keys of the packet itself: it is dropped from the fields.
+              fields = replace(string!(fw.fields), r'\s*\[[^\]]*\]', "")
+              # An empty value ("OUT= MAC=...") would make parse_key_value read the
+              # next pair as its value: it is written as "" first.
+              fields = replace(fields, "= ", "=\"\" ")
+              if ends_with(fields, "=") {
+                fields = fields + "\"\""
+              }
+              # LEN appears twice: IP length before PROTO=, layer 4 length after it.
+              parts = split(fields, " PROTO=", limit: 2)
+              ip_kv = parse_key_value(string!(parts[0]), key_value_delimiter: "=", field_delimiter: " ", accept_standalone_key: true) ?? {}
+              l4_kv = {}
+              if length(parts) == 2 {
+                l4_kv = parse_key_value("PROTO=" + string!(parts[1]), key_value_delimiter: "=", field_delimiter: " ", accept_standalone_key: true) ?? {}
+                if exists(l4_kv.LEN) {
+                  l4_kv.L4_LEN = del(l4_kv.LEN)
+                }
+              }
+              kv = map_keys(merge(ip_kv, l4_kv)) -> |key| { "fw_" + downcase(key) }
+              kv.fw_rule = fw.rule
+              kv.fw_ruleset = fw.ruleset
+              kv.fw_rule_id = to_int(fw.rule_id) ?? fw.rule_id
+              kv.fw_action_code = fw.code
+              kv.fw_action = if fw.code == "A" { "accept" } else if fw.code == "D" { "drop" } else if fw.code == "R" { "reject" } else { fw.code }
+              # Numbers that are queried by range or summed; the rest stays a string.
+              for_each(["fw_spt", "fw_dpt", "fw_len", "fw_l4_len", "fw_ttl", "fw_hoplimit"]) -> |_index, name| {
+                value = get(kv, [name]) ?? null
+                if is_string(value) {
+                  kv = set!(kv, [name], to_int(value) ?? value)
+                }
+              }
+              . = merge(kv, .)
+            }
             # host_name (FQDN, as in the streams of the hosts) and device_vendor
             # from the OPENOBSERVE_SYSLOG_SENDERS table, by source IP. A sender
             # not listed is named by its syslog hostname, else by its IP.
@@ -348,11 +388,37 @@ configs:
             ._timestamp = del(.timestamp)
             del(.source_type)
 
+        # Gateway firewall logs go to their own stream: they outnumber the rest of
+        # syslog and have their own fields. Everything else stays in syslog.
+        split_streams:
+          type: route
+          inputs: [parse_syslog]
+          route:
+            firewall: exists(.fw_rule)
+
       sinks:
         openobserve:
           type: http
-          inputs: [parse_syslog]
+          inputs: [split_streams._unmatched]
           uri: http://openobserve:5080/api/default/syslog/_json
+          method: post
+          auth:
+            strategy: basic
+            user: SECRET[compose.openobserve_ingest_user]
+            password: SECRET[compose.openobserve_ingest_password]
+          encoding:
+            codec: json
+            timestamp_format: rfc3339
+          batch:
+            max_events: 1000
+            timeout_secs: 5
+          # OpenObserve may still be starting; events are retried, not lost.
+          healthcheck:
+            enabled: false
+        openobserve_firewall:
+          type: http
+          inputs: [split_streams.firewall]
+          uri: http://openobserve:5080/api/default/firewall/_json
           method: post
           auth:
             strategy: basic

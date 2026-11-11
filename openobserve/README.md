@@ -112,7 +112,7 @@ The metadata lists the Parquet files of each stream. Restore it into the same `O
 ## 3. Syslog Receiver (`openobserve-syslog`)
 
 ### Role
-OpenObserve removed its built-in syslog listener in v0.16.0. This [Vector](https://vector.dev/) container receives syslog over UDP (UniFi, switches, firewalls) and forwards it to OpenObserve over HTTP, in the `syslog` stream of the `default` organization.
+OpenObserve removed its built-in syslog listener in v0.16.0. This [Vector](https://vector.dev/) container receives syslog over UDP (UniFi, switches, firewalls) and forwards it to OpenObserve over HTTP, in the `default` organization. Firewall logs of the UniFi gateway go to the `firewall` stream, see [Firewall Logs](#firewall-logs). Everything else goes to the `syslog` stream.
 
 - RFC 3164 and RFC 5424 messages are parsed into `hostname`, `appname`, `severity`, `facility`, `message`, etc.
 - Messages in another format are kept as is in `message`, with a `parse_error` field. Today these are mostly the kernel lines of the UniFi access points (`{0c1c a612} [354856.36] ...`), which carry no syslog header.
@@ -163,9 +163,45 @@ SELECT _timestamp, cef_name, unifirisk, msg FROM "syslog"
 WHERE unificategory = 'Security' AND unifirisk = 'high'
 ```
 
+### Firewall Logs
+
+The UniFi gateway also sends the iptables log lines of its firewall rules, without CEF:
+
+```text
+[LAN_WAN-D-40001] DESCR="block-dns" IN=br0 OUT=eth6 MAC=... SRC=2001:db8::1 DST=2001:4860:4860::8888 LEN=80 TC=0 HOPLIMIT=63 FLOWLBL=0 PROTO=UDP SPT=41153 DPT=53 LEN=40 MARK=0x21940000
+```
+
+The pipeline splits them into fields with a `fw_` prefix, so they never mix with the `src`, `dst` and `proto` of the CEF events, and sends them to the `firewall` stream instead of `syslog`. `message` is kept as received.
+
+| Field | Content | Example |
+| :--- | :--- | :--- |
+| `fw_rule` | Rule prefix of the log line. | `LAN_WAN-D-40001` |
+| `fw_ruleset` | Rule set (traffic direction). | `LAN_WAN` |
+| `fw_rule_id` | Rule number, as an integer. | `40001` |
+| `fw_action` | `accept`, `drop` or `reject`, from the `A`, `D` or `R` letter of the prefix. | `drop` |
+| `fw_action_code` | The letter itself. | `D` |
+| `fw_descr` | Rule description set in UniFi. | `block-dns` |
+| `fw_in`, `fw_out` | Input and output interfaces; empty when the packet is for the gateway itself. | `br0`, `eth6` |
+| `fw_src`, `fw_dst` | Source and destination addresses, IPv4 or IPv6. | `2001:4860:4860::8888` |
+| `fw_proto` | `TCP`, `UDP`, `ICMP`, `ICMPv6`... | `UDP` |
+| `fw_spt`, `fw_dpt` | Source and destination ports, as integers. | `53` |
+| `fw_len` | IP packet length, as an integer. | `80` |
+| `fw_l4_len` | Layer 4 length (the second `LEN=` of the line), as an integer. | `40` |
+| `fw_ttl`, `fw_hoplimit` | IPv4 TTL or IPv6 hop limit, as integers. | `63` |
+
+Every other `KEY=value` pair becomes `fw_<key>` as a string (`fw_mac`, `fw_mark`, `fw_tos`, `fw_id`, `fw_window`, `fw_type`, `fw_code`...). A flag without a value, such as `DF` or `SYN`, becomes `true` (`fw_df`, `fw_syn`). The original packet that an ICMP error quotes between brackets is left out of the fields.
+
+Example query for the most blocked destinations:
+
+```sql
+SELECT fw_descr, fw_dst, fw_dpt, count(*) AS hits FROM "firewall"
+WHERE fw_action = 'drop'
+GROUP BY fw_descr, fw_dst, fw_dpt ORDER BY hits DESC LIMIT 20
+```
+
 ### Testing the Pipeline
 
-[`tests/test_vector.sh`](./tests/test_vector.sh) renders the compose file with `.env.example`, runs `vector validate` on the resulting pipeline, then the unit tests of [`tests/vector_test.yaml`](./tests/vector_test.yaml) (syslog, CEF with and without syslog header, malformed CEF, field collisions). It needs Docker, Docker Compose 2.23 or later and `jq`, and makes no network call:
+[`tests/test_vector.sh`](./tests/test_vector.sh) renders the compose file with `.env.example`, runs `vector validate` on the resulting pipeline, then the unit tests of [`tests/vector_test.yaml`](./tests/vector_test.yaml) (syslog, CEF with and without syslog header, malformed CEF, field collisions, IPv4 and IPv6 firewall logs, routing to the `syslog` and `firewall` streams). It needs Docker, Docker Compose 2.23 or later and `jq`, and makes no network call:
 
 ```bash
 ./tests/test_vector.sh
