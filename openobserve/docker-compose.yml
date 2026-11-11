@@ -147,6 +147,34 @@ configs:
             } else {
               .parse_error = err
             }
+            # UniFi CEF events. parse_syslog reads "CEF" as the appname and leaves
+            # "0|Ubiquiti|..." in message, so the "CEF:" prefix is put back before
+            # parsing. message stays untouched: the alerts match on it.
+            raw = string(.message) ?? ""
+            cef_input = if .appname == "CEF" { "CEF:" + raw } else { raw }
+            if contains(cef_input, "CEF:") {
+              cef, cef_err = parse_cef(cef_input)
+              if cef_err == null {
+                .cef_version = del(cef.cefVersion)
+                .cef_vendor = del(cef.deviceVendor)
+                .cef_product = del(cef.deviceProduct)
+                .cef_product_version = del(cef.deviceVersion)
+                .cef_signature_id = del(cef.deviceEventClassId)
+                .cef_name = del(cef.name)
+                # Numeric (0-10) for UniFi. CEF also allows Low/Medium/High/Very-High:
+                # kept apart so that cef_severity always has the same type.
+                cef_severity = del(cef.severity)
+                .cef_severity = to_int(cef_severity) ?? null
+                if .cef_severity == null {
+                  .cef_severity_label = cef_severity
+                }
+                # Extension keys (UNIFIcategory, src, msg...) become top-level
+                # fields. An existing field of the event wins over a key of the same name.
+                . = merge(cef, .)
+              } else {
+                .cef_parse_error = cef_err
+              }
+            }
             # host_name (FQDN, as in the streams of the hosts) and device_vendor
             # from the OPENOBSERVE_SYSLOG_SENDERS table, by source IP. A sender
             # not listed is named by its syslog hostname, else by its IP.

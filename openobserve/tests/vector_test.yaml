@@ -1,0 +1,107 @@
+# Unit tests for the parse_syslog transform of the vector_config pipeline.
+# Run with ./test_vector.sh (renders the compose file with .env.example first).
+tests:
+  - name: CEF event behind a syslog header is parsed, message kept
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.1
+          message: "<14>Nov 11 18:39:10 gw CEF:0|Ubiquiti|UniFi Network|11.0.99|203|Blocked by Firewall|4|UNIFIcategory=Security UNIFIhost=gw proto=UDP spt=30171 dpt=30171 act=blocked UNIFIrisk=low UNIFIsrcClientIp=192.0.2.124 msg=c200 was blocked from accessing gw by the drop-wan-hairpin-nolog Firewall Policy."
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "0|Ubiquiti|UniFi Network|11.0.99|203|Blocked by Firewall|4|UNIFIcategory=Security UNIFIhost=gw proto=UDP spt=30171 dpt=30171 act=blocked UNIFIrisk=low UNIFIsrcClientIp=192.0.2.124 msg=c200 was blocked from accessing gw by the drop-wan-hairpin-nolog Firewall Policy.")
+              assert_eq!(.appname, "CEF")
+              assert!(!exists(.parse_error))
+              assert!(!exists(.cef_parse_error))
+              assert_eq!(.cef_version, "0")
+              assert_eq!(.cef_vendor, "Ubiquiti")
+              assert_eq!(.cef_product, "UniFi Network")
+              assert_eq!(.cef_product_version, "11.0.99")
+              assert_eq!(.cef_signature_id, "203")
+              assert_eq!(.cef_name, "Blocked by Firewall")
+              assert_eq!(.cef_severity, 4)
+              assert!(!exists(.cef_severity_label))
+              assert_eq!(.UNIFIcategory, "Security")
+              assert_eq!(.UNIFIrisk, "low")
+              assert_eq!(.proto, "UDP")
+              assert_eq!(.dpt, "30171")
+              assert_eq!(.UNIFIsrcClientIp, "192.0.2.124")
+              assert_eq!(.msg, "c200 was blocked from accessing gw by the drop-wan-hairpin-nolog Firewall Policy.")
+              assert_eq!(.host_name, "gw.example.com")
+              assert_eq!(.device_vendor, "unifi")
+
+  - name: CEF event without syslog header is parsed, parse_error kept
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 198.51.100.7
+          message: "CEF:0|Ubiquiti|UniFi Network|11.0.99|539|Device IP Address Conflict|8|UNIFIcategory=UniFi Devices UNIFInetworkVlan=1 msg=Multiple devices are using the same IP address."
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "CEF:0|Ubiquiti|UniFi Network|11.0.99|539|Device IP Address Conflict|8|UNIFIcategory=UniFi Devices UNIFInetworkVlan=1 msg=Multiple devices are using the same IP address.")
+              assert!(exists(.parse_error))
+              assert_eq!(.cef_signature_id, "539")
+              assert_eq!(.cef_severity, 8)
+              assert_eq!(.UNIFIcategory, "UniFi Devices")
+              assert_eq!(.host_name, "198.51.100.7")
+
+  - name: Extension keys never overwrite fields of the event
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.1
+          message: "<14>Nov 11 18:39:10 gw CEF:0|Ubiquiti|UniFi Network|11.0.99|1|Test|High|appname=spoofed hostname=spoofed UNIFIcategory=Test"
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.appname, "CEF")
+              assert_eq!(.hostname, "gw")
+              assert_eq!(.host_name, "gw.example.com")
+              assert_eq!(.cef_severity, null)
+              assert_eq!(.cef_severity_label, "High")
+              assert_eq!(.UNIFIcategory, "Test")
+
+  - name: Malformed CEF keeps the event and flags it
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.1
+          message: "<14>Nov 11 18:39:10 gw CEF:0|Ubiquiti|broken"
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "0|Ubiquiti|broken")
+              assert!(exists(.cef_parse_error))
+              assert!(!exists(.cef_vendor))
+
+  - name: Plain syslog gets no CEF fields
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.2
+          message: "<30>Nov 11 18:39:10 nas crond[123]: job started"
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "job started")
+              assert_eq!(.appname, "crond")
+              assert!(!exists(.cef_vendor))
+              assert!(!exists(.cef_parse_error))
+              assert_eq!(.host_name, "nas.example.com")

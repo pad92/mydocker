@@ -42,6 +42,10 @@ INTERNAL_DOMAINS_RE = re.compile(
     r"\b[a-zA-Z0-9-]+\.(lan|local|home|internal|home\.lan)\b", re.IGNORECASE
 )
 
+# IPv4 ranges reserved for documentation and examples (RFC 5737, TEST-NET-1/2/3):
+# they are never routed, so they reveal nothing about the network.
+DOCUMENTATION_IPV4_PREFIXES = ("192.0.2.", "198.51.100.", "203.0.113.")
+
 # IP addresses (v4 & v6)
 IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 IPV6_RE = re.compile(r"\b(?:[a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}\b")
@@ -143,7 +147,7 @@ def inspect_line(line, filepath, line_num):
 
     # 3. IP Addresses (Private or Public)
     for ip in IPV4_RE.findall(line):
-        if ip in IP_WHITELIST:
+        if ip in IP_WHITELIST or ip.startswith(DOCUMENTATION_IPV4_PREFIXES):
             continue
         is_priv, priv_desc = is_private_ip(ip)
         if is_priv:
