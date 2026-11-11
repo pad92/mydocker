@@ -60,7 +60,8 @@ curl -fsS "https://$OPENOBSERVE_DOMAIN/healthz"
 OpenObserve removed its built-in syslog listener in v0.16.0. This [Vector](https://vector.dev/) container receives syslog over UDP (UniFi, switches, firewalls) and forwards it to OpenObserve over HTTP, in the `syslog` stream of the `default` organization.
 
 - RFC 3164 and RFC 5424 messages are parsed into `hostname`, `appname`, `severity`, `facility`, `message`, etc.
-- Messages in another format (UniFi CEF, for example) are kept as is in `message`, with a `parse_error` field.
+- Messages in another format are kept as is in `message`, with a `parse_error` field. Today these are mostly the kernel lines of the UniFi access points (`{0c1c a612} [354856.36] ...`), which carry no syslog header.
+- UniFi events in CEF format (`appname` = `CEF`) are also split into fields, see [CEF Fields](#cef-fields). `message` is not changed, so searches and alerts on it keep working.
 - `_timestamp` is the time Vector received the message. The time sent by the device is kept in `syslog_timestamp`: device clocks drift, RFC 3164 has no year, and OpenObserve rejects events that are too old.
 - `source_ip` is the address of the sending device.
 - `host_name` names the sender like the `host_name` of the other streams (the FQDN of the hosts): its entry in `OPENOBSERVE_SYSLOG_SENDERS`, else its syslog `hostname` in lower case, else its IP. `device_vendor` comes from the same entry.
@@ -81,6 +82,39 @@ The pipeline is the `vector_config` entry under `configs:` at the end of [`docke
 | `OPENOBSERVE_INGEST_USER` | OpenObserve user used to send the logs. | `admin@example.com` |
 | `OPENOBSERVE_INGEST_PASSWORD` | Its ingestion passcode, shown in the UI under *Data Sources*. Prefer it to the account password. | `CHANGEME` |
 | `OPENOBSERVE_SYSLOG_SENDERS` | Known senders, one JSON line keyed by source IP: `name` (FQDN, the `host_name` field) and `vendor` (`device_vendor`). Compose writes it into the pipeline; empty or invalid JSON means no table. | `{"192.0.2.1":{"name":"gw.example.com","vendor":"unifi"}}` |
+
+### CEF Fields
+
+UniFi sends its events (firewall, IDS/IPS, Wi-Fi, VPN) as `CEF:0|Ubiquiti|UniFi Network|<version>|<id>|<name>|<severity>|key=value ...`. `parse_syslog` reads `CEF` as the `appname` and leaves the rest in `message`. The pipeline then parses it with VRL `parse_cef` and adds:
+
+| Field | Content | Example |
+| :--- | :--- | :--- |
+| `cef_version` | CEF format version. | `0` |
+| `cef_vendor` | Device vendor. | `Ubiquiti` |
+| `cef_product` | Device product. | `UniFi Network` |
+| `cef_product_version` | Product version. | `11.0.99` |
+| `cef_signature_id` | Event type ID (string). | `203` |
+| `cef_name` | Event name. | `Blocked by Firewall` |
+| `cef_severity` | Severity 0-10, as an integer. | `4` |
+| `cef_severity_label` | Only set when the severity is a word (`Low`, `High`...); `cef_severity` is then empty. | `High` |
+| `cef_parse_error` | Set when the message contains `CEF:` but cannot be parsed. | |
+
+Each `key=value` extension also becomes a field of its own, as a string: `UNIFIcategory`, `UNIFIrisk`, `UNIFIpolicyName`, `UNIFIsrcClientIp`, `src`, `dst`, `proto`, `spt`, `dpt`, `act`, `msg`, and so on depending on the event type. If an extension has the same name as a field already set by the pipeline (`appname`, `hostname`, `host_name`...), the pipeline's value is kept. OpenObserve stores field names in lower case: query `unificategory`, `unifirisk`, etc.
+
+Example query for high-risk security events (the time range comes from the UI):
+
+```sql
+SELECT _timestamp, cef_name, unifirisk, msg FROM "syslog"
+WHERE unificategory = 'Security' AND unifirisk = 'high'
+```
+
+### Testing the Pipeline
+
+[`tests/test_vector.sh`](./tests/test_vector.sh) renders the compose file with `.env.example`, runs `vector validate` on the resulting pipeline, then the unit tests of [`tests/vector_test.yaml`](./tests/vector_test.yaml) (syslog, CEF with and without syslog header, malformed CEF, field collisions). It needs Docker, Docker Compose 2.23 or later and `jq`, and makes no network call:
+
+```bash
+./tests/test_vector.sh
+```
 
 ### UniFi Setup
 In UniFi Network, *Settings > CyberSecure > Traffic Logging* (or *System > Remote Logging* depending on the version): enable *SIEM Server* or *Syslog*, then set the host address and port `514`.
