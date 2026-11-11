@@ -148,6 +148,19 @@ configs:
             } else {
               .parse_error = err
             }
+            # host_name (FQDN, as in the streams of the hosts) and device_vendor
+            # from the OPENOBSERVE_SYSLOG_SENDERS table, by source IP. A sender
+            # not listed is named by its syslog hostname, else by its IP.
+            senders = object(parse_json(s'${OPENOBSERVE_SYSLOG_SENDERS:-}') ?? {}) ?? {}
+            sender = object(get(senders, [to_string(.source_ip) ?? ""]) ?? {}) ?? {}
+            .host_name = sender.name
+            if !is_string(.host_name) {
+              hostname = to_string(.hostname) ?? ""
+              .host_name = if hostname != "" && hostname != "-" { downcase(hostname) } else { .source_ip }
+            }
+            if is_string(sender.vendor) {
+              .device_vendor = sender.vendor
+            }
             ._timestamp = del(.timestamp)
             del(.source_type)
 
