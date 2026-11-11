@@ -82,7 +82,9 @@ services:
     restart: unless-stopped
     user: "${PUID:?Set PUID}:${PGID:?Set PGID}"
     network_mode: none
-    read_only: true
+    # No read_only: true. Compose refuses to inject an inline (content:) config
+    # into a read-only service ("`file` is the sole supported option"), and a
+    # file: config would hit the Portainer relative-path issue described below.
     depends_on:
       openobserve-init:
         condition: service_completed_successfully
