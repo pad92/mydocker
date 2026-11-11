@@ -14,7 +14,8 @@ mkdir -p "$work_dir/data/db" "$work_dir/backup"
 # PUID/PGID are empty in .env.example but required by the compose file.
 PUID="${PUID:-1000}" PGID="${PGID:-1000}" docker compose \
   --project-directory "$stack_dir" --env-file "$stack_dir/.env.example" \
-  config --format json | jq -er '.configs.backup_script.content' > "$work_dir/backup.py"
+  config --format json > "$work_dir/compose.json"
+jq -er '.configs.backup_script.content' "$work_dir/compose.json" > "$work_dir/backup.py"
 
 run() {
   docker run --rm --network none --read-only --user "$(id -u):$(id -g)" \
@@ -25,6 +26,15 @@ run() {
 }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
+
+# Compose refuses to start a read_only service that receives an inline
+# (content:) config: "`file` is the sole supported option".
+conflicts="$(jq -r '.configs as $c | .services | to_entries[]
+  | select(.value.read_only == true)
+  | .key as $s | (.value.configs // [])[]
+  | select($c[.source].content != null) | "\($s) <- \(.source)"' "$work_dir/compose.json")"
+[ -z "$conflicts" ] || fail "inline config in a read_only service: $conflicts"
+pass "no inline config in a read_only service"
 
 run python /opt/openobserve-backup.py --once 2>/dev/null && fail "missing source must fail"
 [ ! -e "$work_dir/data/db/metadata.sqlite" ] || fail "missing source was created"

@@ -63,7 +63,7 @@ Copies the SQLite metadata database (`OPENOBSERVE_DATA_DIR/db/metadata.sqlite`) 
 - One backup every `OPENOBSERVE_BACKUP_INTERVAL_HOURS`. At startup, a backup is made right away if the newest one is older than the interval, so restarts do not pile up copies.
 - After each successful backup, the `metadata-*.sqlite.gz` files older than `OPENOBSERVE_BACKUP_KEEP_DAYS` are deleted. The newest one is always kept, and other files in the directory are never touched. A failed backup deletes nothing and is retried one hour later.
 - The healthcheck turns the container `unhealthy` when the newest backup is older than twice the interval.
-- The container uses `python:3.13-alpine3.22` with no network and a read-only root filesystem. The script is the `backup_script` entry under `configs:` in [`docker-compose.yml`](./docker-compose.yml). Compose interpolates `$` in this block too, so the script contains none.
+- The container uses `python:3.13-alpine3.22` with no network, as a non-root user. Its root filesystem stays writable: Compose refuses to inject an inline config into a `read_only` service. The script is the `backup_script` entry under `configs:` in [`docker-compose.yml`](./docker-compose.yml). Compose interpolates `$` in this block too, so the script contains none.
 
 The Parquet files (`OPENOBSERVE_DATA_DIR/stream/`) are not copied: with 30 days of retention they can weigh tens of GB. They are written once and then only deleted by compaction, so the host backup tool (rsync, restic, Hyper Backup...) can copy `OPENOBSERVE_DATA_DIR/stream/` as is. Include `OPENOBSERVE_BACKUP_DIR` in that host backup as well, since a copy kept on the same disk does not survive a disk failure. `cache/`, `tmp/` and `mmdb/` are rebuilt by OpenObserve.
 
