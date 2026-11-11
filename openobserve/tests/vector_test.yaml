@@ -1,4 +1,6 @@
 # Unit tests for the parse_syslog transform of the vector_config pipeline.
+# MAC values are 6-byte documentation addresses (RFC 7042): the real 14-byte
+# field would be flagged by the leak hook as an IPv6 address.
 # Run with ./test_vector.sh (renders the compose file with .env.example first).
 tests:
   - name: CEF event behind a syslog header is parsed, message kept
@@ -105,3 +107,143 @@ tests:
               assert!(!exists(.cef_vendor))
               assert!(!exists(.cef_parse_error))
               assert_eq!(.host_name, "nas.example.com")
+
+  - name: IPv6 firewall log of the gateway is split into fw_ fields
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.1
+          message: '<13>Nov 11 20:06:41 gw kernel: [LAN_WAN-D-40001] DESCR="block-dns" IN=br0 OUT=eth6 MAC=00:00:5e:00:53:01 SRC=2001:db8::10 DST=2001:4860:4860::8888 LEN=80 TC=0 HOPLIMIT=63 FLOWLBL=0 PROTO=UDP SPT=41153 DPT=53 LEN=40 MARK=0x21940000'
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert!(starts_with(string!(.message), "[LAN_WAN-D-40001] DESCR="))
+              assert_eq!(.fw_rule, "LAN_WAN-D-40001")
+              assert_eq!(.fw_ruleset, "LAN_WAN")
+              assert_eq!(.fw_rule_id, 40001)
+              assert_eq!(.fw_action_code, "D")
+              assert_eq!(.fw_action, "drop")
+              assert_eq!(.fw_descr, "block-dns")
+              assert_eq!(.fw_in, "br0")
+              assert_eq!(.fw_out, "eth6")
+              assert_eq!(.fw_mac, "00:00:5e:00:53:01")
+              assert_eq!(.fw_src, "2001:db8::10")
+              assert_eq!(.fw_dst, "2001:4860:4860::8888")
+              assert_eq!(.fw_len, 80)
+              assert_eq!(.fw_l4_len, 40)
+              assert_eq!(.fw_hoplimit, 63)
+              assert_eq!(.fw_proto, "UDP")
+              assert_eq!(.fw_spt, 41153)
+              assert_eq!(.fw_dpt, 53)
+              assert_eq!(.fw_mark, "0x21940000")
+              assert!(!exists(.cef_parse_error))
+              assert_eq!(.host_name, "gw.example.com")
+
+  - name: IPv4 firewall log keeps empty values and standalone flags
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.1
+          message: '<13>Nov 11 20:11:05 gw kernel: [CUSTOM2_LOCAL-D-10007] DESCR="block-all" IN=br3 OUT= MAC=00:00:5e:00:53:02 SRC=192.0.2.5 DST=192.0.2.255 LEN=272 TOS=00 PREC=0x00 TTL=64 ID=21378 DF PROTO=UDP SPT=138 DPT=138 LEN=252 MARK=0x21940000'
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.fw_ruleset, "CUSTOM2_LOCAL")
+              assert_eq!(.fw_rule_id, 10007)
+              assert_eq!(.fw_descr, "block-all")
+              assert_eq!(.fw_in, "br3")
+              assert_eq!(.fw_out, "")
+              assert_eq!(.fw_src, "192.0.2.5")
+              assert_eq!(.fw_ttl, 64)
+              assert_eq!(.fw_df, true)
+              assert_eq!(.fw_len, 272)
+              assert_eq!(.fw_l4_len, 252)
+              assert_eq!(.fw_dpt, 138)
+
+  - name: Accepted TCP and ICMP error logs are parsed without the quoted packet
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.1
+          message: '<13>Nov 11 20:12:00 gw kernel: [WAN_LOCAL-A-3001] DESCR="allow-icmp" IN=eth6 OUT= SRC=198.51.100.9 DST=203.0.113.4 LEN=56 TOS=00 PREC=0x00 TTL=50 ID=0 PROTO=ICMP TYPE=3 CODE=3 [SRC=203.0.113.4 DST=198.51.100.9 LEN=28 TOS=00 PREC=0x00 TTL=64 ID=1 PROTO=UDP SPT=5000 DPT=6000 LEN=8 ] MARK=0x0'
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.1
+          message: '<13>Nov 11 20:12:01 gw kernel: [WAN_IN-R-2000] DESCR="reject-ssh" IN=eth6 OUT=br0 SRC=198.51.100.9 DST=192.0.2.10 LEN=60 TOS=00 PREC=0x00 TTL=50 ID=7 DF PROTO=TCP SPT=40000 DPT=22 WINDOW=64240 RES=0x00 SYN URGP=0'
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              if .fw_proto == "ICMP" {
+                assert_eq!(.fw_action, "accept")
+                assert_eq!(.fw_type, "3")
+                assert_eq!(.fw_code, "3")
+                assert_eq!(.fw_src, "198.51.100.9")
+                assert_eq!(.fw_len, 56)
+                assert!(!exists(.fw_spt))
+                assert_eq!(.fw_mark, "0x0")
+              } else {
+                assert_eq!(.fw_action, "reject")
+                assert_eq!(.fw_proto, "TCP")
+                assert_eq!(.fw_dpt, 22)
+                assert_eq!(.fw_syn, true)
+                assert_eq!(.fw_window, "64240")
+              }
+
+  - name: Bracketed message that is not a firewall log gets no fw_ fields
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.2
+          message: "<30>Nov 11 18:39:10 nas app[42]: [INFO-A-1] cache refreshed"
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "[INFO-A-1] cache refreshed")
+              assert!(!exists(.fw_rule))
+              assert!(!exists(.fw_action))
+
+  - name: Firewall logs are routed to the firewall stream only
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.1
+          message: '<13>Nov 11 20:06:41 gw kernel: [LAN_WAN-D-40001] DESCR="block-dns" IN=br0 OUT=eth6 SRC=192.0.2.20 DST=192.0.2.53 LEN=60 TOS=00 PREC=0x00 TTL=63 ID=1 PROTO=UDP SPT=41153 DPT=53 LEN=40'
+    outputs:
+      - extract_from: split_streams.firewall
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.fw_rule, "LAN_WAN-D-40001")
+    no_outputs_from:
+      - split_streams._unmatched
+
+  - name: Other syslog events stay in the syslog stream
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.1
+          message: "<14>Nov 11 18:39:10 gw CEF:0|Ubiquiti|UniFi Network|11.0.99|203|Blocked by Firewall|4|UNIFIcategory=Security proto=UDP src=192.0.2.124 dpt=53"
+    outputs:
+      - extract_from: split_streams._unmatched
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.cef_signature_id, "203")
+              assert!(!exists(.fw_rule))
+    no_outputs_from:
+      - split_streams.firewall
