@@ -4,9 +4,9 @@ x-default-logging: &default-logging
     max-size: 10m
     max-file: '3'
 services:
-  # Gives the data directory to the OpenObserve user before each start. Docker
-  # creates a missing bind-mount source as root, and an earlier root run leaves
-  # root-owned files; both make OpenObserve panic with "Permission denied".
+  # Gives the data and backup directories to the OpenObserve user before each
+  # start. Docker creates a missing bind-mount source as root, and an earlier root
+  # run leaves root-owned files; both make OpenObserve panic with "Permission denied".
   openobserve-init:
     image: busybox:1.37
     container_name: openobserve-init
@@ -16,12 +16,13 @@ services:
     command:
       - sh
       - -c
-      - find /data \( ! -user "$$PUID" -o ! -group "$$PGID" \) -exec chown -h "$$PUID:$$PGID" {} +
+      - find /data /backup \( ! -user "$$PUID" -o ! -group "$$PGID" \) -exec chown -h "$$PUID:$$PGID" {} +
     environment:
       PUID: "${PUID:?Set PUID}"
       PGID: "${PGID:?Set PGID}"
     volumes:
       - ${OPENOBSERVE_DATA_DIR:?Set OPENOBSERVE_DATA_DIR}:/data
+      - ${OPENOBSERVE_BACKUP_DIR:?Set OPENOBSERVE_BACKUP_DIR}:/backup
     security_opt:
       - no-new-privileges:true
     logging: *default-logging
@@ -72,6 +73,39 @@ services:
       traefik.http.routers.openobserve.tls.certresolver: "stepca"
 
     logging: *default-logging
+  # Online copy of the SQLite metadata (users, alerts, dashboards, functions,
+  # list of Parquet files) to OPENOBSERVE_BACKUP_DIR, with retention. Script in
+  # the backup_script entry under configs: at the end of this file.
+  openobserve-backup:
+    image: python:3.13-alpine3.22
+    container_name: openobserve-backup
+    restart: unless-stopped
+    user: "${PUID:?Set PUID}:${PGID:?Set PGID}"
+    network_mode: none
+    read_only: true
+    depends_on:
+      openobserve-init:
+        condition: service_completed_successfully
+    command: ["python", "/opt/openobserve-backup.py"]
+    environment:
+      BACKUP_INTERVAL_HOURS: "${OPENOBSERVE_BACKUP_INTERVAL_HOURS:-24}"
+      BACKUP_KEEP_DAYS: "${OPENOBSERVE_BACKUP_KEEP_DAYS:-14}"
+    configs:
+      - source: backup_script
+        target: /opt/openobserve-backup.py
+    volumes:
+      # Read-write: SQLite writes the -shm file of a WAL database even to read it.
+      - ${OPENOBSERVE_DATA_DIR:?Set OPENOBSERVE_DATA_DIR}:/data
+      - ${OPENOBSERVE_BACKUP_DIR:?Set OPENOBSERVE_BACKUP_DIR}:/backup
+    healthcheck:
+      # Unhealthy when the newest backup is older than twice the interval.
+      test: ["CMD", "python", "/opt/openobserve-backup.py", "--check"]
+      interval: 5m
+      timeout: 30s
+      start_period: 10m
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
   # Syslog receiver (UDP) forwarding to OpenObserve over HTTP. Pipeline in the
   # vector_config entry under configs: at the end of this file.
   openobserve-syslog:
@@ -108,6 +142,127 @@ secrets:
   openobserve_ingest_password:
     environment: OPENOBSERVE_INGEST_PASSWORD
 configs:
+  # Backup script of openobserve-backup. Compose interpolates $ here too: the
+  # script must not contain one.
+  backup_script:
+    content: |
+      """Online backup of the OpenObserve SQLite metadata, with retention.
+
+      Without argument: loop, one backup every BACKUP_INTERVAL_HOURS (at start if
+      the newest one is older), then deletion of the backups older than
+      BACKUP_KEEP_DAYS. --once: one backup now. --check: healthcheck, fails when
+      the newest backup is older than twice the interval.
+      """
+      import datetime
+      import gzip
+      import os
+      import pathlib
+      import shutil
+      import sqlite3
+      import sys
+      import time
+
+      SOURCE = pathlib.Path(os.environ.get("BACKUP_SOURCE", "/data/db/metadata.sqlite"))
+      TARGET_DIR = pathlib.Path(os.environ.get("BACKUP_DIR", "/backup"))
+      PREFIX = "metadata-"
+      SUFFIX = ".sqlite.gz"
+      RETRY_SECONDS = 3600
+
+
+      def log(level, message):
+          now = datetime.datetime.now(datetime.timezone.utc)
+          print(f"{now:%Y-%m-%dT%H:%M:%SZ} {level} {message}", flush=True)
+
+
+      def positive_setting(name):
+          try:
+              value = float(os.environ[name])
+          except (KeyError, ValueError):
+              value = 0
+          if value <= 0:
+              log("ERROR", f"{name} must be a positive number")
+              sys.exit(2)
+          return value
+
+
+      def existing_backups():
+          """Backups made by this script, oldest first."""
+          return sorted(TARGET_DIR.glob(PREFIX + "*" + SUFFIX), key=lambda p: p.stat().st_mtime)
+
+
+      def backup_once():
+          stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+          final = TARGET_DIR / f"{PREFIX}{stamp}{SUFFIX}"
+          tmp_db = TARGET_DIR / f".{PREFIX}{stamp}.sqlite.tmp"
+          tmp_gz = TARGET_DIR / f".{PREFIX}{stamp}{SUFFIX}.tmp"
+          try:
+              # mode=ro: never creates the source when it is missing.
+              source = sqlite3.connect(f"file:{SOURCE}?mode=ro", uri=True, timeout=60)
+              try:
+                  copy = sqlite3.connect(tmp_db)
+                  try:
+                      # SQLite online backup API: a consistent snapshot while
+                      # OpenObserve keeps writing.
+                      source.backup(copy)
+                      result = copy.execute("PRAGMA integrity_check").fetchone()[0]
+                  finally:
+                      copy.close()
+              finally:
+                  source.close()
+              if result != "ok":
+                  raise RuntimeError(f"integrity_check of the copy failed: {result}")
+              with open(tmp_db, "rb") as raw, gzip.open(tmp_gz, "wb") as packed:
+                  shutil.copyfileobj(raw, packed)
+              os.replace(tmp_gz, final)
+          finally:
+              tmp_db.unlink(missing_ok=True)
+              tmp_gz.unlink(missing_ok=True)
+          log("INFO", f"backup written: {final} ({final.stat().st_size} bytes)")
+          return final
+
+
+      def prune(keep_seconds, newest):
+          """Deletes old backups, only after a successful one, never the newest."""
+          cutoff = time.time() - keep_seconds
+          for path in existing_backups():
+              if path != newest and path.stat().st_mtime < cutoff:
+                  path.unlink()
+                  log("INFO", f"backup deleted (retention): {path}")
+
+
+      def seconds_until_due(interval_seconds):
+          backups = existing_backups()
+          if not backups:
+              return 0
+          return max(0, backups[-1].stat().st_mtime + interval_seconds - time.time())
+
+
+      def main():
+          interval_seconds = positive_setting("BACKUP_INTERVAL_HOURS") * 3600
+          keep_seconds = positive_setting("BACKUP_KEEP_DAYS") * 86400
+          mode = sys.argv[1] if len(sys.argv) > 1 else ""
+          if mode == "--check":
+              backups = existing_backups()
+              fresh = bool(backups) and time.time() - backups[-1].stat().st_mtime < 2 * interval_seconds
+              sys.exit(0 if fresh else 1)
+          if mode == "--once":
+              prune(keep_seconds, backup_once())
+              return
+          log("INFO", f"backing up {SOURCE} to {TARGET_DIR} every {interval_seconds / 3600:g} h")
+          while True:
+              wait = seconds_until_due(interval_seconds)
+              if wait > 0:
+                  time.sleep(wait)
+                  continue
+              try:
+                  prune(keep_seconds, backup_once())
+              except Exception as error:  # Logged and retried: the loop must not die.
+                  log("ERROR", f"backup failed, retry in {RETRY_SECONDS} s: {error!r}")
+                  time.sleep(RETRY_SECONDS)
+
+
+      if __name__ == "__main__":
+          main()
   # Vector pipeline. Compose interpolates $ here: write $$ for a literal $.
   vector_config:
     content: |
