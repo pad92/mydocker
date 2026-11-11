@@ -2,7 +2,8 @@
 # Pre-commit hook - Blocks validation if secrets/IPs are detected
 
 # Get the root of the git repository
-GIT_DIR=$(git rev-parse --show-toplevel)
+# Not GIT_DIR: git exports it to hooks (in worktrees) and git diff would use the new value.
+REPO_ROOT=$(git rev-parse --show-toplevel)
 
 # Run the analyzer on indexed (staged) changes
-python3 "$GIT_DIR/.githooks/git-leak-shield.py" --staged
+python3 "$REPO_ROOT/.githooks/git-leak-shield.py" --staged

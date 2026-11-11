@@ -23,6 +23,10 @@ class FalsePositives(unittest.TestCase):
         line = "      password: SECRET[compose.openobserve_ingest_password]"
         self.assertEqual(finding_types(line), [])
 
+    def test_rfc5737_documentation_ips_are_not_leaks(self):
+        line = '          message: "src=192.0.2.124 dst=198.51.100.7 nat=203.0.113.9"'
+        self.assertEqual(finding_types(line, "stack/tests/vector_test.yaml"), [])
+
 
 class RealLeaksStillDetected(unittest.TestCase):
     def test_hardcoded_password(self):
@@ -33,6 +37,9 @@ class RealLeaksStillDetected(unittest.TestCase):
 
     def test_private_ip(self):
         self.assertIn("PRIVATE_IP", finding_types("    address: 192.168.1.10:5514"))
+
+    def test_public_ip_next_to_a_documentation_range(self):
+        self.assertIn("PUBLIC_IP", finding_types("    address: 192.0.20.1:5514"))
 
     def test_loopback_ip(self):
         self.assertIn("PRIVATE_IP", finding_types("    address: 127.0.0.1:5514"))
