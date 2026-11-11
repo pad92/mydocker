@@ -28,8 +28,7 @@ services:
   openobserve:
     # OSS edition (AGPL-3.0). The o2cr.ai "openobserve-enterprise" image from the
     # upstream quickstart is under a commercial license.
-    # v1.1.2 is not published on public.ecr.aws yet (checked 2026-11-07).
-    image: public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_VERSION:-v1.1.1}
+    image: public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_VERSION:-v1.1.2}
     container_name: openobserve
     restart: unless-stopped
     # The image runs as root by default; openobserve-init gives /data to this user.

@@ -19,7 +19,7 @@ The web UI and the HTTP ingestion API are both served on port `5080` and publish
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
-| `OPENOBSERVE_VERSION` | Image tag. | `v1.1.1` |
+| `OPENOBSERVE_VERSION` | Image tag. | `v1.1.2` |
 | `OPENOBSERVE_DOMAIN` | Hostname routed by Traefik. Also used to build `ZO_WEB_URL`. | `openobserve.example.com` |
 | `OPENOBSERVE_DATA_DIR` | Host directory mounted on `/data` (Parquet data and SQLite metadata). Its ownership is set to `PUID:PGID` by `openobserve-init` on each start. | `/srv/openobserve/data` |
 | `PGID` | Group ID matching host permissions to run the container. | *None (empty)* |
