@@ -21,7 +21,7 @@ The web UI and the HTTP ingestion API are both served on port `5080` and publish
 | :--- | :--- | :--- |
 | `OPENOBSERVE_VERSION` | Image tag. | `v1.1.2` |
 | `OPENOBSERVE_DOMAIN` | Hostname routed by Traefik. Also used to build `ZO_WEB_URL`. | `openobserve.example.com` |
-| `OPENOBSERVE_DATA_DIR` | Host directory mounted on `/data` (Parquet data and SQLite metadata). Its ownership is set to `PUID:PGID` by `openobserve-init` on each start. | `/srv/openobserve/data` |
+| `OPENOBSERVE_DATA_DIR` | Host directory mounted on `/data` (Parquet data and SQLite metadata; `openobserve-backup` copies the metadata). Its ownership is set to `PUID:PGID` by `openobserve-init` on each start. | `/srv/openobserve/data` |
 | `PGID` | Group ID matching host permissions to run the container. | *None (empty)* |
 | `PUID` | User ID matching host permissions to run the container. | *None (empty)* |
 | `ZO_ROOT_USER_EMAIL` | Email of the root user, created on first start. | `admin@example.com` |
@@ -54,7 +54,62 @@ curl -fsS "https://$OPENOBSERVE_DOMAIN/healthz"
 
 ---
 
-## 2. Syslog Receiver (`openobserve-syslog`)
+## 2. Metadata Backup (`openobserve-backup`)
+
+### Role
+Copies the SQLite metadata database (`OPENOBSERVE_DATA_DIR/db/metadata.sqlite`) to `OPENOBSERVE_BACKUP_DIR` as `metadata-<UTC time>.sqlite.gz`. This database holds users, alerts, destinations, dashboards, functions, pipelines, stream settings and the list of Parquet files.
+
+- The copy uses the SQLite online backup API: OpenObserve keeps running, and the copy includes the changes still in the `-wal` file. Each copy passes `PRAGMA integrity_check` before it is compressed and given its final name.
+- One backup every `OPENOBSERVE_BACKUP_INTERVAL_HOURS`. At startup, a backup is made right away if the newest one is older than the interval, so restarts do not pile up copies.
+- After each successful backup, the `metadata-*.sqlite.gz` files older than `OPENOBSERVE_BACKUP_KEEP_DAYS` are deleted. The newest one is always kept, and other files in the directory are never touched. A failed backup deletes nothing and is retried one hour later.
+- The healthcheck turns the container `unhealthy` when the newest backup is older than twice the interval.
+- The container uses `python:3.13-alpine3.22` with no network and a read-only root filesystem. The script is the `backup_script` entry under `configs:` in [`docker-compose.yml`](./docker-compose.yml). Compose interpolates `$` in this block too, so the script contains none.
+
+The Parquet files (`OPENOBSERVE_DATA_DIR/stream/`) are not copied: with 30 days of retention they can weigh tens of GB. They are written once and then only deleted by compaction, so the host backup tool (rsync, restic, Hyper Backup...) can copy `OPENOBSERVE_DATA_DIR/stream/` as is. Include `OPENOBSERVE_BACKUP_DIR` in that host backup as well, since a copy kept on the same disk does not survive a disk failure. `cache/`, `tmp/` and `mmdb/` are rebuilt by OpenObserve.
+
+### Service-Specific Configuration Variables
+
+| Variable Name | Description | Placeholder / Default |
+| :--- | :--- | :--- |
+| `OPENOBSERVE_BACKUP_DIR` | Host directory mounted on `/backup`. Ownership set to `PUID:PGID` by `openobserve-init`. Preferably on another disk than `OPENOBSERVE_DATA_DIR`. | `/srv/openobserve/backup` |
+| `OPENOBSERVE_BACKUP_INTERVAL_HOURS` | Hours between two backups. | `24` |
+| `OPENOBSERVE_BACKUP_KEEP_DAYS` | Days a backup is kept. | `14` |
+
+### Manual Backup
+
+Before an upgrade, for example:
+
+```bash
+docker exec openobserve-backup python /opt/openobserve-backup.py --once
+```
+
+### Restore
+
+The metadata lists the Parquet files of each stream. Restore it into the same `OPENOBSERVE_DATA_DIR`, with its `stream/` directory, or with a `stream/` directory restored from the same time. Logs written after the backup are no longer listed and disappear from searches. Parquet files that compaction or retention deleted after the backup are still listed, so searches over their time range may return errors.
+
+1. Stop `openobserve` (Portainer, or `docker stop openobserve`). `openobserve-syslog` can keep running: Vector retries and loses nothing for a few minutes.
+2. Move the current database aside with its `-wal` and `-shm` files, then restore the chosen backup. A `-wal` file left next to the restored database would be replayed on it by SQLite.
+
+   ```bash
+   cd "$OPENOBSERVE_DATA_DIR/db"
+   mkdir -p ../db.before-restore && mv metadata.sqlite* ../db.before-restore/
+   gunzip -c "$OPENOBSERVE_BACKUP_DIR/metadata-20260101T030000Z.sqlite.gz" > metadata.sqlite
+   ```
+
+3. Redeploy the stack, or `docker start openobserve-init openobserve`. `openobserve-init` gives the restored file back to `PUID:PGID`.
+4. Check `https://<OPENOBSERVE_DOMAIN>/healthz`, then the alerts and dashboards in the UI. Delete `db.before-restore/` once everything works.
+
+### Testing the Backup
+
+[`tests/test_backup.sh`](./tests/test_backup.sh) runs the script, as Compose renders it with `.env.example`, against a throwaway SQLite database in WAL mode: missing database, uncheckpointed rows, retention, healthcheck and invalid settings. It needs Docker, Docker Compose 2.23 or later and `jq`.
+
+```bash
+./tests/test_backup.sh
+```
+
+---
+
+## 3. Syslog Receiver (`openobserve-syslog`)
 
 ### Role
 OpenObserve removed its built-in syslog listener in v0.16.0. This [Vector](https://vector.dev/) container receives syslog over UDP (UniFi, switches, firewalls) and forwards it to OpenObserve over HTTP, in the `syslog` stream of the `default` organization.
