@@ -8,26 +8,115 @@ services:
     image: lscr.io/linuxserver/librespeed:latest
     container_name: librespeed
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-      - CUSTOM_RESULTS=${CUSTOM_RESULTS}
-      - DB_TYPE=${DB_TYPE}
-      - USE_NEW_DESIGN=${USE_NEW_DESIGN}
+      PUID: "${PUID:?Set PUID}"
+      PGID: "${PGID:?Set PGID}"
+      TZ: "${TZ:-Etc/UTC}"
+      CUSTOM_RESULTS: "${CUSTOM_RESULTS:-false}"
+      DB_TYPE: "${DB_TYPE:-sqlite}"
+      # Password of /results/stats.php. The image writes it as-is into
+      # telemetry_settings.php: an empty value lets anyone log in with an empty
+      # password, hence the required variable.
+      PASSWORD: "${LIBRESPEED_STATS_PASSWORD:?Set LIBRESPEED_STATS_PASSWORD}"
+      # Read by the server_list script under configs:, not by the image.
+      SERVER_LIST: "${LIBRESPEED_SERVER_LIST:-local}"
     volumes:
-      - ${LIBRESPEED_DATA_DIR}:/config
+      - ${LIBRESPEED_DATA_DIR:?Set LIBRESPEED_DATA_DIR}:/config
+    # The image has no variable for the design: it reads useNewDesign from this
+    # file. Compose rewrites it on each container creation, so edits made by
+    # hand in the data directory are lost.
+    configs:
+      - source: design_config
+        target: /config/www/config.json
+      # Run by the image after its own init, see migrate_index under configs:.
+      - source: migrate_index
+        target: /custom-cont-init.d/10-migrate-index
+        mode: 0755
+      # Run after migrate_index, see server_list under configs:.
+      - source: server_list
+        target: /custom-cont-init.d/20-server-list
+        mode: 0755
     restart: unless-stopped
+    # The image drops to PUID:PGID through s6 and never needs to gain privileges.
+    security_opt:
+      - no-new-privileges:true
     networks:
       traefik_gateway:
     labels:
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.librespeed.loadbalancer.server.port: "80"
-      traefik.http.routers.librespeed.rule: "Host(`${LIBRESPEED_DOMAIN}`)"
-      traefik.http.routers.librespeed.entrypoints: "web"
-      traefik.http.routers.librespeed.tls: "false"
+
+      traefik.http.routers.librespeed_http.rule: "Host(`${LIBRESPEED_DOMAIN:?Set LIBRESPEED_DOMAIN}`)"
+      traefik.http.routers.librespeed_http.entrypoints: web
+      traefik.http.routers.librespeed_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      # getIP.php trusts Client-IP before X-Forwarded-For. Traefik rewrites
+      # X-Forwarded-For and X-Real-Ip but forwards Client-IP untouched, so a
+      # client could fake the IP shown and stored in the results.
+      traefik.http.middlewares.librespeed-drop-client-ip.headers.customrequestheaders.Client-IP: ""
+
+      # No compress middleware: it would skew the download measurement.
+      traefik.http.routers.librespeed.rule: "Host(`${LIBRESPEED_DOMAIN:?Set LIBRESPEED_DOMAIN}`)"
+      traefik.http.routers.librespeed.entrypoints: "websecure"
+      traefik.http.routers.librespeed.tls: "true"
+      traefik.http.routers.librespeed.tls.certresolver: "stepca"
+      traefik.http.routers.librespeed.middlewares: librespeed-drop-client-ip
 
     logging: *default-logging
 networks:
   traefik_gateway:
     external: true
+configs:
+  # Inline rather than a ./config.json bind mount, which Portainer would resolve
+  # on its own disk (see openobserve/README.md). Needs Docker Compose 2.23+.
+  design_config:
+    content: |
+      {
+        "useNewDesign": ${LIBRESPEED_NEW_DESIGN:-true}
+      }
+  # The image ships a list of public servers on the Internet. The modern design
+  # pings them and tests against the fastest one (often London), so the test
+  # measured the Internet link instead of this server. SERVER_LIST picks what
+  # this script writes to server-list.json on each start:
+  # - local: a single entry for this server, selected without pinging. "/" is
+  #   the page's own origin, so it works under any hostname without CORS;
+  # - public: the list shipped with the image;
+  # - custom: nothing, the file in the data directory is kept as edited.
+  server_list:
+    content: |
+      #!/bin/bash
+      list=/config/www/server-list.json
+      mode="$${SERVER_LIST:-local}"
+      case "$$mode" in
+        local)
+          printf '%s\n' '[{"name": "Local server", "server": "/", "id": 1,' \
+            '"dlURL": "backend/garbage.php", "ulURL": "backend/empty.php",' \
+            '"pingURL": "backend/empty.php", "getIpURL": "backend/getIP.php"}]' > "$$list"
+          ;;
+        public) cp /app/www/public/server-list.json.bak "$$list" ;;
+        custom) echo "[server-list] custom: server-list.json left as is"; exit 0 ;;
+        *) echo "[server-list] unknown SERVER_LIST '$$mode', server-list.json left as is"; exit 1 ;;
+      esac
+      chown abc:abc "$$list"
+      echo "[server-list] $$mode server list written"
+  # The image copies index.html into /config only when it is missing, so a data
+  # directory from an older image keeps a classic page that never loads
+  # design-switch.js and ignores useNewDesign. This puts the current switcher in
+  # place once and keeps the old page as index.html.old. A page that already
+  # loads design-switch.js, customised or not, is left alone. Compose
+  # interpolates $ here: write $$ for a literal $.
+  migrate_index:
+    content: |
+      #!/bin/bash
+      page=/config/www/index.html
+      switcher=/app/www/public/index.html.bak
+      if [ -f "$$page" ] && ! grep -q design-switch.js "$$page" \
+        && grep -q design-switch.js "$$switcher"; then
+        mv "$$page" "$$page.old"
+        cp "$$switcher" "$$page"
+        chown abc:abc "$$page" "$$page.old"
+        echo "[migrate-index] old index.html moved to index.html.old, design switcher installed"
+      fi
