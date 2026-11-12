@@ -36,13 +36,15 @@ The compose file sets it from `LIBRESPEED_NEW_DESIGN` through the inline `design
 
 A visitor can still force a design with `?design=new` or `?design=classic`.
 
+The switch only works if `index.html` loads `design-switch.js`. The image copies `index.html` into `${LIBRESPEED_DATA_DIR}/www/` only when it is missing, so a data directory created by an older image keeps a classic page that ignores `useNewDesign`. The `migrate_index` script under `configs:`, run by the image from `/custom-cont-init.d`, handles this on start: it moves such a page to `index.html.old` and installs the current switcher. A page that already loads `design-switch.js` is left alone, so customise that one rather than the old page.
+
 ### Client IP Detection
 
 The backend reads the client IP from `Client-IP`, then `X-Real-Ip`, then `X-Forwarded-For`. Traefik sets the last two itself, but forwards `Client-IP` as sent by the client. The `librespeed-drop-client-ip` middleware removes it, so the IP shown and stored is the one Traefik saw.
 
 ### Tests
 
-`tests/test_stack.sh` renders the compose file with `.env.example` and checks the HTTPS routing, the required password, `no-new-privileges` and the `config.json` content. It then starts the stack with `docker compose` on a throwaway network, over a data directory that already holds a classic `config.json`, and checks that the modern design is served and that the stats page refuses an empty password and accepts the configured one. It needs Docker, Docker Compose 2.23+, `jq` and `curl`.
+`tests/test_stack.sh` renders the compose file with `.env.example` and checks the HTTPS routing, the required password, `no-new-privileges` and the `config.json` content. It then starts the stack with `docker compose` on a throwaway network, over a data directory that already holds a classic `config.json` and `index.html`. It checks that the old page is replaced once by the switcher and kept as `index.html.old`, that the modern design is served and that the stats page refuses an empty password and accepts the configured one. It needs Docker, Docker Compose 2.23+, `jq` and `curl`.
 
 ```bash
 ./tests/test_stack.sh

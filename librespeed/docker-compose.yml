@@ -25,6 +25,10 @@ services:
     configs:
       - source: design_config
         target: /config/www/config.json
+      # Run by the image after its own init, see migrate_index under configs:.
+      - source: migrate_index
+        target: /custom-cont-init.d/10-migrate-index
+        mode: 0755
     restart: unless-stopped
     # The image drops to PUID:PGID through s6 and never needs to gain privileges.
     security_opt:
@@ -67,3 +71,21 @@ configs:
       {
         "useNewDesign": ${LIBRESPEED_NEW_DESIGN:-true}
       }
+  # The image copies index.html into /config only when it is missing, so a data
+  # directory from an older image keeps a classic page that never loads
+  # design-switch.js and ignores useNewDesign. This puts the current switcher in
+  # place once and keeps the old page as index.html.old. A page that already
+  # loads design-switch.js, customised or not, is left alone. Compose
+  # interpolates $ here: write $$ for a literal $.
+  migrate_index:
+    content: |
+      #!/bin/bash
+      page=/config/www/index.html
+      switcher=/app/www/public/index.html.bak
+      if [ -f "$$page" ] && ! grep -q design-switch.js "$$page" \
+        && grep -q design-switch.js "$$switcher"; then
+        mv "$$page" "$$page.old"
+        cp "$$switcher" "$$page"
+        chown abc:abc "$$page" "$$page.old"
+        echo "[migrate-index] old index.html moved to index.html.old, design switcher installed"
+      fi

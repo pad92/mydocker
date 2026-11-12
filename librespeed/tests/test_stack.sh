@@ -2,7 +2,9 @@
 # Checks the compose file rendered with .env.example, then starts the stack with
 # docker compose (on a throwaway network, no host port) and checks that:
 # - /results/stats.php refuses an empty password and accepts the configured one;
-# - config.json enables the modern design, even over an existing classic one.
+# - config.json enables the modern design, even over an existing classic one;
+# - a classic index.html left by an older image is replaced by the design
+#   switcher once, and kept as index.html.old.
 # Needs Docker, Docker Compose 2.23+, jq and curl. Usage: ./tests/test_stack.sh
 set -euo pipefail
 
@@ -55,10 +57,12 @@ if render LIBRESPEED_STATS_PASSWORD= >/dev/null 2>&1; then
 fi
 echo "OK: static checks"
 
-# Runtime check. The data directory already holds a classic config.json, as on
-# a deployment made before LIBRESPEED_NEW_DESIGN existed.
+# Runtime check. The data directory already holds a classic config.json and a
+# classic index.html, as on a deployment made with an older image.
 mkdir -p "$work_dir/config/www"
 printf '{\n  "useNewDesign": false\n}\n' > "$work_dir/config/www/config.json"
+old_page='<html><body>classic page</body></html>'
+printf '%s\n' "$old_page" > "$work_dir/config/www/index.html"
 # Own container name and network, so the test neither clashes with a running
 # librespeed nor needs the external traefik_gateway network.
 cat > "$work_dir/override.yml" <<EOF
@@ -75,10 +79,29 @@ compose -f "$stack_dir/docker-compose.yml" -f "$work_dir/override.yml" up -d --q
 ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$project")"
 [ -n "$ip" ] || fail "no IP for $project"
 base="http://$ip"
-for _ in $(seq 1 60); do
-  curl -fs -o /dev/null "$base/results/stats.php" && break
-  sleep 2
-done
+wait_ready() {
+  for _ in $(seq 1 60); do
+    curl -fs -o /dev/null "$base/results/stats.php" && return 0
+    sleep 2
+  done
+  fail "librespeed did not answer"
+}
+wait_ready
+
+# Checks that / serves the switcher and index.html.old holds the classic page.
+check_index() {
+  curl -fs "$base/" | grep -q design-switch.js \
+    || fail "index.html does not load design-switch.js ($1)"
+  [ "$(cat "$work_dir/config/www/index.html.old")" = "$old_page" ] \
+    || fail "index.html.old does not hold the classic page ($1)"
+}
+check_index "first start"
+# A second start must leave both files alone.
+docker restart "$project" >/dev/null
+sleep 5
+wait_ready
+check_index "after restart"
+echo "OK: classic index.html replaced once by the design switcher"
 
 [ "$(curl -fs "$base/config.json" | jq -r .useNewDesign)" = true ] \
   || fail "config.json does not enable the modern design"
