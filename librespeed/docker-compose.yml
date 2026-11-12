@@ -17,6 +17,8 @@ services:
       # telemetry_settings.php: an empty value lets anyone log in with an empty
       # password, hence the required variable.
       PASSWORD: "${LIBRESPEED_STATS_PASSWORD:?Set LIBRESPEED_STATS_PASSWORD}"
+      # Read by the server_list script under configs:, not by the image.
+      SERVER_LIST: "${LIBRESPEED_SERVER_LIST:-local}"
     volumes:
       - ${LIBRESPEED_DATA_DIR:?Set LIBRESPEED_DATA_DIR}:/config
     # The image has no variable for the design: it reads useNewDesign from this
@@ -28,6 +30,10 @@ services:
       # Run by the image after its own init, see migrate_index under configs:.
       - source: migrate_index
         target: /custom-cont-init.d/10-migrate-index
+        mode: 0755
+      # Run after migrate_index, see server_list under configs:.
+      - source: server_list
+        target: /custom-cont-init.d/20-server-list
         mode: 0755
     restart: unless-stopped
     # The image drops to PUID:PGID through s6 and never needs to gain privileges.
@@ -71,6 +77,31 @@ configs:
       {
         "useNewDesign": ${LIBRESPEED_NEW_DESIGN:-true}
       }
+  # The image ships a list of public servers on the Internet. The modern design
+  # pings them and tests against the fastest one (often London), so the test
+  # measured the Internet link instead of this server. SERVER_LIST picks what
+  # this script writes to server-list.json on each start:
+  # - local: a single entry for this server, selected without pinging. "/" is
+  #   the page's own origin, so it works under any hostname without CORS;
+  # - public: the list shipped with the image;
+  # - custom: nothing, the file in the data directory is kept as edited.
+  server_list:
+    content: |
+      #!/bin/bash
+      list=/config/www/server-list.json
+      mode="$${SERVER_LIST:-local}"
+      case "$$mode" in
+        local)
+          printf '%s\n' '[{"name": "Local server", "server": "/", "id": 1,' \
+            '"dlURL": "backend/garbage.php", "ulURL": "backend/empty.php",' \
+            '"pingURL": "backend/empty.php", "getIpURL": "backend/getIP.php"}]' > "$$list"
+          ;;
+        public) cp /app/www/public/server-list.json.bak "$$list" ;;
+        custom) echo "[server-list] custom: server-list.json left as is"; exit 0 ;;
+        *) echo "[server-list] unknown SERVER_LIST '$$mode', server-list.json left as is"; exit 1 ;;
+      esac
+      chown abc:abc "$$list"
+      echo "[server-list] $$mode server list written"
   # The image copies index.html into /config only when it is missing, so a data
   # directory from an older image keeps a classic page that never loads
   # design-switch.js and ignores useNewDesign. This puts the current switcher in

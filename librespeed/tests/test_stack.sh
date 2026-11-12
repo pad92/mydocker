@@ -3,6 +3,9 @@
 # docker compose (on a throwaway network, no host port) and checks that:
 # - /results/stats.php refuses an empty password and accepts the configured one;
 # - config.json enables the modern design, even over an existing classic one;
+# - server-list.json holds only this server by default, and its URLs answer;
+#   LIBRESPEED_SERVER_LIST=custom keeps an edited file, =public restores the
+#   image's list;
 # - a classic index.html left by an older image is replaced by the design
 #   switcher once, and kept as index.html.old.
 # Needs Docker, Docker Compose 2.23+, jq and curl. Usage: ./tests/test_stack.sh
@@ -51,16 +54,22 @@ for design in true false; do
   [ "$(render LIBRESPEED_NEW_DESIGN="$design" | jq -r '.configs.design_config.content | fromjson | .useNewDesign')" = "$design" ] \
     || fail "LIBRESPEED_NEW_DESIGN=$design is not rendered as valid JSON"
 done
+[ "$(jq -r "$service.environment.SERVER_LIST" <<<"$config")" = local ] \
+  || fail "SERVER_LIST does not default to local"
+[ "$(render LIBRESPEED_SERVER_LIST=custom | jq -r "$service.environment.SERVER_LIST")" = custom ] \
+  || fail "LIBRESPEED_SERVER_LIST is not passed to the container"
 # An empty stats password must stop the deployment.
 if render LIBRESPEED_STATS_PASSWORD= >/dev/null 2>&1; then
   fail "compose accepts an empty LIBRESPEED_STATS_PASSWORD"
 fi
 echo "OK: static checks"
 
-# Runtime check. The data directory already holds a classic config.json and a
-# classic index.html, as on a deployment made with an older image.
+# Runtime check. The data directory already holds a classic config.json, a
+# public server list and a classic index.html, as on a deployment made with an
+# older image.
 mkdir -p "$work_dir/config/www"
 printf '{\n  "useNewDesign": false\n}\n' > "$work_dir/config/www/config.json"
+printf '[{"name":"London","server":"//lon.example/backend"}]\n' > "$work_dir/config/www/server-list.json"
 old_page='<html><body>classic page</body></html>'
 printf '%s\n' "$old_page" > "$work_dir/config/www/index.html"
 # Own container name and network, so the test neither clashes with a running
@@ -74,11 +83,17 @@ networks:
     external: false
     name: $project
 EOF
-compose -f "$stack_dir/docker-compose.yml" -f "$work_dir/override.yml" up -d --quiet-pull >/dev/null 2>&1 \
-  || fail "docker compose up failed"
-ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$project")"
-[ -n "$ip" ] || fail "no IP for $project"
-base="http://$ip"
+# Creates or recreates the container, with the environment given as VAR=value.
+start() {
+  env "$@" docker compose --project-name "$project" --project-directory "$stack_dir" \
+    --env-file "$work_dir/test.env" -f "$stack_dir/docker-compose.yml" \
+    -f "$work_dir/override.yml" up -d --quiet-pull >/dev/null 2>&1 \
+    || fail "docker compose up failed ($*)"
+  ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$project")"
+  [ -n "$ip" ] || fail "no IP for $project"
+  base="http://$ip"
+}
+start
 wait_ready() {
   for _ in $(seq 1 60); do
     curl -fs -o /dev/null "$base/results/stats.php" && return 0
@@ -107,6 +122,16 @@ echo "OK: classic index.html replaced once by the design switcher"
   || fail "config.json does not enable the modern design"
 echo "OK: config.json enables the modern design"
 
+list="$(curl -fs "$base/server-list.json")"
+[ "$(jq length <<<"$list")" = 1 ] || fail "server-list.json does not hold a single server"
+[ "$(jq -r '.[0].server' <<<"$list")" = / ] || fail "the local server is not the page's own origin"
+# Builds each URL as speedtest.js does (server + dlURL...), relative to the page.
+for key in dlURL ulURL pingURL getIpURL; do
+  url="$base$(jq -r ".[0].server + .[0].$key" <<<"$list")"
+  curl -fs -o /dev/null "$url" || fail "$key of the local server does not answer: $url"
+done
+echo "OK: server-list.json holds only the local server, and its URLs answer"
+
 # Logs in with $1 in a fresh session, prints the stats page body.
 stats_after_login() {
   local jar="$work_dir/cookies" stats="$base/results/stats.php"
@@ -122,3 +147,16 @@ fi
 stats_after_login test0pass | grep -q 'Search test results' \
   || fail "configured password does not open the stats page"
 echo "OK: stats page refuses an empty password and accepts the configured one"
+
+# custom keeps a hand-edited list; public restores the image's list.
+edited='[{"name":"Edited","server":"/","id":7}]'
+printf '%s\n' "$edited" > "$work_dir/config/www/server-list.json"
+start LIBRESPEED_SERVER_LIST=custom
+wait_ready
+[ "$(curl -fs "$base/server-list.json" | jq -c .)" = "$edited" ] \
+  || fail "LIBRESPEED_SERVER_LIST=custom does not keep the edited list"
+start LIBRESPEED_SERVER_LIST=public
+wait_ready
+[ "$(curl -fs "$base/server-list.json" | jq length)" -gt 1 ] \
+  || fail "LIBRESPEED_SERVER_LIST=public does not restore the public list"
+echo "OK: LIBRESPEED_SERVER_LIST=custom keeps the file, =public restores the image's list"
