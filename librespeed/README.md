@@ -23,19 +23,16 @@ The web server listens on port `80` and is published through Traefik only, over 
 | `LIBRESPEED_STATS_PASSWORD` | Password of `/results/stats.php`, passed to the image as `PASSWORD`. Required: with an empty value the image accepts an empty password and the results, client IPs included, are open to anyone. Letters and digits only, because the image writes it into a `sed` command without escaping. Generate one with `openssl rand -hex 24`. | `CHANGEME` |
 | `CUSTOM_RESULTS` | `true` moves the results page to `/config/www/results/index.php` so it can be edited. | `false` |
 | `DB_TYPE` | Results database: `sqlite`, `mysql` or `postgresql`. The other two also need `DB_HOSTNAME`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD` (and `DB_PORT` for MySQL), which this compose file does not pass. | `sqlite` |
+| `LIBRESPEED_NEW_DESIGN` | `true` shows the modern design by default, `false` the classic one. Only `true` or `false`: the value is written as-is into a JSON file. | `true` |
 | `PGID` | Group ID matching host permissions to run the container. Required. | *None (empty)* |
 | `PUID` | User ID matching host permissions to run the container. Required. | *None (empty)* |
 | `TZ` | Timezone of the container and its logs. | `Etc/UTC` |
 
 ### Classic or Modern Design
 
-The LinuxServer image has no environment variable for the design. The upstream `USE_NEW_DESIGN` variable only exists in the `ghcr.io/librespeed/speedtest` image. Here the default comes from `useNewDesign` in `${LIBRESPEED_DATA_DIR}/www/config.json`, created with `false` on first start:
+The LinuxServer image has no environment variable for the design. The upstream `USE_NEW_DESIGN` variable only exists in the `ghcr.io/librespeed/speedtest` image. This one reads `useNewDesign` from `/config/www/config.json`.
 
-```json
-{
-  "useNewDesign": true
-}
-```
+The compose file sets it from `LIBRESPEED_NEW_DESIGN` through the inline `design_config` entry under `configs:`. Compose writes this file into the container each time it creates it, over the copy in `${LIBRESPEED_DATA_DIR}/www/config.json`, so edit the variable rather than the file. Inline `configs` need Docker Compose 2.23 or later.
 
 A visitor can still force a design with `?design=new` or `?design=classic`.
 
@@ -45,10 +42,10 @@ The backend reads the client IP from `Client-IP`, then `X-Real-Ip`, then `X-Forw
 
 ### Tests
 
-`tests/test_stats_password.sh` renders the compose file with `.env.example`, checks the HTTPS routing, the required password and `no-new-privileges`, then starts the image on the default Docker bridge and checks that the stats page refuses an empty password and accepts the configured one. It needs Docker, Docker Compose, `jq` and `curl`.
+`tests/test_stack.sh` renders the compose file with `.env.example` and checks the HTTPS routing, the required password, `no-new-privileges` and the `config.json` content. It then starts the stack with `docker compose` on a throwaway network, over a data directory that already holds a classic `config.json`, and checks that the modern design is served and that the stats page refuses an empty password and accepts the configured one. It needs Docker, Docker Compose 2.23+, `jq` and `curl`.
 
 ```bash
-./tests/test_stats_password.sh
+./tests/test_stack.sh
 ```
 
 ---

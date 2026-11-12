@@ -19,6 +19,12 @@ services:
       PASSWORD: "${LIBRESPEED_STATS_PASSWORD:?Set LIBRESPEED_STATS_PASSWORD}"
     volumes:
       - ${LIBRESPEED_DATA_DIR:?Set LIBRESPEED_DATA_DIR}:/config
+    # The image has no variable for the design: it reads useNewDesign from this
+    # file. Compose rewrites it on each container creation, so edits made by
+    # hand in the data directory are lost.
+    configs:
+      - source: design_config
+        target: /config/www/config.json
     restart: unless-stopped
     # The image drops to PUID:PGID through s6 and never needs to gain privileges.
     security_opt:
@@ -53,3 +59,11 @@ services:
 networks:
   traefik_gateway:
     external: true
+configs:
+  # Inline rather than a ./config.json bind mount, which Portainer would resolve
+  # on its own disk (see openobserve/README.md). Needs Docker Compose 2.23+.
+  design_config:
+    content: |
+      {
+        "useNewDesign": ${LIBRESPEED_NEW_DESIGN:-true}
+      }
