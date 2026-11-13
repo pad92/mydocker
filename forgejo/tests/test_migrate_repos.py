@@ -263,6 +263,32 @@ class RunTest(unittest.TestCase):
         ):
             mr.run(["--source", "http://a", "--target", "http://b"])
 
+    def contexts(self, *extra: str) -> dict[str, Any]:
+        """Runs the script with a mocked Api and returns the TLS context given
+        to the client of each URL."""
+        seen: dict[str, Any] = {}
+
+        def fake_api(url: str, token: str, context: Any = None) -> Any:
+            seen[url] = context
+            return FakeApi()
+
+        env = {"GITEA_TOKEN": "g", "FORGEJO_TOKEN": "f"}
+        with (
+            mock.patch.dict("os.environ", env, clear=True),
+            mock.patch.object(mr, "Api", side_effect=fake_api),
+        ):
+            quiet(mr.run, ["--source", "https://a", "--target", "https://b", *extra])
+        return seen
+
+    def test_certificates_are_verified_by_default(self) -> None:
+        self.assertEqual(self.contexts(), {"https://a": None, "https://b": None})
+
+    def test_insecure_skips_verification_of_the_target_only(self) -> None:
+        seen = self.contexts("--insecure")
+        self.assertIsNone(seen["https://a"])
+        self.assertEqual(seen["https://b"].verify_mode, mr.ssl.CERT_NONE)
+        self.assertFalse(seen["https://b"].check_hostname)
+
 
 if __name__ == "__main__":
     unittest.main()

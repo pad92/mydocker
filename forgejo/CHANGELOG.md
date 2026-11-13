@@ -10,3 +10,5 @@
 - `migrate_repos.py` creates the missing owners itself: organisations as in
   Gitea, user accounts with the same name and email and a random password to
   reset. The `--create-orgs` option is gone.
+- `migrate_repos.py --insecure` skips the TLS certificate check of the Forgejo
+  target only, for a temporary self-signed certificate. A warning is printed.
