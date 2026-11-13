@@ -7,3 +7,6 @@
 - Add `migrate_repos.py` to import the Gitea repositories through Forgejo's
   migration tool, since Forgejo cannot reuse the data of Gitea 28.
 - Document the import, the switch to the production domain and the rollback.
+- `migrate_repos.py` creates the missing owners itself: organisations as in
+  Gitea, user accounts with the same name and email and a random password to
+  reset. The `--create-orgs` option is gone.

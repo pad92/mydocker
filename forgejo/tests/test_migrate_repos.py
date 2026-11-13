@@ -12,7 +12,7 @@ import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from unittest import mock
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "migrate_repos.py"
@@ -68,7 +68,6 @@ def repo(**overrides: Any) -> Any:
 def options(**overrides: Any) -> Any:
     fields: dict[str, Any] = {
         "apply": True,
-        "create_orgs": False,
         "unarchive_source": False,
         "migrate_timeout": 10,
     }
@@ -144,6 +143,77 @@ class MigrateRepoTest(unittest.TestCase):
             options(apply=False, unarchive_source=True),
         )
         self.assertEqual(gitea.calls + forgejo.calls, [])
+
+
+class EnsureOwnerTest(unittest.TestCase):
+    gitea_user: ClassVar[dict[str, Any]] = {
+        "login": "alice",
+        "email": "alice@example.test",
+        "full_name": "Alice",
+        "visibility": "private",
+        "is_admin": True,
+    }
+
+    def test_existing_owner_is_left_alone(self) -> None:
+        gitea, forgejo = FakeApi(), FakeApi()
+        quiet(mr.ensure_owner, "alice", gitea, forgejo, True)
+        self.assertEqual(forgejo.methods(), [("GET", "/users/alice")])
+        self.assertEqual(gitea.calls, [])
+
+    def test_missing_user_is_created_like_in_gitea_but_never_admin(self) -> None:
+        gitea = FakeApi(
+            {
+                ("GET", "/orgs/alice"): not_found("/orgs/alice"),
+                ("GET", "/users/alice"): self.gitea_user,
+            }
+        )
+        forgejo = FakeApi({("GET", "/users/alice"): not_found("/users/alice")})
+        quiet(mr.ensure_owner, "alice", gitea, forgejo, True)
+        method, path, body = forgejo.calls[-1]
+        self.assertEqual((method, path), ("POST", "/admin/users"))
+        self.assertEqual(
+            (body["username"], body["email"], body["full_name"], body["visibility"]),
+            ("alice", "alice@example.test", "Alice", "private"),
+        )
+        self.assertTrue(body["must_change_password"])
+        self.assertFalse(body["send_notify"])
+        self.assertNotIn("admin", body)
+        self.assertGreaterEqual(len(body["password"]), 32)
+
+    def test_each_created_user_gets_its_own_password(self) -> None:
+        first = mr.user_body(self.gitea_user)["password"]
+        self.assertNotEqual(first, mr.user_body(self.gitea_user)["password"])
+
+    def test_user_with_hidden_email_is_not_created(self) -> None:
+        # Gitea hides the email from tokens of non-admin accounts.
+        with self.assertRaisesRegex(mr.MigrationError, "Gitea admin"):
+            mr.user_body(self.gitea_user | {"email": ""})
+
+    def test_missing_organisation_is_created_with_its_settings(self) -> None:
+        org = {"username": "ignored", "full_name": "The Team", "visibility": "limited"}
+        gitea = FakeApi({("GET", "/orgs/team"): org})
+        forgejo = FakeApi({("GET", "/users/team"): not_found("/users/team")})
+        quiet(mr.ensure_owner, "team", gitea, forgejo, True)
+        method, path, body = forgejo.calls[-1]
+        self.assertEqual((method, path), ("POST", "/orgs"))
+        self.assertEqual(
+            (body["username"], body["full_name"], body["visibility"]),
+            ("team", "The Team", "limited"),
+        )
+
+    def test_dry_run_creates_no_owner(self) -> None:
+        gitea = FakeApi(
+            {
+                ("GET", "/orgs/alice"): not_found("/orgs/alice"),
+                ("GET", "/users/alice"): self.gitea_user,
+            }
+        )
+        forgejo = FakeApi({("GET", "/users/alice"): not_found("/users/alice")})
+        out = io.StringIO()
+        with redirect_stdout(out):
+            mr.ensure_owner("alice", gitea, forgejo, False)
+        self.assertEqual(out.getvalue(), "create user alice\n")
+        self.assertNotIn("POST", [method for method, _ in forgejo.methods()])
 
 
 class PostMigrationTest(unittest.TestCase):

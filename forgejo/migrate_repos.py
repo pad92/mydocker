@@ -16,10 +16,12 @@ archived again afterwards.
 The script prints the plan by default and changes nothing; --apply runs it.
 Repositories that already exist in Forgejo are skipped, so a run can be
 repeated. When Forgejo reports a failed migration, the partial repository it
-leaves behind is deleted so that the next run copies it again. Owners must
-exist in Forgejo: user accounts are made by hand, organisations with
---create-orgs. Packages (container images...) are not copied by Forgejo; they
-are listed at the end so that they can be pushed again.
+leaves behind is deleted so that the next run copies it again. Missing owners
+are created in Forgejo: organisations with the settings they have in Gitea,
+user accounts with the same name, email and full name, a random password that
+is not shown, and the obligation to change it (see README.md). Packages
+(container images...) are not copied by Forgejo; they are listed at the end so
+that they can be pushed again.
 
 Tokens are read from GITEA_TOKEN and FORGEJO_TOKEN, never from the command
 line. TLS certificates are verified with the system trust store (SSL_CERT_FILE
@@ -31,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sys
 import urllib.error
 import urllib.parse
@@ -43,6 +46,9 @@ PAGE_SIZE = 50
 API_TIMEOUT_SECONDS = 60
 # Forgejo answers POST /repos/migrate only once the copy is over.
 DEFAULT_MIGRATE_TIMEOUT_SECONDS = 3600
+# Bytes of randomness of the password given to the user accounts created in
+# Forgejo. Nobody knows it: an admin sets a new one, or the user resets it.
+CREATED_USER_PASSWORD_BYTES = 32
 
 JsonObject = dict[str, Any]
 
@@ -156,7 +162,6 @@ class SourceRepo:
 @dataclass(frozen=True)
 class Options:
     apply: bool
-    create_orgs: bool
     unarchive_source: bool
     migrate_timeout: float
 
@@ -207,36 +212,62 @@ def migrate_body(
     }
 
 
-def ensure_owner(owner: str, gitea: Api, forgejo: Api, options: Options) -> str | None:
-    """Returns None when the owner is (or will be) available in Forgejo,
-    otherwise the reason why its repositories are skipped."""
-    if forgejo.exists(f"/users/{urllib.parse.quote(owner)}"):
-        return None
-    org_path = f"/orgs/{urllib.parse.quote(owner)}"
-    if not gitea.exists(org_path):
-        return f"user {owner} does not exist in Forgejo: create the account first"
-    if not options.create_orgs:
-        return f"organisation {owner} does not exist in Forgejo: create it or use --create-orgs"
-    if options.apply:
-        org = gitea.request("GET", org_path)
-        forgejo.request(
-            "POST",
-            "/orgs",
-            {
-                "username": owner,
-                "full_name": org.get("full_name") or "",
-                "description": org.get("description") or "",
-                "website": org.get("website") or "",
-                "location": org.get("location") or "",
-                "visibility": org.get("visibility") or "public",
-            },
-        )
-    print(f"create organisation {owner}")
-    return None
-
-
 class MigrationError(Exception):
-    """A migration failed; the message says what was left in Forgejo."""
+    """A repository or its owner cannot be copied; the message says why and
+    what was left in Forgejo."""
+
+
+def org_body(name: str, org: JsonObject) -> JsonObject:
+    """Request body of POST /orgs, from a Gitea organisation."""
+    return {
+        "username": name,
+        "full_name": org.get("full_name") or "",
+        "description": org.get("description") or "",
+        "website": org.get("website") or "",
+        "location": org.get("location") or "",
+        "visibility": org.get("visibility") or "public",
+    }
+
+
+def user_body(user: JsonObject) -> JsonObject:
+    """Request body of POST /admin/users, from a Gitea user. The account is
+    never made admin. Its password is random and thrown away: the owner must
+    get a new one before logging in, and change it at first login."""
+    email = user.get("email") or ""
+    if "@" not in email:
+        raise MigrationError(
+            f"the email of user {user['login']} is not readable in Gitea: "
+            "use a token of a Gitea admin"
+        )
+    return {
+        "username": user["login"],
+        "email": email,
+        "full_name": user.get("full_name") or "",
+        "visibility": user.get("visibility") or "public",
+        "password": secrets.token_urlsafe(CREATED_USER_PASSWORD_BYTES),
+        "must_change_password": True,
+        "send_notify": False,
+    }
+
+
+def ensure_owner(owner: str, gitea: Api, forgejo: Api, apply: bool) -> None:
+    """Creates the owner in Forgejo when it is missing there, as an
+    organisation or a user account like in Gitea. Raises ApiError or
+    MigrationError when this fails."""
+    quoted = urllib.parse.quote(owner)
+    if forgejo.exists(f"/users/{quoted}"):
+        return
+    if gitea.exists(f"/orgs/{quoted}"):
+        if apply:
+            org = gitea.request("GET", f"/orgs/{quoted}")
+            forgejo.request("POST", "/orgs", org_body(owner, org))
+        print(f"create organisation {owner}")
+        return
+    user = gitea.request("GET", f"/users/{quoted}")
+    body = user_body(user)
+    if apply:
+        forgejo.request("POST", "/admin/users", body)
+    print(f"create user {owner}")
 
 
 def post_migration(
@@ -321,9 +352,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="copy only this repository (repeatable)",
     )
     parser.add_argument(
-        "--create-orgs", action="store_true", help="create missing organisations"
-    )
-    parser.add_argument(
         "--unarchive-source",
         action="store_true",
         help="unarchive archived repositories in Gitea during their copy, to keep their "
@@ -354,7 +382,6 @@ def run(argv: Sequence[str]) -> int:
     args = parse_args(argv)
     options = Options(
         apply=args.apply,
-        create_orgs=args.create_orgs,
         unarchive_source=args.unarchive_source,
         migrate_timeout=args.migrate_timeout,
     )
@@ -379,16 +406,19 @@ def run(argv: Sequence[str]) -> int:
     failures = 0
     owner_problems: dict[str, str | None] = {}
     for repo in repos:
+        if repo.owner not in owner_problems:
+            try:
+                ensure_owner(repo.owner, gitea, forgejo, options.apply)
+                owner_problems[repo.owner] = None
+            except (ApiError, MigrationError) as error:
+                print(f"FAILED owner {repo.owner}: {error}", file=sys.stderr)
+                owner_problems[repo.owner] = "its owner could not be created"
+        problem = owner_problems[repo.owner]
+        if problem is not None:
+            print(f"skip {repo.full_name}: {problem}")
+            failures += 1
+            continue
         try:
-            if repo.owner not in owner_problems:
-                owner_problems[repo.owner] = ensure_owner(
-                    repo.owner, gitea, forgejo, options
-                )
-            problem = owner_problems[repo.owner]
-            if problem is not None:
-                print(f"skip {repo.full_name}: {problem}")
-                failures += 1
-                continue
             if forgejo.exists(repo.api_path):
                 print(f"skip {repo.full_name}: already in Forgejo")
                 continue
