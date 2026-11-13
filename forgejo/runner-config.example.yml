@@ -1,0 +1,31 @@
+# Copy to config.yml in FORGEJO_RUNNER_DATA_DIR (owner FORGEJO_RUNNER_UID,
+# mode 600) and fill in the uuid and token, see "Actions runner" in README.md.
+# Settings left out keep the defaults of `forgejo-runner generate-config`.
+log:
+  level: info
+runner:
+  capacity: 1
+  timeout: 3h
+  # Same labels as the Gitea runner, so that existing workflows find it.
+  labels:
+    - ubuntu-latest:docker://node:18-bullseye
+    - debian-latest:docker://debian:bullseye
+cache:
+  enabled: true
+  dir: /data/cache
+container:
+  # Jobs trust the step-ca certificates of the internal hosts (actions/checkout over
+  # HTTPS, pushes to the registry). The path is on the Docker host, which
+  # creates the job containers.
+  options: --volume /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+  valid_volumes:
+    - /etc/ssl/certs/ca-certificates.crt
+server:
+  connections:
+    forgejo:
+      # Inside the compose network, without Traefik.
+      url: http://forgejo:3000/
+      # Printed by `forgejo forgejo-cli actions register`.
+      uuid: 00000000-0000-0000-0000-000000000000
+      # The 40-character hexadecimal secret given to that command.
+      token: REPLACE_WITH_THE_RUNNER_SECRET
