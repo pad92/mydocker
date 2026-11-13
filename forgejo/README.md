@@ -112,9 +112,8 @@ points at Traefik, set `FORGEJO_DOMAIN=forgejo.home.lan`,
 `FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS=true`, then follow
 [First start](#first-start) and [Actions runner](#actions-runner).
 
-Create in Forgejo every Gitea user account that owns repositories, with the
-same username. The script creates missing organisations but not user
-accounts.
+Owners of repositories (user accounts and organisations) do not need to be
+created by hand: the script does it, see below.
 
 ### 2. Freeze and back up Gitea
 
@@ -134,12 +133,23 @@ are the scopes used by `tests/test_stack.sh`. Then run the script without `--app
 ```sh
 read -rs GITEA_TOKEN && read -rs FORGEJO_TOKEN && export GITEA_TOKEN FORGEJO_TOKEN
 python3 migrate_repos.py --source https://git.home.lan \
-  --target https://forgejo.home.lan --create-orgs
+  --target https://forgejo.home.lan
 ```
 
 Add `--apply` to run it. `--only owner/repo` restricts a run to one
 repository, which is useful for a first test. The script:
 
+- creates the owners missing in Forgejo. An organisation gets the full name,
+  description, website, location and visibility it has in Gitea. A user
+  account gets the same username, email, full name and visibility, never the
+  admin flag, and a random password that nobody knows and that must be
+  changed at first login. Before logging in, each user resets it with
+  "Forgot password" if mail is set up, or an admin sets a temporary one in
+  Site administration > User accounts.
+  Accounts that log in through LDAP or OAuth2 in Gitea become local accounts;
+  link them to their authentication source again in the admin panel. An
+  owner that cannot be created (for example, its email is already used by
+  another Forgejo account) is reported, and its repositories are skipped;
 - copies code, LFS, wiki, issues, pull requests, labels, milestones and
   releases, and keeps the private flag and the description;
 - recreates pull mirrors as mirrors of their upstream URL. Credentials of a
@@ -157,7 +167,9 @@ repository, which is useful for a first test. The script:
   `skopeo copy --all docker://git.home.lan/<owner>/<image>:<tag> docker://forgejo.home.lan/<owner>/<image>:<tag>`
   after logging in to both registries.
 
-The exit status is 1 when anything was skipped or failed. Each problem is
+The dry run prints the owners it would create (`create user <name>`,
+`create organisation <name>`). The exit status is 1 when anything was skipped
+or failed. Each problem is
 printed on its own line.
 
 Forgejo's migration does not copy the following, which must be set up again:
@@ -213,7 +225,8 @@ python3 -m unittest discover -s tests
 `test_stack.sh` checks the rendered compose file, then starts this stack and a
 `gitea/gitea:latest` on throwaway containers. It imports a private repository,
 an organisation repository with an issue, a label and a release, an archived
-repository with a pull request, and a repository whose owner is missing. It
+repository with a pull request, a repository whose owner is missing, and one
+whose owner cannot be created. It
 also checks that the runner runs a job through `docker.sock`. The unit tests
 cover the cases the end-to-end test cannot trigger, such as a migration that
 times out or fails on the server side.

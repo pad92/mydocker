@@ -5,10 +5,12 @@
 # - a Gitea (gitea/gitea:latest, same image as production) is filled with a
 #   private user repository, an organisation repository with an issue, a label
 #   and a release, an archived repository, a repository whose owner is missing
-#   in Forgejo, and a generic package;
+#   in Forgejo, a repository whose owner cannot be created in Forgejo (email
+#   already taken), and a generic package;
 # - migrate_repos.py, with the token scopes given in README.md: the dry run
-#   changes nothing, --apply copies everything it can and reports the missing
-#   owner and the package, a second run copies only what was left;
+#   changes nothing, --apply creates the missing owners, copies everything it
+#   can and reports the failed owner and the package, a second run copies only
+#   what was left;
 # - the runner connects with runner-config.example.yml and runs a job through
 #   the host's docker.sock.
 # Needs Docker, Docker Compose 2.23+, jq, curl and python3.
@@ -127,8 +129,12 @@ new_token() { # cli container user scopes name
 add_user gitea "$gitea" gadmin --admin
 add_user gitea "$gitea" alice
 add_user gitea "$gitea" bob
+add_user gitea "$gitea" carol
 add_user forgejo "$project" fadmin --admin
 add_user forgejo "$project" alice
+# Takes carol's email, so that carol cannot be created in Forgejo.
+docker exec -u git "$project" forgejo admin user create --username squatter \
+  --email carol@example.test --random-password >/dev/null
 GITEA_TOKEN="$(new_token gitea "$gitea" gadmin read:repository,read:issue,read:user,read:organization,read:package migration)"
 FORGEJO_TOKEN="$(new_token forgejo "$project" fadmin write:repository,write:organization,read:user,write:admin migration)"
 gitea_admin_token="$(new_token gitea "$gitea" gadmin all test)"
@@ -154,6 +160,7 @@ gitea_api POST /repos/alice/old/pulls \
   "{\"head\":\"feature\",\"base\":\"$base_branch\",\"title\":\"Add feature\"}" >/dev/null
 gitea_api PATCH /repos/alice/old '{"archived":true}' >/dev/null
 gitea_api POST /admin/users/bob/repos '{"name":"tools","auto_init":true}' >/dev/null
+gitea_api POST /admin/users/carol/repos '{"name":"notes","auto_init":true}' >/dev/null
 gitea_api POST /admin/users/gadmin/orgs '{"username":"team","full_name":"The Team"}' >/dev/null
 gitea_api POST /orgs/team/repos '{"name":"app","auto_init":true,"description":"main app"}' >/dev/null
 gitea_api POST /repos/team/app/labels '{"name":"bug","color":"#ee0701"}' >/dev/null
@@ -167,24 +174,29 @@ migrate() { python3 "$stack_dir/migrate_repos.py" --source "$gitea_url" --target
 forgejo_repos() { forgejo_api GET '/repos/search?limit=50' | jq -r '[.data[].full_name] | sort | join(" ")'; }
 pull_titles() { forgejo_api GET "/repos/$1/pulls?state=all" | jq -r '[.[].title] | join(",")'; }
 
-# bob is missing in Forgejo, so the dry run already reports a problem.
-status=0
-out="$(migrate --create-orgs 2>&1)" || status=$?
-[ "$status" = 1 ] || fail "the dry run does not report the missing owner (exit $status): $out"
+# bob and the team organisation are missing in Forgejo: the dry run plans them.
+out="$(migrate 2>&1)" || fail "the dry run failed: $out"
 [ -z "$(forgejo_repos)" ] || fail "the dry run created repositories"
 grep -q '^create organisation team$' <<<"$out" || fail "the dry run does not plan the organisation: $out"
+grep -q '^create user bob$' <<<"$out" || fail "the dry run does not plan the user: $out"
+[ "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: token $forgejo_admin_token" \
+  "$forgejo_url/api/v1/users/bob")" = 404 ] || fail "the dry run created bob"
 echo "OK: dry run changes nothing"
 
 status=0
-out="$(migrate --create-orgs --apply 2>&1)" || status=$?
-[ "$status" = 1 ] || fail "a missing owner does not make the run fail (exit $status): $out"
-grep -q '^skip bob/tools: user bob does not exist in Forgejo' <<<"$out" \
-  || fail "the missing owner is not reported: $out"
+out="$(migrate --apply 2>&1)" || status=$?
+[ "$status" = 1 ] || fail "an owner that cannot be created does not make the run fail (exit $status): $out"
+grep -q '^FAILED owner carol: ' <<<"$out" || fail "the failed owner is not reported: $out"
+grep -q '^skip carol/notes: its owner could not be created' <<<"$out" \
+  || fail "the repository of the failed owner is not reported: $out"
 grep -q 'generic team/blob:1.0.0' <<<"$out" || fail "the package is not listed: $out"
 grep -q '^copy alice/old, archived, without pull requests$' <<<"$out" \
   || fail "the archived repository is not reported as copied without pull requests: $out"
-[ "$(forgejo_repos)" = "alice/old alice/secret team/app" ] \
+[ "$(forgejo_repos)" = "alice/old alice/secret bob/tools team/app" ] \
   || fail "unexpected repositories in Forgejo: $(forgejo_repos)"
+bob="$(forgejo_api GET /users/bob)"
+[ "$(jq -r .email <<<"$bob")" = bob@example.test ] || fail "bob was not created with his Gitea email: $bob"
+[ "$(jq -r .is_admin <<<"$bob")" = false ] || fail "bob was created as admin"
 [ "$(forgejo_api GET /repos/alice/secret | jq -r .private)" = true ] || fail "alice/secret is not private"
 [ "$(forgejo_api GET /repos/alice/old | jq -r .archived)" = true ] || fail "alice/old is not archived"
 app="$(forgejo_api GET /repos/team/app)"
@@ -198,12 +210,13 @@ forgejo_api GET /repos/team/app/labels | jq -e '.[] | select(.name == "bug")' >/
   || fail "the release was not copied"
 [ "$(forgejo_api GET /orgs/team | jq -r .full_name)" = "The Team" ] || fail "the organisation was not created"
 forgejo_api GET /repos/alice/secret/contents/README.md >/dev/null || fail "the code of alice/secret is missing"
-echo "OK: repositories, issue, label, release, private and archived state copied"
+echo "OK: owners created; repositories, issue, label, release, private and archived state copied"
 
-add_user forgejo "$project" bob
-out="$(migrate --create-orgs --apply 2>&1)" || fail "second run failed: $out"
-grep -q '^copy bob/tools$' <<<"$out" || fail "bob/tools is not copied on the second run: $out"
-[ "$(grep -c 'already in Forgejo' <<<"$out")" = 3 ] || fail "copied repositories are not skipped: $out"
+forgejo_api DELETE /admin/users/squatter >/dev/null
+out="$(migrate --apply 2>&1)" || fail "second run failed: $out"
+grep -q '^create user carol$' <<<"$out" || fail "carol is not created on the second run: $out"
+grep -q '^copy carol/notes$' <<<"$out" || fail "carol/notes is not copied on the second run: $out"
+[ "$(grep -c 'already in Forgejo' <<<"$out")" = 4 ] || fail "copied repositories are not skipped: $out"
 echo "OK: a second run copies only what was left"
 
 # --unarchive-source keeps the pull requests of an archived repository. The
