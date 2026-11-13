@@ -1,6 +1,8 @@
 # Gitea
 
 This stack runs Gitea, PostgreSQL 15 and an Actions runner behind Traefik.
+It is being replaced by the [`forgejo`](../forgejo/README.md) stack, which
+describes the migration.
 The external network `traefik_gateway` and certificate resolver `stepca` must
 already exist. HTTP redirects to HTTPS; SSH is published on port 2222.
 

@@ -1,0 +1,126 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+x-localtime-volume: &localtime-volume "/etc/localtime:/etc/localtime:ro"
+# Host CA bundle, so that Forgejo and the runner trust the step-ca certificates
+# of the internal hosts (migration from Gitea, webhooks, mirrors).
+x-ca-volume: &ca-volume "/etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro"
+services:
+  forgejo:
+    # 15 is the LTS line (supported until July 2027); the tag follows its patch
+    # releases. Moving to another major version is a separate upgrade.
+    image: codeberg.org/forgejo/forgejo:15
+    container_name: forgejo
+    environment:
+      - USER_UID=${USER_UID:?Set USER_UID}
+      - USER_GID=${USER_GID:?Set USER_GID}
+      - FORGEJO__database__DB_TYPE=postgres
+      - FORGEJO__database__HOST=db:5432
+      - FORGEJO__database__NAME=${FORGEJO_DB_NAME:?Set FORGEJO_DB_NAME}
+      - FORGEJO__database__USER=${FORGEJO_DB_USER:?Set FORGEJO_DB_USER}
+      - FORGEJO__database__PASSWD=${FORGEJO_DB_PASSWORD:?Set FORGEJO_DB_PASSWORD}
+      # No web installer: the schema is created at start-up and the first admin
+      # account is made with the CLI (see README.md).
+      - FORGEJO__security__INSTALL_LOCK=true
+      - FORGEJO__server__DOMAIN=${FORGEJO_DOMAIN:?Set FORGEJO_DOMAIN}
+      - FORGEJO__server__SSH_DOMAIN=${FORGEJO_DOMAIN:?Set FORGEJO_DOMAIN}
+      - FORGEJO__server__ROOT_URL=https://${FORGEJO_DOMAIN:?Set FORGEJO_DOMAIN}/
+      # Port shown in the SSH clone URLs; it must match the published port.
+      - FORGEJO__server__SSH_PORT=${FORGEJO_SSH_PORT:?Set FORGEJO_SSH_PORT}
+      - FORGEJO__actions__ENABLED=true
+      # Gitea resolved "uses: actions/checkout@v4" on github.com, Forgejo on
+      # data.forgejo.org by default. github.com keeps the existing workflows
+      # working unchanged.
+      - FORGEJO__actions__DEFAULT_ACTIONS_URL=${FORGEJO_DEFAULT_ACTIONS_URL:-https://github.com}
+      - FORGEJO__packages__ENABLED=true
+      # Forgejo refuses to migrate from private addresses (the Gitea host has
+      # one). Set to true only while repositories are imported from Gitea.
+      - FORGEJO__migrations__ALLOW_LOCALNETWORKS=${FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS:-false}
+    restart: always
+    networks:
+      - forgejo
+      - traefik_gateway
+    volumes:
+      - ${FORGEJO_DATA_DIR:?Set FORGEJO_DATA_DIR}:/data
+      - /etc/timezone:/etc/timezone:ro
+      - *localtime-volume
+      - *ca-volume
+    ports:
+      - "${FORGEJO_SSH_PORT:?Set FORGEJO_SSH_PORT}:22"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:3000/api/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.forgejo.loadbalancer.server.port: "3000"
+
+      traefik.http.routers.forgejo_http.rule: "Host(`${FORGEJO_DOMAIN:?Set FORGEJO_DOMAIN}`)"
+      traefik.http.routers.forgejo_http.entrypoints: web
+      traefik.http.routers.forgejo_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.forgejo.rule: "Host(`${FORGEJO_DOMAIN:?Set FORGEJO_DOMAIN}`)"
+      traefik.http.routers.forgejo.entrypoints: "websecure"
+      traefik.http.routers.forgejo.tls: "true"
+      traefik.http.routers.forgejo.tls.certresolver: "stepca"
+
+    logging: *default-logging
+  db:
+    image: postgres:17
+    container_name: forgejo_db
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    environment:
+      - POSTGRES_USER=${FORGEJO_DB_USER:?Set FORGEJO_DB_USER}
+      - POSTGRES_PASSWORD=${FORGEJO_DB_PASSWORD:?Set FORGEJO_DB_PASSWORD}
+      - POSTGRES_DB=${FORGEJO_DB_NAME:?Set FORGEJO_DB_NAME}
+    networks:
+      - forgejo
+    volumes:
+      - ${FORGEJO_DB_DATA_DIR:?Set FORGEJO_DB_DATA_DIR}:/var/lib/postgresql/data
+
+    logging: *default-logging
+  runner:
+    image: data.forgejo.org/forgejo/runner:13
+    container_name: forgejo_runner
+    restart: always
+    # The image runs as 1000:1000. The extra group is the host's docker group,
+    # which owns docker.sock. Access to that socket is root-equivalent on the
+    # host: only run trusted workflows on this runner.
+    user: "${FORGEJO_RUNNER_UID:?Set FORGEJO_RUNNER_UID}:${FORGEJO_RUNNER_GID:?Set FORGEJO_RUNNER_GID}"
+    group_add:
+      - "${DOCKER_GID:?Set DOCKER_GID}"
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    networks:
+      - forgejo
+    volumes:
+      # Holds config.yml (with the runner UUID and token) and the job cache.
+      - ${FORGEJO_RUNNER_DATA_DIR:?Set FORGEJO_RUNNER_DATA_DIR}:/data
+      - *ca-volume
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["forgejo-runner", "daemon", "--config", "/data/config.yml"]
+
+    logging: *default-logging
+networks:
+  forgejo:
+    external: false
+  traefik_gateway:
+    external: true

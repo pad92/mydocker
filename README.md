@@ -28,6 +28,7 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 | [**code-server**](./code-server/README.md) | VS Code editor accessible inside browser tabs | VS Code Server |
 | [**crowdsec**](./crowdsec/README.md) | Collaborative behavior detection engine blocking scanner IP logs and malicious activities | CrowdSec |
 | [**dockhand**](./dockhand/README.md) | Automated Docker container management and helper tool | Dockhand |
+| [**forgejo**](./forgejo/README.md) | Self-hosted Git forge with Actions and package registry, replacing Gitea | Forgejo |
 | [**freshrss**](./freshrss/README.md) | Self-hosted RSS feed aggregator and reader | FreshRSS |
 | [**frigate**](./frigate/README.md) | Network Video Recorder (NVR) with real-time AI object detection for IP cameras | Frigate |
 | [**gitea**](./gitea/README.md) | Super fast, lightweight, and painless self-hosted Git developer service | Gitea |
