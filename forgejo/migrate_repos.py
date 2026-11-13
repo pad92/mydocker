@@ -25,7 +25,10 @@ that they can be pushed again.
 
 Tokens are read from GITEA_TOKEN and FORGEJO_TOKEN, never from the command
 line. TLS certificates are verified with the system trust store (SSL_CERT_FILE
-also works).
+also works). --insecure turns this verification off for the Forgejo target
+only, for a temporary self-signed certificate: the Forgejo token and the Gitea
+token sent in the migration requests then go to a server whose identity is not
+checked.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ import argparse
 import json
 import os
 import secrets
+import ssl
 import sys
 import urllib.error
 import urllib.parse
@@ -66,9 +70,12 @@ class ApiError(Exception):
 class Api:
     """Minimal JSON client for the /api/v1 of Gitea and Forgejo."""
 
-    def __init__(self, base_url: str, token: str) -> None:
+    def __init__(
+        self, base_url: str, token: str, context: ssl.SSLContext | None = None
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self._token = token
+        self._context = context
 
     def request(
         self,
@@ -85,7 +92,9 @@ class Api:
         if data is not None:
             request.add_header("Content-Type", "application/json")
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with urllib.request.urlopen(
+                request, timeout=timeout, context=self._context
+            ) as response:
                 payload = response.read()
         except urllib.error.HTTPError as error:
             detail = error.read().decode(errors="replace")[:500]
@@ -368,7 +377,21 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default=DEFAULT_MIGRATE_TIMEOUT_SECONDS,
         help="seconds allowed for one repository (default: %(default)s)",
     )
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="do not verify the TLS certificate of the Forgejo target (the tokens "
+        "are then sent to a server whose identity is not checked)",
+    )
     return parser.parse_args(argv)
+
+
+def unverified_context() -> ssl.SSLContext:
+    """TLS context that accepts any certificate and host name (--insecure)."""
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
 
 
 def read_token(name: str) -> str:
@@ -387,7 +410,14 @@ def run(argv: Sequence[str]) -> int:
     )
     gitea_token = read_token("GITEA_TOKEN")
     gitea = Api(args.source, gitea_token)
-    forgejo = Api(args.target, read_token("FORGEJO_TOKEN"))
+    target_context = None
+    if args.insecure:
+        print(
+            f"warning: TLS certificate of {args.target} not verified (--insecure)",
+            file=sys.stderr,
+        )
+        target_context = unverified_context()
+    forgejo = Api(args.target, read_token("FORGEJO_TOKEN"), target_context)
     if not options.apply:
         print("dry run: nothing is changed, add --apply to run the plan")
 

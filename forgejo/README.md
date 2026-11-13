@@ -137,7 +137,16 @@ python3 migrate_repos.py --source https://git.home.lan \
 ```
 
 Add `--apply` to run it. `--only owner/repo` restricts a run to one
-repository, which is useful for a first test. The script:
+repository, which is useful for a first test.
+
+If Traefik serves its default self-signed certificate for the new domain
+(step-ca has not issued one yet), the script stops with
+`CERTIFICATE_VERIFY_FAILED`. Fix the certificate first if you can.
+`--insecure` skips the certificate check for the Forgejo target only, and
+prints a warning. Both tokens are then sent to a server whose identity is not
+checked: use it only on the local network, for the time of the import.
+
+The script:
 
 - creates the owners missing in Forgejo. An organisation gets the full name,
   description, website, location and visibility it has in Gitea. A user
