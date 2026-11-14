@@ -12,7 +12,7 @@
 #   can and reports the failed owner and the package, a second run copies only
 #   what was left;
 # - the runner connects with runner-config.example.yml and runs a job through
-#   the host's docker.sock.
+#   the host's docker.sock; the job reaches the Docker daemon and the cache.
 # Needs Docker, Docker Compose 2.23+, jq, curl and python3.
 # Usage: ./tests/test_stack.sh
 set -euo pipefail
@@ -68,6 +68,11 @@ env_of() { jq -r ".services.forgejo.environment[\"$1\"]" <<<"$config"; }
   || fail "actions are not fetched from github.com as with Gitea"
 [ "$(jq -r '.services.forgejo.labels["traefik.http.routers.forgejo_http.middlewares"]' <<<"$config")" = redirect-https ] \
   || fail "HTTP router does not redirect to HTTPS"
+[ "$(docker compose --project-name other --project-directory "$stack_dir" --env-file "$work_dir/test.env" \
+  config --format json | jq -r .networks.forgejo.name)" = forgejo_forgejo ] \
+  || fail "the stack network name depends on the project name"
+grep -q '^  network: forgejo_forgejo$' "$stack_dir/runner-config.example.yml" \
+  || fail "the runner does not put jobs on the stack network"
 jq -e ".services.runner.group_add | index(\"$docker_gid\")" <<<"$config" >/dev/null \
   || fail "the runner is not in the docker group"
 for var in FORGEJO_DB_PASSWORD DOCKER_GID FORGEJO_DOMAIN; do
@@ -89,6 +94,8 @@ services:
   runner:
     container_name: $project-runner
 networks:
+  forgejo:
+    name: ${project}_forgejo
   traefik_gateway:
     external: false
     name: $project-gateway
@@ -233,16 +240,21 @@ echo "OK: --unarchive-source copies the pull requests and archives the repositor
 # Runner: shared secret registered in Forgejo, config.yml from the example.
 secret="$(openssl rand -hex 20)"
 uuid="$(docker exec -u git "$project" forgejo forgejo-cli actions register --name test-runner --secret "$secret")"
+# The test project has its own network name.
 sed -e "s/00000000-0000-0000-0000-000000000000/$uuid/" -e "s/REPLACE_WITH_THE_RUNNER_SECRET/$secret/" \
+  -e "s/network: forgejo_forgejo/network: ${project}_forgejo/" \
   "$stack_dir/runner-config.example.yml" > "$work_dir/runner/config.yml"
 chmod 600 "$work_dir/runner/config.yml"
 compose up -d --quiet-pull runner >/dev/null 2>&1 || fail "the runner did not start"
 workflow='on: [push]
 jobs:
   test:
-    runs-on: debian-latest
+    runs-on: ubuntu-latest
     steps:
-      - run: test -s /etc/ssl/certs/ca-certificates.crt && echo runner-ok'
+      - run: test -s /etc/ssl/certs/ca-certificates.crt
+      - run: docker info >/dev/null
+      - run: test -n "$ACTIONS_CACHE_URL"
+      - run: test "$(curl -s -o /dev/null -w "%{http_code}" "$ACTIONS_CACHE_URL")" != 000'
 forgejo_api POST /admin/users/alice/repos '{"name":"ci","auto_init":true}' >/dev/null
 forgejo_api POST /repos/alice/ci/contents/.forgejo/workflows/test.yml \
   "$(jq -n --arg c "$(base64 -w0 <<<"$workflow")" '{content: $c, message: "ci"}')" >/dev/null
@@ -252,4 +264,4 @@ for _ in $(seq 1 90); do
   sleep 4
 done
 [ "$task_status" = success ] || fail "the job did not succeed (status: ${task_status:-none})"
-echo "OK: the runner runs a job in a container through docker.sock"
+echo "OK: the runner runs a job that reaches the Docker daemon and the cache"

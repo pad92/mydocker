@@ -95,12 +95,27 @@ the printed UUID and `token` to the secret, then `docker compose up -d runner`.
 The command can be run again with the same secret: it does not create a
 second runner.
 
-The example config keeps the Gitea runner's labels (`ubuntu-latest` on Node 18
-Bullseye, `debian-latest` on Bullseye) and mounts the CA bundle into job
-containers. Compare it with the Gitea runner's `config.yaml` in
-`/rpool/docker/gitea/runner` and carry over any other changes. Through
-`docker.sock`, the runner controls the host's Docker daemon: only run trusted
-workflows on it.
+The example config follows the Gitea runner's `config.yaml`
+(`/rpool/docker/gitea/runner`):
+
+- the labels `ubuntu-latest`, `ubuntu-24.04` and `ubuntu-22.04` on the
+  `docker.gitea.com/runner-images` images, which the Gitea runner declares
+  from its `config.yaml` rather than the `GITEA_RUNNER_LABELS` given at
+  registration;
+- jobs on the stack network `forgejo_forgejo`, where they reach the cache
+  server and Forgejo. The compose file fixes that name, so it does not depend
+  on the Compose project name;
+- the host's `docker.sock` mounted into jobs (`docker_host: automount`), so
+  that `docker build` and `docker push` work. Forgejo mounts nothing by
+  default;
+- the job image pulled for every job, and the CA bundle mounted into jobs.
+
+The cache is kept in `/data/cache`, so it survives a new runner container.
+Jobs are not privileged: Docker runs through the host socket, not through a
+`docker:dind` service as on the GitLab runner.
+
+Through `docker.sock`, the runner and its jobs control the host's Docker
+daemon: only run trusted workflows on it.
 
 ## Migration from Gitea
 

@@ -4,6 +4,12 @@
 
 - The Forgejo image tag comes from `FORGEJO_VERSION` (default `15`), the
   runner image tag from `FORGEJO_RUNNER_VERSION` (default `13`).
+- The runner example config follows the Gitea runner's `config.yaml`: its
+  `runner-images` labels, jobs on the stack network, the host's `docker.sock`
+  mounted into jobs and the job image pulled every time. Workflows on
+  `debian-latest` need another label.
+- The stack network is named `forgejo_forgejo` whatever the Compose project
+  name, since the runner puts the job containers on it.
 
 ## 2026-11-13
 

@@ -122,5 +122,8 @@ services:
 networks:
   forgejo:
     external: false
+    # Fixed name: runner-config.example.yml puts the job containers on it, so it
+    # must not depend on the Compose project name.
+    name: forgejo_forgejo
   traefik_gateway:
     external: true
