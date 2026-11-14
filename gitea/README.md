@@ -44,10 +44,14 @@ left empty. A new registration needs a fresh `GITEA_RUNNER_REGISTRATION_TOKEN`
 from Gitea. Do not commit tokens. Revoke any exposed registration token in Gitea;
 this is separate from the credentials of an already registered runner.
 
+The labels the runner declares come from `runner.labels` in `config.yaml`
+(`ubuntu-latest`, `ubuntu-24.04` and `ubuntu-22.04` on the
+`docker.gitea.com/runner-images` images). They take precedence over
+`GITEA_RUNNER_LABELS`, which is only read when a runner is registered. Change
+the labels in `config.yaml`.
+
 The runner has access to the host Docker daemon. Only run trusted workflows on
-this host. Moving it to a dedicated host is a separate migration. The existing
-Node 18 and Debian Bullseye labels are retained for workflow compatibility;
-updating their execution environments needs its own validation.
+this host. Moving it to a dedicated host is a separate migration.
 
 ## Validate and apply
 
