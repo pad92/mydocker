@@ -201,36 +201,32 @@ Read-only web file browser for the media and photo folders, served at the root o
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
 | `H5AI_ADMIN_PASSWORD` | Admin page password, hashed at each start. Empty keeps the stored hash. | `CHANGEME` |
-| `H5AI_BIND_ROOT` | Host folder that every bind share (source without `nfs:`) of `h5ai-shares.conf` starts from (e.g. `/volume1`). | *None (empty)* |
+| `H5AI_SHARE_01` ... `H5AI_SHARE_20` | One folder under `/share` each, as `<source>:/share/<name>`. Unset slots show nothing. | *None (empty)* |
+| `H5AI_NFS_01` ... `H5AI_NFS_05` | Path exported by `NFS_SERVER_IP`, mounted by a slot through the volume `h5ai_nfs_01` ... `h5ai_nfs_05`. | *None (empty)* |
 
 ### Shared folders
-Compose cannot loop over a list, so the folders under `/share` are not written by hand in `docker-compose.yml`. They are listed in [`h5ai-shares.conf`](./h5ai-shares.conf), one `<source>:<destination>` per line, and [`scripts/h5ai_shares.py`](./scripts/h5ai_shares.py) writes the matching mounts between the `# BEGIN h5ai-shares ...` / `# END h5ai-shares ...` markers of the compose file. Every share is mounted read-only at `/share/<destination>`, and the list can hold any number of them.
+Compose cannot loop over a list, so `docker-compose.yml` holds 20 fixed slots, and each one takes its whole value from a variable. Adding, moving or removing a share only means changing a variable in `.env` or in the Portainer/Dockhand stack, then redeploying: the compose file and the git repository stay unchanged.
 
 ```text
-nfs:/volume1/Medias/Movies:movies
-${H5AI_BIND_ROOT}/photos/public:photos
+H5AI_SHARE_01=movies:/share/movies
+H5AI_SHARE_02=/volume1/data/subvol-101-disk-0/downloads/Games:/share/games
+H5AI_SHARE_03=h5ai_nfs_01:/share/music
+H5AI_NFS_01=/volume1/music/library
 ```
 
-Each share carries its own source. It does not reuse the volumes of the other services (`download`, `backups`, `movies`...) and needs no variable of its own: adding a share only means adding a line.
+The value is `<source>:<target>`, without options: the compose file appends `:ro`, so every share is read-only (adding `:ro` yourself makes the mount invalid). The target starts with `/share/`. The source is one of:
 
-| Source | Meaning | Result |
-| :--- | :--- | :--- |
-| `nfs:<path>` | A path exported by `NFS_SERVER_IP` | Generates a dedicated `h5ai_share_<destination>` NFS volume |
-| `<path>` | A path on the Docker host | Bind mount |
+| Source | Meaning |
+| :--- | :--- |
+| A path on the Docker host | Bind mount of that folder |
+| `h5ai_nfs_01` ... `h5ai_nfs_05` | The NFS path set in `H5AI_NFS_01` ... `H5AI_NFS_05` |
+| A volume of the stack (`movies`, `series`, `download`, `backups`...) | The same folder as the service that uses it |
 
-NFS paths are written in full: they are paths on the NAS. Host paths start with `${H5AI_BIND_ROOT}`, a single host folder shared by every bind share (for example `/volume1`), because the pre-commit hook refuses a host path written out in full in `docker-compose.yml`. Any path can start with a `${VAR}` reference, resolved at deploy time from `.env` or the Portainer/Dockhand stack variables. Paths cannot contain spaces or `:`; the destination uses letters, digits, `_`, `.` and `-`.
+An unset slot mounts the empty volume `h5ai_unused` at `/.h5ai-unused/<slot>`, outside `/share`, so it never shows in h5ai. A `h5ai_nfs_*` volume that no slot uses is not created. A volume name with a typo stops the deploy with `refers to undefined volume`. Paths cannot contain spaces or `:`.
 
-To add, rename or remove a share, edit the list and commit it:
+More than 20 shares or 5 NFS paths needs new lines in `docker-compose.yml`, following the same pattern.
 
-```bash
-$EDITOR ng/h5ai-shares.conf
-git add ng/h5ai-shares.conf
-git commit
-```
-
-The pre-commit hook (`core.hooksPath=.githooks`) regenerates the mounts and adds `docker-compose.yml` to the commit, since the stack is deployed from git. It refuses the commit if the list is invalid, or if one of `h5ai-shares.conf`, `docker-compose.yml` or `scripts/h5ai_shares.py` has unstaged changes (stage or stash them first). Without the hook, run `python3 -I ng/scripts/h5ai_shares.py` and commit both files. Tests: `python3 -I ng/scripts/test_h5ai_shares.py`.
-
-Removing an NFS share leaves its `<project>_h5ai_share_<destination>` Docker volume on the host. Delete it with `docker volume rm` once the container no longer uses it.
+After an NFS path changes, Docker keeps the old options of the existing volume: remove the volume (`docker volume rm <project>_h5ai_nfs_01`) once the container is stopped, then redeploy.
 
 ---
 

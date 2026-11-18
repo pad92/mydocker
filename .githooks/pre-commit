@@ -1,21 +1,9 @@
 #!/bin/bash
+# Pre-commit hook - Blocks validation if secrets/IPs are detected
+
+# Get the root of the git repository
+# Not GIT_DIR: git exports it to hooks (in worktrees) and git diff would use the new value.
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
-# The h5ai mounts in ng/docker-compose.yml are generated from ng/h5ai-shares.conf.
-# Regenerate them and add the result to the commit, before the leak check runs
-# on what is staged.
-H5AI_FILES=(ng/h5ai-shares.conf ng/docker-compose.yml ng/scripts/h5ai_shares.py)
-if git diff --cached --name-only | grep -qxE 'ng/(h5ai-shares\.conf|docker-compose\.yml|scripts/h5ai_shares\.py)'; then
-    if git -C "$REPO_ROOT" diff --quiet -- "${H5AI_FILES[@]}"; then
-        # Working tree equals the index for these files: the generator reads
-        # exactly what is being committed, and writing cannot lose an edit.
-        python3 -I "$REPO_ROOT/ng/scripts/h5ai_shares.py" || exit 1
-        git -C "$REPO_ROOT" add ng/docker-compose.yml || exit 1
-    elif ! python3 -I "$REPO_ROOT/ng/scripts/h5ai_shares.py" --check; then
-        echo "pre-commit: h5ai mounts not regenerated because ${H5AI_FILES[*]} have unstaged changes." >&2
-        echo "Stage them (or stash the rest), then commit again." >&2
-        exit 1
-    fi
-fi
-
-python3 "$REPO_ROOT/.githooks/git-leak-shield.py" --staged || exit 1
+# Run the analyzer on indexed (staged) changes
+python3 "$REPO_ROOT/.githooks/git-leak-shield.py" --staged
