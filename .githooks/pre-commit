@@ -6,4 +6,9 @@
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
 # Run the analyzer on indexed (staged) changes
-python3 "$REPO_ROOT/.githooks/git-leak-shield.py" --staged
+python3 "$REPO_ROOT/.githooks/git-leak-shield.py" --staged || exit 1
+
+# The h5ai mounts in ng/docker-compose.yml are generated from ng/h5ai-shares.conf
+if git diff --cached --name-only | grep -qxE 'ng/(h5ai-shares\.conf|docker-compose\.yml)'; then
+    python3 -I "$REPO_ROOT/ng/scripts/h5ai_shares.py" --check || exit 1
+fi

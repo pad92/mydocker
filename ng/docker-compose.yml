@@ -338,6 +338,8 @@ services:
       # Thumbnail index, remembered capture failures and folder sizes. Kept
       # apart from the public cache, which is served over HTTP.
       - ${DOCKER_CONFIG_PATH}/h5ai/cache-private:/usr/share/h5ai/_h5ai/private/cache
+      # Folders under /share: edit h5ai-shares.conf, not this block.
+      # BEGIN h5ai-shares mounts (generated from h5ai-shares.conf by scripts/h5ai_shares.py, do not edit)
       - movies:/share/movies:ro
       - movies_family:/share/movies_family:ro
       - /volume1/medias/movies:/share/moviez:ro
@@ -346,6 +348,7 @@ services:
       - /volume1/medias/series:/share/seriez:ro
       - music_library:/share/music:ro
       - ${PHOTOS_PATH}:/share/photos:ro
+      # END h5ai-shares mounts
     networks:
       - traefik_gateway
     deploy:
@@ -422,6 +425,8 @@ volumes:
     driver_opts:
       <<: *nfs-driver-opts
       device: :${BACKUPS_PATH}
+  # BEGIN h5ai-shares volumes (generated from h5ai-shares.conf by scripts/h5ai_shares.py, do not edit)
+  # END h5ai-shares volumes
 
 networks:
   traefik_gateway:

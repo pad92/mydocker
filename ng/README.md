@@ -188,6 +188,46 @@ Define these environment variables which are unique to this service:
 
 ---
 
+## 9. h5ai (`h5ai`)
+
+### Role
+Read-only web file browser for the media and photo folders, served at the root of `TRAEFIK_FQDN`.
+
+### External Links
+- **Docker Image**: [pad92/docker-h5ai](https://hub.docker.com/r/pad92/docker-h5ai)
+
+### Service-Specific Configuration Variables
+
+| Variable Name | Description | Placeholder / Default |
+| :--- | :--- | :--- |
+| `H5AI_ADMIN_PASSWORD` | Admin page password, hashed at each start. Empty keeps the stored hash. | `CHANGEME` |
+| `PHOTOS_PATH` | Host path of the photos shown under `/share/photos`. | *None (empty)* |
+
+### Shared folders
+Compose cannot loop over a list, so the folders under `/share` are not written by hand in `docker-compose.yml`. They are listed in [`h5ai-shares.conf`](./h5ai-shares.conf), one per line (`<name> <type> <source>`), and [`scripts/h5ai_shares.py`](./scripts/h5ai_shares.py) writes the matching mounts between the `# BEGIN h5ai-shares ...` / `# END h5ai-shares ...` markers of the compose file. Every share is mounted read-only at `/share/<name>`.
+
+| Type | Source | Result |
+| :--- | :--- | :--- |
+| `volume` | A named volume already declared in `docker-compose.yml` | Reuses that volume (same NFS mount as Radarr, Sonarr...) |
+| `nfs` | A path exported by `NFS_SERVER_IP` | Generates a dedicated `h5ai_share_<name>` NFS volume |
+| `bind` | A path on the Docker host | Bind mount |
+
+Paths can start with a `${VAR}` reference, resolved at deploy time from `.env` or the Portainer/Dockhand stack variables.
+
+To add, rename or remove a share:
+
+```bash
+$EDITOR ng/h5ai-shares.conf
+python3 -I ng/scripts/h5ai_shares.py
+git add ng/h5ai-shares.conf ng/docker-compose.yml
+```
+
+Commit both files: the stack is deployed from git, so the generated mounts must be in the committed compose file. The pre-commit hook runs `h5ai_shares.py --check` and refuses a commit where they are out of date. Tests: `python3 -I ng/scripts/test_h5ai_shares.py`.
+
+Removing an `nfs` share leaves its `<project>_h5ai_share_<name>` Docker volume on the host. Delete it with `docker volume rm` once the container no longer uses it.
+
+---
+
 ## Global / Other Variables
 The following variables are defined in `.env.example` but are either global configs or not directly referenced in the compose services:
 
