@@ -201,18 +201,19 @@ Read-only web file browser for the media and photo folders, served at the root o
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
 | `H5AI_ADMIN_PASSWORD` | Admin page password, hashed at each start. Empty keeps the stored hash. | `CHANGEME` |
-| `PHOTOS_PATH` | Host path of the photos shown under `/share/photos`. | *None (empty)* |
+| `H5AI_BIND_ROOT` | Host folder that every `bind` share of `h5ai-shares.conf` starts from (e.g. `/volume1`). | *None (empty)* |
 
 ### Shared folders
-Compose cannot loop over a list, so the folders under `/share` are not written by hand in `docker-compose.yml`. They are listed in [`h5ai-shares.conf`](./h5ai-shares.conf), one per line (`<name> <type> <source>`), and [`scripts/h5ai_shares.py`](./scripts/h5ai_shares.py) writes the matching mounts between the `# BEGIN h5ai-shares ...` / `# END h5ai-shares ...` markers of the compose file. Every share is mounted read-only at `/share/<name>`.
+Compose cannot loop over a list, so the folders under `/share` are not written by hand in `docker-compose.yml`. They are listed in [`h5ai-shares.conf`](./h5ai-shares.conf), one per line (`<name> <type> <source>`), and [`scripts/h5ai_shares.py`](./scripts/h5ai_shares.py) writes the matching mounts between the `# BEGIN h5ai-shares ...` / `# END h5ai-shares ...` markers of the compose file. Every share is mounted read-only at `/share/<name>`, and the list can hold any number of them.
+
+Each share carries its own source. It does not reuse the volumes of the other services (`download`, `backups`, `movies`...) and needs no variable of its own: adding a share only means adding a line.
 
 | Type | Source | Result |
 | :--- | :--- | :--- |
-| `volume` | A named volume already declared in `docker-compose.yml` | Reuses that volume (same NFS mount as Radarr, Sonarr...) |
 | `nfs` | A path exported by `NFS_SERVER_IP` | Generates a dedicated `h5ai_share_<name>` NFS volume |
 | `bind` | A path on the Docker host | Bind mount |
 
-Paths can start with a `${VAR}` reference, resolved at deploy time from `.env` or the Portainer/Dockhand stack variables.
+`nfs` paths are written in full: they are paths on the NAS. `bind` paths start with `${H5AI_BIND_ROOT}`, a single host folder shared by every `bind` share (for example `/volume1`), because the pre-commit hook refuses a host path written out in full in `docker-compose.yml`. Any path can start with a `${VAR}` reference, resolved at deploy time from `.env` or the Portainer/Dockhand stack variables.
 
 To add, rename or remove a share:
 

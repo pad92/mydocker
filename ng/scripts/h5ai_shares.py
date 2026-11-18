@@ -23,7 +23,7 @@ DEFAULT_COMPOSE = NG_DIR / "docker-compose.yml"
 
 SHARE_ROOT = "/share"
 NFS_VOLUME_PREFIX = "h5ai_share_"
-TYPES = ("volume", "nfs", "bind")
+TYPES = ("nfs", "bind")
 
 MOUNTS_BLOCK = "h5ai-shares mounts"
 VOLUMES_BLOCK = "h5ai-shares volumes"
@@ -69,14 +69,7 @@ def parse_conf(text):
             raise ShareError(
                 f"line {lineno}: unknown type {kind!r} (expected one of {', '.join(TYPES)})"
             )
-        if kind == "volume":
-            if not NAME_RE.fullmatch(source):
-                raise ShareError(f"line {lineno}: invalid volume name {source!r}")
-            if source.startswith(NFS_VOLUME_PREFIX):
-                raise ShareError(
-                    f"line {lineno}: {source!r} is reserved for generated nfs volumes"
-                )
-        elif not PATH_RE.fullmatch(source) or "//" in source:
+        if not PATH_RE.fullmatch(source) or "//" in source:
             raise ShareError(
                 f"line {lineno}: invalid path {source!r} (absolute path or ${{VAR}}/..., no ':' or spaces)"
             )
@@ -137,13 +130,7 @@ def render(compose_text, conf_text):
     mounts = []
     volumes = []
     for name, kind, source in shares:
-        if kind == "volume":
-            if source not in declared:
-                raise ShareError(
-                    f"share {name!r}: volume {source!r} is not declared in docker-compose.yml"
-                )
-            mounts.append(f"- {source}:{SHARE_ROOT}/{name}:ro")
-        elif kind == "bind":
+        if kind == "bind":
             mounts.append(f"- {source}:{SHARE_ROOT}/{name}:ro")
         else:
             volume = NFS_VOLUME_PREFIX + name
