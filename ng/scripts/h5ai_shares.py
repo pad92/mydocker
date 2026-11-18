@@ -23,7 +23,8 @@ DEFAULT_COMPOSE = NG_DIR / "docker-compose.yml"
 
 SHARE_ROOT = "/share"
 NFS_VOLUME_PREFIX = "h5ai_share_"
-TYPES = ("nfs", "bind")
+# A source starting with this is a path exported by ${NFS_SERVER_IP}.
+NFS_PREFIX = "nfs:"
 
 MOUNTS_BLOCK = "h5ai-shares mounts"
 VOLUMES_BLOCK = "h5ai-shares volumes"
@@ -55,23 +56,22 @@ def parse_conf(text):
         )
         if not line:
             continue
-        fields = line.split()
-        if len(fields) != 3:
+        source, sep, name = line.rpartition(":")
+        if not sep or not source or any(c.isspace() for c in line):
             raise ShareError(
-                f"line {lineno}: expected '<name> <type> <source>', got {raw.strip()!r}"
+                f"line {lineno}: expected '<source>:<destination>', got {raw.strip()!r}"
             )
-        name, kind, source = fields
+        kind = "bind"
+        if source.startswith(NFS_PREFIX):
+            kind, source = "nfs", source[len(NFS_PREFIX) :]
         if not NAME_RE.fullmatch(name):
-            raise ShareError(f"line {lineno}: invalid share name {name!r}")
+            raise ShareError(f"line {lineno}: invalid destination {name!r}")
         if name in seen:
-            raise ShareError(f"line {lineno}: duplicate share name {name!r}")
-        if kind not in TYPES:
-            raise ShareError(
-                f"line {lineno}: unknown type {kind!r} (expected one of {', '.join(TYPES)})"
-            )
+            raise ShareError(f"line {lineno}: duplicate destination {name!r}")
         if not PATH_RE.fullmatch(source) or "//" in source:
             raise ShareError(
-                f"line {lineno}: invalid path {source!r} (absolute path or ${{VAR}}/..., no ':' or spaces)"
+                f"line {lineno}: invalid source {source!r} (absolute path or ${{VAR}}/...,"
+                f" optionally after '{NFS_PREFIX}', no other ':' and no spaces)"
             )
         seen.add(name)
         shares.append((name, kind, source))

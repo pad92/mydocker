@@ -46,9 +46,7 @@ def mounts(text):
 
 class Render(unittest.TestCase):
     def test_each_type_becomes_a_read_only_mount(self):
-        conf = (
-            "b bind ${PHOTOS_PATH}/x\nc nfs ${MEDIA_BASE_PATH}/C  # trailing comment\n"
-        )
+        conf = "${PHOTOS_PATH}/x:b\nnfs:${MEDIA_BASE_PATH}/C:c  # trailing comment\n"
         out = shares.render(COMPOSE, conf)
         self.assertEqual(
             mounts(out),
@@ -64,7 +62,7 @@ class Render(unittest.TestCase):
         )
 
     def test_previous_generated_content_is_replaced(self):
-        out = shares.render(COMPOSE, "a bind /x\n")
+        out = shares.render(COMPOSE, "/x:a\n")
         self.assertNotIn("stale", out)
 
     def test_empty_list_keeps_markers_and_rest_of_file(self):
@@ -74,16 +72,16 @@ class Render(unittest.TestCase):
         self.assertIn("networks:\n  web:\n", out)
 
     def test_render_is_idempotent(self):
-        conf = "a bind /x/A\nc nfs /x/C\n"
+        conf = "/x/A:a\nnfs:/x/C:c\n"
         once = shares.render(COMPOSE, conf)
         self.assertEqual(shares.render(once, conf), once)
 
     def test_hash_inside_path_is_not_a_comment(self):
-        out = shares.render(COMPOSE, "trash nfs ${MEDIA_BASE_PATH}/#recycle\n")
+        out = shares.render(COMPOSE, "nfs:${MEDIA_BASE_PATH}/#recycle:trash\n")
         self.assertIn("device: :${MEDIA_BASE_PATH}/#recycle", out)
 
     def test_any_number_of_shares(self):
-        conf = "".join(f"s{i} nfs /export/s{i}\n" for i in range(50))
+        conf = "".join(f"nfs:/export/s{i}:s{i}\n" for i in range(50))
         out = shares.render(COMPOSE, conf)
         self.assertEqual(len(mounts(out)), 50)
         self.assertEqual(out.count("<<: *nfs-driver-opts"), 50)
@@ -94,43 +92,49 @@ class Rejected(unittest.TestCase):
         with self.assertRaises(shares.ShareError):
             shares.render(compose, conf)
 
-    def test_volume_type_is_gone(self):
-        # Shares do not reuse the volumes of the other services.
-        self.assertRejected("a volume movies\n")
+    def test_old_three_field_format(self):
+        self.assertRejected("a nfs /x\n")
+        self.assertRejected("a\tbind\t/x\n")
+
+    def test_missing_destination(self):
+        for conf in ("/x\n", "nfs:/x\n", "/x:\n", ":a\n", "nfs::a\n"):
+            with self.subTest(conf=conf):
+                self.assertRejected(conf)
 
     def test_generated_name_must_not_clash_with_a_declared_volume(self):
         self.assertRejected(
-            "x nfs /x\n", COMPOSE.replace("  movies:\n", "  h5ai_share_x:\n")
+            "nfs:/x:x\n", COMPOSE.replace("  movies:\n", "  h5ai_share_x:\n")
         )
 
     def test_duplicate_name(self):
-        self.assertRejected("a bind /y\na bind /x\n")
+        self.assertRejected("/y:a\nnfs:/x:a\n")
 
-    def test_unknown_type(self):
-        self.assertRejected("a smb /x\n")
+    def test_unknown_scheme(self):
+        self.assertRejected("smb:/x:a\n")
 
-    def test_wrong_field_count(self):
-        self.assertRejected("a bind /x ro\n")
+    def test_mount_options_are_not_accepted(self):
+        self.assertRejected("/x:a:ro\n")
 
     def test_bad_names_and_paths(self):
         for conf in (
-            "../a bind /x\n",
-            "a bind relative/x\n",
-            "a bind /x:/y\n",
-            "a bind /x'y\n",
-            "a nfs $HOME\n",
+            "/x:../a\n",
+            "relative/x:a\n",
+            "/x:/y:a\n",
+            "/x'y:a\n",
+            "nfs:$HOME:a\n",
+            "/x//y:a\n",
         ):
             with self.subTest(conf=conf):
                 self.assertRejected(conf)
 
     def test_missing_or_duplicated_markers(self):
         self.assertRejected(
-            "a bind /x\n", COMPOSE.replace("      # END h5ai-shares mounts\n", "")
+            "/x:a\n", COMPOSE.replace("      # END h5ai-shares mounts\n", "")
         )
         doubled = COMPOSE.replace(
             "  # END h5ai-shares volumes\n", "  # END h5ai-shares volumes\n" * 2
         )
-        self.assertRejected("a bind /x\n", doubled)
+        self.assertRejected("/x:a\n", doubled)
 
 
 class Cli(unittest.TestCase):
@@ -139,7 +143,7 @@ class Cli(unittest.TestCase):
             compose = pathlib.Path(tmp, "docker-compose.yml")
             conf = pathlib.Path(tmp, "h5ai-shares.conf")
             compose.write_text(COMPOSE, encoding="utf-8")
-            conf.write_text("a bind /x\n", encoding="utf-8")
+            conf.write_text("/x:a\n", encoding="utf-8")
             args = ["--conf", str(conf), "--compose", str(compose)]
             self.assertEqual(shares.main(["--check", *args]), 1)
             self.assertEqual(compose.read_text(encoding="utf-8"), COMPOSE)
@@ -151,7 +155,7 @@ class Cli(unittest.TestCase):
             compose = pathlib.Path(tmp, "docker-compose.yml")
             conf = pathlib.Path(tmp, "h5ai-shares.conf")
             compose.write_text(COMPOSE, encoding="utf-8")
-            conf.write_text("a volume movies\n", encoding="utf-8")
+            conf.write_text("a nfs /x\n", encoding="utf-8")
             self.assertEqual(
                 shares.main(["--conf", str(conf), "--compose", str(compose)]), 2
             )
