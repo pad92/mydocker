@@ -35,6 +35,10 @@ services:
       # working unchanged.
       - FORGEJO__actions__DEFAULT_ACTIONS_URL=${FORGEJO_DEFAULT_ACTIONS_URL:-https://github.com}
       - FORGEJO__packages__ENABLED=true
+      # Off by default in the image. Without it, pushes of LFS objects fail and
+      # the migration from Gitea drops them without an error. The LFS JWT secret
+      # is generated in app.ini at the next start.
+      - FORGEJO__server__LFS_START_SERVER=true
       # Forgejo refuses to migrate from private addresses (the Gitea host has
       # one). Set to true only while repositories are imported from Gitea.
       - FORGEJO__migrations__ALLOW_LOCALNETWORKS=${FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS:-false}
