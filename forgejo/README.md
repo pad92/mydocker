@@ -138,57 +138,59 @@ migration that times out or fails on the server side.
 
 Forgejo can only start on the data of Gitea 1.22 or older
 ([Forgejo documentation](https://forgejo.org/docs/v15.0/admin/upgrade/from-gitea/)).
-Production ran Gitea 28.3.0, whose database schema Forgejo does not know:
-copying `/rpool/docker/gitea` into Forgejo's directories would at best stop
-Forgejo at start-up and at worst damage the copied database.
+Production ran Gitea 28.3.0, so Forgejo starts on an empty database and
+`migrate_repos.py` imports each repository with Forgejo's migration tool.
+Gitea's data in `/rpool/docker/gitea` is never modified.
 
-So Forgejo starts on an empty database, and `migrate_repos.py` imports each
-repository with Forgejo's migration tool. Gitea stays untouched until the
-switch, and going back means restarting it.
+### Procedure
 
-### 1. Prepare Forgejo next to Gitea
+1. Run Forgejo next to Gitea under a temporary DNS name that points at
+   Traefik, with `FORGEJO_DOMAIN=forgejo.home.lan`, `FORGEJO_SSH_PORT=2223`
+   and `FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS=true`. Before the first start,
+   copy Gitea's SSH host keys, so that clients get no "host key changed"
+   warning after the switch:
 
-Use a temporary name such as `forgejo.home.lan`: add it to DNS so that it
-points at Traefik, then set `FORGEJO_DOMAIN=forgejo.home.lan`,
-`FORGEJO_SSH_PORT=2223` (Gitea keeps 2222) and
-`FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS=true`.
+   ```sh
+   install -d -m 700 /rpool/docker/forgejo/data/ssh
+   cp -p /rpool/docker/gitea/data/ssh/ssh_host_* /rpool/docker/forgejo/data/ssh/
+   ```
 
-Copy Gitea's SSH host keys before the first start, so that clients get no
-"host key changed" warning after the switch. Forgejo generates keys only when
-these files are missing:
+   Carry over by hand the settings made in Gitea's `app.ini` (mail, webhook
+   allow list, and so on), as `FORGEJO__<section>__<KEY>` variables in
+   `docker-compose.yml`. Then follow [First start](#first-start) and
+   [Actions runner](#actions-runner).
+2. Ask users to stop pushing, stop Gitea's runner, and back up Gitea
+   (database dump and data directory). Nothing makes Gitea read-only: a push
+   made after a repository has been imported is not in Forgejo.
+3. [Import](#import) the repositories, then set up again
+   [what is not copied](#not-copied).
+4. Check: browse a few repositories, clone over HTTPS and over SSH (port
+   2223), run a trusted workflow, and push a test image to the registry.
+5. Switch: stop the `gitea` stack. In `forgejo/.env`, set
+   `FORGEJO_DOMAIN=git.home.lan`, `FORGEJO_SSH_PORT=2222` and
+   `FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS=false`, run `docker compose up -d`,
+   and remove the temporary DNS name. Clone URLs do not change. Registry
+   users log in again with a Forgejo token. If the SSH host keys were not
+   copied, clients remove the old key with
+   `ssh-keygen -R '[git.home.lan]:2222'`.
 
-```sh
-install -d -m 700 /rpool/docker/forgejo/data/ssh
-cp -p /rpool/docker/gitea/data/ssh/ssh_host_* /rpool/docker/forgejo/data/ssh/
-```
+To roll back, stop the `forgejo` stack and restart the `gitea` stack.
+Anything pushed to Forgejo in the meantime has to be pushed again to Gitea.
+Delete `/rpool/docker/gitea` only once Forgejo has run without problems for a
+while.
 
-Any setting made directly in Gitea's `app.ini` (mail, webhook allow list,
-registration, and so on) must be carried over by hand, as
-`FORGEJO__<section>__<KEY>` variables in `docker-compose.yml`. Compare with
-`/rpool/docker/gitea/data/gitea/conf/app.ini` before going live.
+### Import
 
-Then follow [First start](#first-start) and [Actions runner](#actions-runner).
-
-### 2. Freeze and back up Gitea
-
-Gitea keeps running during the import, and nothing makes it read-only: ask
-users to stop pushing, and stop its runner. Then back up Gitea (database dump
-and data directory). A push made after a repository has been imported is not
-in Forgejo.
-
-### 3. Import
-
-Create two tokens, each with an admin account. These are the scopes used by
-`tests/test_stack.sh`:
+Create two tokens, each with an admin account. The Gitea admin account is
+what lets the script see every private repository.
 
 | Server | Scopes |
 | --- | --- |
 | Gitea | `read:repository`, `read:issue`, `read:user`, `read:organization`, `read:package` |
 | Forgejo | `write:repository`, `write:organization`, `read:user`, `write:admin` |
 
-The Gitea admin account is what lets the script see every private repository.
-Run it without `--apply` and read the plan, which lists the owners it would
-create (`create user <name>`, `create organisation <name>`):
+Without `--apply`, the script prints its plan, including the owners it would
+create:
 
 ```sh
 read -rs GITEA_TOKEN && read -rs FORGEJO_TOKEN && export GITEA_TOKEN FORGEJO_TOKEN
@@ -196,45 +198,43 @@ python3 migrate_repos.py --source https://git.home.lan \
   --target https://forgejo.home.lan
 ```
 
-Add `--apply` to run it. `--only owner/repo` restricts a run to one
-repository, which is useful for a first test. The exit status is 1 when
-anything was skipped or failed, and each problem is printed on its own line.
+Add `--apply` to run it, and `--only owner/repo` to restrict it to one
+repository. The exit status is 1 when anything was skipped or failed, and
+each problem is printed on its own line. A run can be repeated: repositories
+already in Forgejo are skipped, and the partial copy left by a failed
+migration is deleted, so the next run imports it again.
 
-If Traefik serves its default self-signed certificate for the new domain
-(step-ca has not issued one yet), the script stops with
-`CERTIFICATE_VERIFY_FAILED`. Fix the certificate first if you can.
-`--insecure` skips the certificate check for the Forgejo target only, and
-prints a warning. Both tokens are then sent to a server whose identity is not
-checked: use it only on the local network, for the time of the import.
+The script:
 
-What the script does:
+- creates the owners missing in Forgejo. An organisation keeps its full name,
+  description, website, location and visibility. A user account keeps its
+  username, email, full name and visibility, never the admin flag, and gets a
+  random password that nobody knows: the user resets it with "Forgot
+  password" if mail is set up, or an admin sets a temporary one in Site
+  administration > User accounts. LDAP and OAuth2 accounts become local
+  accounts, to be linked to their authentication source again in the admin
+  panel. An owner that cannot be created (for example, its email is already
+  used by another Forgejo account) is reported, and its repositories are
+  skipped;
+- copies code, LFS, wiki, issues, pull requests, labels, milestones and
+  releases, and keeps the private flag and the description;
+- recreates pull mirrors as mirrors of their upstream URL. Credentials of a
+  private upstream cannot be read from Gitea and must be entered again;
+- archives again the repositories archived in Gitea. Gitea hides their pull
+  requests from its API, so they are copied without pull requests, unless
+  `--unarchive-source` unarchives each of them in Gitea for the time of its
+  copy. The Gitea token then needs `write:repository` in place of
+  `read:repository`;
+- lists the packages at the end, because Forgejo does not copy them.
 
-- It creates the owners missing in Forgejo. An organisation gets the full
-  name, description, website, location and visibility it has in Gitea. A user
-  account gets the same username, email, full name and visibility, never the
-  admin flag, and a random password that nobody knows. Before logging in,
-  each user resets it with "Forgot password" if mail is set up, or an admin
-  sets a temporary one in Site administration > User accounts. Accounts that
-  log in through LDAP or OAuth2 in Gitea become local accounts; link them to
-  their authentication source again in the admin panel.
-- An owner that cannot be created (for example, its email is already used by
-  another Forgejo account) is reported, and its repositories are skipped.
-- It copies code, LFS, wiki, issues, pull requests, labels, milestones and
-  releases, and keeps the private flag and the description.
-- It recreates pull mirrors as mirrors of their upstream URL. Credentials of
-  a private upstream cannot be read from Gitea and must be entered again.
-- It archives again the repositories archived in Gitea. Gitea hides the pull
-  requests of an archived repository from its API, so these are copied
-  without pull requests. With `--unarchive-source`, the script unarchives
-  each of them in Gitea for the time of its copy and archives it again
-  afterwards. The Gitea token then needs `write:repository` in place of
-  `read:repository`.
-- It skips repositories already in Forgejo, so a run can be repeated. When
-  Forgejo reports a failed migration, the script deletes the partial copy it
-  leaves behind, and the next run imports it again.
-- It lists the packages at the end, because Forgejo does not copy them.
+If Traefik still serves its default self-signed certificate for the new
+domain, the script stops with `CERTIFICATE_VERIFY_FAILED`. Fix the
+certificate first if you can. `--insecure` skips the certificate check for
+the Forgejo target only, and prints a warning. Both tokens are then sent to a
+server whose identity is not checked: use it only on the local network, for
+the time of the import.
 
-### 4. Set up again what is not copied
+### Not copied
 
 Push container images again, for example with
 `skopeo copy --all docker://git.home.lan/<owner>/<image>:<tag> docker://forgejo.home.lan/<owner>/<image>:<tag>`
@@ -244,35 +244,6 @@ Forgejo's migration does not copy the SSH and GPG keys of users, two-factor
 authentication, personal access tokens, OAuth2 applications, Actions secrets
 and variables, webhooks, deploy keys, collaborators, organisation teams,
 branch protection rules, stars and watches. Until a user adds their GPG key
-to their Forgejo account, their signed commits show as unverified.
-
-Issues and comments keep the name of their original author, but are not
-linked to the matching Forgejo account.
-
-### 5. Check
-
-Browse a few repositories, clone over HTTPS and over SSH (port 2223), run a
-trusted workflow, and push a test image to the registry.
-
-### 6. Switch
-
-1. Stop the `gitea` stack (`docker compose down` in `gitea/`, or from
-   Portainer). Its data stays in `/rpool/docker/gitea`.
-2. In `forgejo/.env`, set `FORGEJO_DOMAIN=git.home.lan`, `FORGEJO_SSH_PORT=2222`
-   and `FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS=false`, then run
-   `docker compose up -d`.
-3. Remove the temporary DNS name.
-
-Clone URLs do not change (same host, port and paths). If the SSH host keys
-were not copied, clients must remove the old key with
-`ssh-keygen -R '[git.home.lan]:2222'`. Registry users log in again with a
-Forgejo token.
-
-### Rollback
-
-Before the switch, stop or remove the `forgejo` stack. After the switch, stop
-it, then restart the `gitea` stack: its data was not modified. Anything pushed
-to Forgejo in the meantime has to be pushed again to Gitea.
-
-Deleting `/rpool/docker/gitea` is a separate decision, to be taken once Forgejo
-has run without problems for a while.
+to their Forgejo account, their signed commits show as unverified. Issues and
+comments keep the name of their original author, but are not linked to the
+matching Forgejo account.
