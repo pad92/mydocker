@@ -36,6 +36,7 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 | [**gitlab-runner**](./gitlab-runner/README.md) | Local CI/CD pipeline build executor for GitLab projects | GitLab Runner |
 | [**glance**](./glance/README.md) | Personal startpage aggregation dashboard page | Glance Dashboard |
 | [**grafana**](./grafana/README.md) | Advanced monitoring visualization metrics dashboards aggregator | Grafana |
+| [**grampsweb**](./grampsweb/README.md) | Web app for collaborative genealogy built on Gramps | Gramps Web |
 | [**homeassistant**](./homeassistant/README.md) | Central home automation router putting local privacy and local controls first | Home Assistant |
 | [**immich**](./immich/README.md) | High-performance self-hosted photo & video backup solution | Immich |
 | [**karakeep**](./karakeep/README.md) | High-performance bookmarks manager with fast search | Karakeep |
