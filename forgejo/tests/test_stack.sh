@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks the compose file rendered with .env.example, then runs the migration
 # end to end on throwaway containers (own network, no host port):
-# - Forgejo starts from the compose file with PostgreSQL, without web installer;
+# - Forgejo starts from the compose file with PostgreSQL, without web installer,
+#   and refuses self-registration;
 # - a Gitea (gitea/gitea:latest, same image as production) is filled with a
 #   private user repository, an organisation repository with an issue, a label
 #   and a release, an archived repository, a repository whose owner is missing
@@ -58,8 +59,20 @@ render() { env "$@" docker compose --project-directory "$stack_dir" \
   --env-file "$work_dir/test.env" config --format json; }
 config="$(render)"
 env_of() { jq -r ".services.forgejo.environment[\"$1\"]" <<<"$config"; }
-[ "$(env_of FORGEJO__server__ROOT_URL)" = https://forgejo.example.com/ ] \
+[ "$(env_of FORGEJO__server__ROOT_URL)" = https://git.example.com/ ] \
   || fail "ROOT_URL is not built from FORGEJO_DOMAIN"
+# Without FORGEJO_VERSION, the image must not be older than the production
+# database: Forgejo does not start on a schema newer than itself.
+default_image="$(render FORGEJO_VERSION= | jq -r .services.forgejo.image)"
+[ "${default_image##*:}" -ge 17 ] 2>/dev/null \
+  || fail "the default Forgejo image ($default_image) is older than 17"
+label_of() { jq -r ".services.forgejo.labels[\"$1\"]" <<<"$config"; }
+headers="$(label_of traefik.http.routers.forgejo.middlewares)"
+[ "$headers" != null ] || fail "the HTTPS router has no middleware"
+[ "$(label_of "traefik.http.middlewares.$headers.headers.stsSeconds")" -ge 15552000 ] 2>/dev/null \
+  || fail "the HTTPS router does not send HSTS for at least 180 days"
+[ "$(label_of "traefik.http.middlewares.$headers.headers.contentTypeNosniff")" = true ] \
+  || fail "the HTTPS router does not send X-Content-Type-Options: nosniff"
 [ "$(env_of FORGEJO__security__INSTALL_LOCK)" = true ] || fail "the web installer is open"
 [ "$(env_of FORGEJO__migrations__ALLOW_LOCALNETWORKS)" = false ] \
   || fail "migrations from local networks are allowed by default"
@@ -92,6 +105,11 @@ services:
     ports: !reset []
     environment:
       FORGEJO__migrations__ALLOW_LOCALNETWORKS: "true"
+      # Forgejo 17 refuses to migrate over http://, and the throwaway Gitea has
+      # no certificate. Production keeps the default.
+      FORGEJO__migrations__ALLOW_UNENCRYPTED: "true"
+$([ "${FORGEJO_TEST_EXPECT_REGISTRATION:-closed}" != open ] \
+  || echo '      FORGEJO__service__DISABLE_REGISTRATION: "false"')
   db:
     container_name: $project-db
   runner:
@@ -127,6 +145,30 @@ wait_healthy "$forgejo_url"
 docker exec -u git "$project" grep -q '^INSTALL_LOCK *= *true' /data/gitea/conf/app.ini \
   || fail "app.ini is not locked"
 echo "OK: Forgejo starts on PostgreSQL without web installer"
+
+# Self-registration: the form is submitted as a browser would, and the account
+# must not exist afterwards. FORGEJO_TEST_EXPECT_REGISTRATION=open inverts the
+# check, to prove on a stack with registration enabled that the form submitted
+# here does create an account.
+user_exists() { docker exec -i "$project-db" sh -c 'psql -X -q -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+  <<<"select count(*) from \"user\" where lower_name = '$1';"; }
+jar="$work_dir/cookies"
+signup_password="$(openssl rand -hex 12)"
+curl -sS -o /dev/null -c "$jar" "$forgejo_url/user/sign_up"
+csrf="$(awk '$6 == "_csrf" { print $7 }' "$jar")"
+signup_status="$(curl -sS -o /dev/null -w '%{http_code}' -b "$jar" -H "Origin: $forgejo_url" \
+  --data-urlencode "_csrf=$csrf" --data-urlencode user_name=intruder \
+  --data-urlencode email=intruder@example.test --data-urlencode "password=$signup_password" \
+  --data-urlencode "retype=$signup_password" "$forgejo_url/user/sign_up")"
+if [ "${FORGEJO_TEST_EXPECT_REGISTRATION:-closed}" = open ]; then
+  [ "$(user_exists intruder)" = 1 ] \
+    || fail "the sign-up request (HTTP $signup_status) creates no account even with registration open: the test proves nothing"
+  echo "OK: with registration open, the sign-up request creates an account"
+  exit 0
+fi
+[ "$(user_exists intruder)" = 0 ] || fail "anyone can register an account (HTTP $signup_status)"
+[ "$signup_status" = 403 ] || fail "sign-up is not refused with 403 (HTTP $signup_status)"
+echo "OK: self-registration is refused"
 
 # Users and tokens, with the scopes documented in README.md.
 add_user() { # cli container user [--admin]

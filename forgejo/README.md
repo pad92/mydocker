@@ -1,9 +1,12 @@
 # Forgejo
 
-This stack runs Forgejo 15 (LTS), PostgreSQL 17 and a Forgejo Actions runner
+This stack runs Forgejo 17, PostgreSQL 17 and a Forgejo Actions runner
 behind Traefik. It replaces the `gitea` stack. As with Gitea, the external
 network `traefik_gateway` and the certificate resolver `stepca` must already
 exist. HTTP redirects to HTTPS, and SSH is published on `FORGEJO_SSH_PORT`.
+
+Forgejo cannot be downgraded: `FORGEJO_VERSION` must never be lower than the
+version that last ran on the database.
 
 ## Why the Gitea data is not reused
 
@@ -40,9 +43,17 @@ Settings that differ from Forgejo's defaults:
 - `DEFAULT_ACTIONS_URL=https://github.com`: as with Gitea, `uses:
   actions/checkout@v4` is fetched from github.com. Forgejo's default is
   data.forgejo.org.
-- `ALLOW_LOCALNETWORKS=false`: set it to true only during the import,
-  because Forgejo refuses to migrate from a private address such as
-  git.home.lan.
+- `DISABLE_REGISTRATION=true`: Forgejo lets anyone register by default.
+  Accounts are created with the CLI (see [First start](#first-start)) or by
+  an admin in Site administration.
+- `ALLOW_LOCALNETWORKS=false`: set it to true only during an import from the
+  local network, because Forgejo refuses to migrate from a private address.
+  While it is true, any user can make Forgejo fetch internal URLs.
+- The HTTPS router adds `Strict-Transport-Security` (one year) and
+  `X-Content-Type-Options: nosniff` through the Traefik middleware
+  `forgejo-headers`. Browsers then refuse to open the site over HTTP or with
+  an invalid certificate, with no way to click through: renew the step-ca
+  certificate before it expires.
 - `LFS_START_SERVER=true`: the Git LFS server is off in the image. While it
   is off, the migration copies the pointer files but drops the LFS objects,
   without an error.
@@ -250,8 +261,11 @@ python3 -m unittest discover -s tests
 ```
 
 `test_stack.sh` checks the rendered compose file, then starts this stack and a
-`gitea/gitea:latest` on throwaway containers. It imports a private repository,
-an organisation repository with an issue, a label and a release, an archived
+`gitea/gitea:latest` on throwaway containers. It submits the sign-up form and
+checks that no account is created
+(`FORGEJO_TEST_EXPECT_REGISTRATION=open ./tests/test_stack.sh` proves that the
+same request does create one when registration is open). It imports a
+private repository, an organisation repository with an issue, a label and a release, an archived
 repository with a pull request, a repository whose owner is missing, and one
 whose owner cannot be created. It
 also checks that the runner runs a job through `docker.sock`. The unit tests

@@ -9,9 +9,10 @@ x-localtime-volume: &localtime-volume "/etc/localtime:/etc/localtime:ro"
 x-ca-volume: &ca-volume "/etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro"
 services:
   forgejo:
-    # 15 is the LTS line (supported until July 2027); the tag follows its patch
-    # releases. Moving to another major version is a separate upgrade.
-    image: codeberg.org/forgejo/forgejo:${FORGEJO_VERSION:-15}
+    # The tag follows the patch releases of 17. The production database has the
+    # schema of 17 and Forgejo cannot be downgraded: an older image does not
+    # start on it. Moving to another major version is a separate upgrade.
+    image: codeberg.org/forgejo/forgejo:${FORGEJO_VERSION:-17}
     container_name: forgejo
     environment:
       - USER_UID=${USER_UID:?Set USER_UID}
@@ -24,6 +25,9 @@ services:
       # No web installer: the schema is created at start-up and the first admin
       # account is made with the CLI (see README.md).
       - FORGEJO__security__INSTALL_LOCK=true
+      # Open by default in Forgejo: anyone who reaches the site could create an
+      # account. Accounts are made with the CLI or by an admin.
+      - FORGEJO__service__DISABLE_REGISTRATION=true
       - FORGEJO__server__DOMAIN=${FORGEJO_DOMAIN:?Set FORGEJO_DOMAIN}
       - FORGEJO__server__SSH_DOMAIN=${FORGEJO_DOMAIN:?Set FORGEJO_DOMAIN}
       - FORGEJO__server__ROOT_URL=https://${FORGEJO_DOMAIN:?Set FORGEJO_DOMAIN}/
@@ -39,8 +43,9 @@ services:
       # the migration from Gitea drops them without an error. The LFS JWT secret
       # is generated in app.ini at the next start.
       - FORGEJO__server__LFS_START_SERVER=true
-      # Forgejo refuses to migrate from private addresses (the Gitea host has
-      # one). Set to true only while repositories are imported from Gitea.
+      # Forgejo refuses to migrate from private addresses. Set to true only for
+      # the time of an import from a host of the local network: while it is
+      # true, any user can make Forgejo fetch internal URLs.
       - FORGEJO__migrations__ALLOW_LOCALNETWORKS=${FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS:-false}
     restart: always
     networks:
@@ -78,6 +83,12 @@ services:
       traefik.http.routers.forgejo.entrypoints: "websecure"
       traefik.http.routers.forgejo.tls: "true"
       traefik.http.routers.forgejo.tls.certresolver: "stepca"
+      traefik.http.routers.forgejo.middlewares: forgejo-headers
+
+      # Forgejo only sends X-Frame-Options. HSTS for one year, without
+      # includeSubDomains: the name has no subdomain to cover.
+      traefik.http.middlewares.forgejo-headers.headers.stsSeconds: "31536000"
+      traefik.http.middlewares.forgejo-headers.headers.contentTypeNosniff: "true"
 
     logging: *default-logging
   db:
