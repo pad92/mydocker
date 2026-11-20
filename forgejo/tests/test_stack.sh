@@ -74,6 +74,7 @@ headers="$(label_of traefik.http.routers.forgejo.middlewares)"
 [ "$(label_of "traefik.http.middlewares.$headers.headers.contentTypeNosniff")" = true ] \
   || fail "the HTTPS router does not send X-Content-Type-Options: nosniff"
 [ "$(env_of FORGEJO__security__INSTALL_LOCK)" = true ] || fail "the web installer is open"
+[ "$(env_of FORGEJO__service__DISABLE_REGISTRATION)" = true ] || fail "self-registration is open"
 [ "$(env_of FORGEJO__migrations__ALLOW_LOCALNETWORKS)" = false ] \
   || fail "migrations from local networks are allowed by default"
 [ "$(env_of FORGEJO__server__SSH_PORT)" = "$(jq -r '.services.forgejo.ports[0].published' <<<"$config")" ] \
@@ -103,6 +104,10 @@ services:
   forgejo:
     container_name: $project
     ports: !reset []
+    # The production labels would declare a second router named forgejo to
+    # the Traefik of the host the test runs on.
+    labels:
+      traefik.enable: "false"
     environment:
       FORGEJO__migrations__ALLOW_LOCALNETWORKS: "true"
       # Forgejo 17 refuses to migrate over http://, and the throwaway Gitea has
@@ -152,22 +157,27 @@ echo "OK: Forgejo starts on PostgreSQL without web installer"
 # here does create an account.
 user_exists() { docker exec -i "$project-db" sh -c 'psql -X -q -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
   <<<"select count(*) from \"user\" where lower_name = '$1';"; }
-jar="$work_dir/cookies"
 signup_password="$(openssl rand -hex 12)"
-curl -sS -o /dev/null -c "$jar" "$forgejo_url/user/sign_up"
-csrf="$(awk '$6 == "_csrf" { print $7 }' "$jar")"
-signup_status="$(curl -sS -o /dev/null -w '%{http_code}' -b "$jar" -H "Origin: $forgejo_url" \
-  --data-urlencode "_csrf=$csrf" --data-urlencode user_name=intruder \
+# Two independent observations: the page offers a registration form or not,
+# and the submitted form creates an account or not. Forgejo 17 uses no CSRF
+# token, so the request needs none.
+signup_form="$(curl -sS "$forgejo_url/user/sign_up" | grep -c 'name="retype"' || true)"
+signup_status="$(curl -sS -o /dev/null -w '%{http_code}' -H "Origin: $forgejo_url" \
+  --data-urlencode user_name=intruder \
   --data-urlencode email=intruder@example.test --data-urlencode "password=$signup_password" \
   --data-urlencode "retype=$signup_password" "$forgejo_url/user/sign_up")"
 if [ "${FORGEJO_TEST_EXPECT_REGISTRATION:-closed}" = open ]; then
   [ "$(user_exists intruder)" = 1 ] \
     || fail "the sign-up request (HTTP $signup_status) creates no account even with registration open: the test proves nothing"
-  echo "OK: with registration open, the sign-up request creates an account"
+  [ "$signup_form" = 1 ] || fail "no registration form found with registration open: the form check proves nothing"
+  echo "OK: with registration open, the form is offered and the sign-up request creates an account"
   exit 0
 fi
 [ "$(user_exists intruder)" = 0 ] || fail "anyone can register an account (HTTP $signup_status)"
 [ "$signup_status" = 403 ] || fail "sign-up is not refused with 403 (HTTP $signup_status)"
+[ "$signup_form" = 0 ] || fail "the sign-up page still offers a registration form"
+docker exec -u git "$project" grep -q '^DISABLE_REGISTRATION *= *true' /data/gitea/conf/app.ini \
+  || fail "app.ini does not disable registration"
 echo "OK: self-registration is refused"
 
 # Users and tokens, with the scopes documented in README.md.

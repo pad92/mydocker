@@ -261,10 +261,11 @@ python3 -m unittest discover -s tests
 ```
 
 `test_stack.sh` checks the rendered compose file, then starts this stack and a
-`gitea/gitea:latest` on throwaway containers. It submits the sign-up form and
-checks that no account is created
-(`FORGEJO_TEST_EXPECT_REGISTRATION=open ./tests/test_stack.sh` proves that the
-same request does create one when registration is open). It imports a
+`gitea/gitea:latest` on throwaway containers, with Traefik disabled on them.
+It checks that the sign-up page offers no form and that submitting one creates
+no account (`FORGEJO_TEST_EXPECT_REGISTRATION=open ./tests/test_stack.sh`
+proves that both checks can fail: with registration open, the form is there
+and the same request creates an account). It imports a
 private repository, an organisation repository with an issue, a label and a release, an archived
 repository with a pull request, a repository whose owner is missing, and one
 whose owner cannot be created. It
