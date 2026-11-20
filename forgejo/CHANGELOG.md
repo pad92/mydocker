@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-20
+
+- Start the Git LFS server (`LFS_START_SERVER=true`). It was off, so the
+  repositories migrated from Gitea lost their LFS objects without an error.
+  A repository migrated before this change must be migrated again.
+- `tests/test_stack.sh` migrates a repository holding an LFS object and checks
+  that Forgejo serves it.
+
 ## 2026-11-14
 
 - The Forgejo image tag comes from `FORGEJO_VERSION` (default `15`), the

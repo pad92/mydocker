@@ -7,6 +7,7 @@
 #   and a release, an archived repository, a repository whose owner is missing
 #   in Forgejo, a repository whose owner cannot be created in Forgejo (email
 #   already taken), and a generic package;
+#   The private repository holds a Git LFS object;
 # - migrate_repos.py, with the token scopes given in README.md: the dry run
 #   changes nothing, --apply creates the missing owners, copies everything it
 #   can and reports the failed owner and the package, a second run copies only
@@ -66,6 +67,8 @@ env_of() { jq -r ".services.forgejo.environment[\"$1\"]" <<<"$config"; }
   || fail "the advertised SSH port is not the published one"
 [ "$(env_of FORGEJO__actions__DEFAULT_ACTIONS_URL)" = https://github.com ] \
   || fail "actions are not fetched from github.com as with Gitea"
+[ "$(env_of FORGEJO__server__LFS_START_SERVER)" = true ] \
+  || fail "the LFS server is off: LFS objects would be dropped by the migration"
 [ "$(jq -r '.services.forgejo.labels["traefik.http.routers.forgejo_http.middlewares"]' <<<"$config")" = redirect-https ] \
   || fail "HTTP router does not redirect to HTTPS"
 [ "$(docker compose --project-name other --project-directory "$stack_dir" --env-file "$work_dir/test.env" \
@@ -107,6 +110,7 @@ network="${project}_forgejo"
 docker run -d --name "$gitea" --network "$network" --network-alias gitea-src \
   -e GITEA__security__INSTALL_LOCK=true -e GITEA__database__DB_TYPE=sqlite3 \
   -e GITEA__server__ROOT_URL=http://gitea-src:3000/ \
+  -e GITEA__server__LFS_START_SERVER=true \
   -e GITEA__packages__ENABLED=true gitea/gitea:latest >/dev/null
 ip_of() { docker inspect -f "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$1"; }
 wait_healthy() {
@@ -157,6 +161,20 @@ gitea_api() { api "$gitea_url" "$gitea_admin_token" "$@"; }
 forgejo_api() { api "$forgejo_url" "$forgejo_admin_token" "$@"; }
 
 gitea_api POST /admin/users/alice/repos '{"name":"secret","private":true,"auto_init":true}' >/dev/null
+# An LFS object in the private repository: uploaded to Gitea's LFS server, then
+# referenced by a pointer file, as "git lfs push" followed by "git push" does.
+lfs_content='payload stored in Git LFS'
+lfs_oid="$(printf %s "$lfs_content" | sha256sum | cut -d' ' -f1)"
+lfs_size="${#lfs_content}"
+curl -sS --fail-with-body -o /dev/null -X PUT -u "gadmin:$gitea_admin_token" \
+  -H 'Content-Type: application/octet-stream' --data-binary "$lfs_content" \
+  "$gitea_url/alice/secret.git/info/lfs/objects/$lfs_oid/$lfs_size" \
+  || fail "the LFS object could not be uploaded to Gitea"
+lfs_pointer="$(printf 'version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize %s\n' "$lfs_oid" "$lfs_size")"
+gitea_api POST /repos/alice/secret/contents/big.bin \
+  "$(jq -n --arg c "$(base64 -w0 <<<"$lfs_pointer")" '{content: $c, message: "lfs"}')" >/dev/null
+[ "$(curl -sS -H "Authorization: token $gitea_admin_token" "$gitea_url/api/v1/repos/alice/secret/media/big.bin")" = "$lfs_content" ] \
+  || fail "Gitea does not serve the LFS object: the test setup is wrong"
 # alice/old is archived with a pull request: Gitea hides the pull requests of
 # archived repositories from the API.
 gitea_api POST /admin/users/alice/repos '{"name":"old","auto_init":true}' >/dev/null
@@ -217,7 +235,12 @@ forgejo_api GET /repos/team/app/labels | jq -e '.[] | select(.name == "bug")' >/
   || fail "the release was not copied"
 [ "$(forgejo_api GET /orgs/team | jq -r .full_name)" = "The Team" ] || fail "the organisation was not created"
 forgejo_api GET /repos/alice/secret/contents/README.md >/dev/null || fail "the code of alice/secret is missing"
-echo "OK: owners created; repositories, issue, label, release, private and archived state copied"
+# The pointer file alone is not enough: the object itself must be in Forgejo.
+[ "$(curl -sS -H "Authorization: token $forgejo_admin_token" "$forgejo_url/api/v1/repos/alice/secret/media/big.bin")" = "$lfs_content" ] \
+  || fail "the LFS object of alice/secret was not copied"
+[ "$(docker exec -u git "$project" find /data/git/lfs -type f | wc -l)" = 1 ] \
+  || fail "Forgejo does not store exactly one LFS object"
+echo "OK: owners created; repositories, issue, label, release, LFS object, private and archived state copied"
 
 forgejo_api DELETE /admin/users/squatter >/dev/null
 out="$(migrate --apply 2>&1)" || fail "second run failed: $out"

@@ -43,6 +43,9 @@ Settings that differ from Forgejo's defaults:
 - `ALLOW_LOCALNETWORKS=false`: set it to true only during the import,
   because Forgejo refuses to migrate from a private address such as
   git.home.lan.
+- `LFS_START_SERVER=true`: the Git LFS server is off in the image. While it
+  is off, the migration copies the pointer files but drops the LFS objects,
+  without an error.
 - Forgejo and the runner mount the host CA bundle, so they trust the step-ca
   certificates of `*.home.lan`.
 
