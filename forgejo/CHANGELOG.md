@@ -2,6 +2,18 @@
 
 ## 2026-11-20
 
+- Disable self-registration (`DISABLE_REGISTRATION=true`); it was open.
+- Default `FORGEJO_VERSION` to 17, the version of the production database,
+  instead of 15, which cannot start on it.
+- Add HSTS and `X-Content-Type-Options: nosniff` on the HTTPS router.
+- Update `.env.example` to the final domain and SSH port.
+- `tests/test_stack.sh` checks that the sign-up page offers no form and that
+  submitting one creates no account, and checks the default image tag and the
+  Traefik headers. Its Forgejo container no longer carries the production
+  Traefik labels, which declared a second `forgejo` router on the host. It
+  sets `ALLOW_UNENCRYPTED=true` for its own Forgejo, since Forgejo 17 refuses
+  to migrate from an `http://` source and the throwaway Gitea has no
+  certificate.
 - Start the Git LFS server (`LFS_START_SERVER=true`). It was off, so the
   repositories migrated from Gitea lost their LFS objects without an error.
   A repository migrated before this change must be migrated again.
