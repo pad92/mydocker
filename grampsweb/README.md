@@ -39,6 +39,13 @@ Copy `.env.example` to `.env`, fill it in and run `chmod 600 .env`.
 | `GRAMPSWEB_MEDIA_DIR` | required | Host directory for photos and documents |
 | `GUNICORN_NUM_WORKERS` | `8` | Web workers; each one costs CPU and RAM |
 | `GRAMPSWEB_CELERY_CONCURRENCY` | `2` | Parallel tasks of the worker |
+| `GRAMPSWEB_EMAIL_HOST` | empty (e-mail off) | SMTP server, `smtp.protonmail.ch` for Proton Mail |
+| `GRAMPSWEB_EMAIL_PORT` | `587` | SMTP port |
+| `GRAMPSWEB_EMAIL_USE_STARTTLS` | `true` | STARTTLS, as Proton Mail expects on 587 |
+| `GRAMPSWEB_EMAIL_USE_SSL` | `false` | Implicit TLS, for port 465 only |
+| `GRAMPSWEB_EMAIL_HOST_USER` | empty | SMTP user: the Proton address of the token |
+| `GRAMPSWEB_EMAIL_HOST_PASSWORD` | empty | SMTP password: the Proton SMTP token |
+| `GRAMPSWEB_DEFAULT_FROM_EMAIL` | empty | Sender of the e-mails, the same address |
 
 Subdirectories of `GRAMPSWEB_DATA_DIR`, created by Docker on first start:
 
@@ -56,7 +63,12 @@ Subdirectories of `GRAMPSWEB_DATA_DIR`, created by Docker on first start:
 writes a random key to `secret/secret` and reuses it afterwards. Back that
 file up with the rest. Deleting it logs every user out.
 
-Other settings (SMTP for password resets, OIDC, registration, AI chat) are
+Proton Mail sends over SMTP only on a paid plan, from a custom-domain
+address, with an SMTP token generated in Settings > IMAP/SMTP > SMTP tokens
+(the account password does not work). Under Portainer, enter these values in
+the stack's environment variables, then redeploy the stack.
+
+Other settings (OIDC, registration, AI chat) are
 `GRAMPSWEB_*` variables listed in the
 [configuration page](https://www.grampsweb.org/install_setup/configuration/).
 Add them to the `x-grampsweb` block of `docker-compose.yml` so the worker gets
