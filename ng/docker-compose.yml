@@ -338,14 +338,31 @@ services:
       # Thumbnail index, remembered capture failures and folder sizes. Kept
       # apart from the public cache, which is served over HTTP.
       - ${DOCKER_CONFIG_PATH}/h5ai/cache-private:/usr/share/h5ai/_h5ai/private/cache
-      - movies:/share/movies:ro
-      - movies_family:/share/movies_family:ro
-      - /volume1/medias/movies:/share/moviez:ro
-      - series:/share/series:ro
-      - series_family:/share/series_family:ro
-      - /volume1/medias/series:/share/seriez:ro
-      - music_library:/share/music:ro
-      - ${PHOTOS_PATH}:/share/photos:ro
+      # Folders under /share: one slot per folder, set in .env or in the
+      # Portainer/Dockhand stack variables as <source>:/share/<name> (see
+      # README, section h5ai). Always read-only. An unset slot mounts the
+      # empty volume h5ai_unused outside /share, so h5ai does not show it.
+      # Add lines here past H5AI_SHARE_20 if 20 is not enough.
+      - ${H5AI_SHARE_01:-h5ai_unused:/.h5ai-unused/01}:ro
+      - ${H5AI_SHARE_02:-h5ai_unused:/.h5ai-unused/02}:ro
+      - ${H5AI_SHARE_03:-h5ai_unused:/.h5ai-unused/03}:ro
+      - ${H5AI_SHARE_04:-h5ai_unused:/.h5ai-unused/04}:ro
+      - ${H5AI_SHARE_05:-h5ai_unused:/.h5ai-unused/05}:ro
+      - ${H5AI_SHARE_06:-h5ai_unused:/.h5ai-unused/06}:ro
+      - ${H5AI_SHARE_07:-h5ai_unused:/.h5ai-unused/07}:ro
+      - ${H5AI_SHARE_08:-h5ai_unused:/.h5ai-unused/08}:ro
+      - ${H5AI_SHARE_09:-h5ai_unused:/.h5ai-unused/09}:ro
+      - ${H5AI_SHARE_10:-h5ai_unused:/.h5ai-unused/10}:ro
+      - ${H5AI_SHARE_11:-h5ai_unused:/.h5ai-unused/11}:ro
+      - ${H5AI_SHARE_12:-h5ai_unused:/.h5ai-unused/12}:ro
+      - ${H5AI_SHARE_13:-h5ai_unused:/.h5ai-unused/13}:ro
+      - ${H5AI_SHARE_14:-h5ai_unused:/.h5ai-unused/14}:ro
+      - ${H5AI_SHARE_15:-h5ai_unused:/.h5ai-unused/15}:ro
+      - ${H5AI_SHARE_16:-h5ai_unused:/.h5ai-unused/16}:ro
+      - ${H5AI_SHARE_17:-h5ai_unused:/.h5ai-unused/17}:ro
+      - ${H5AI_SHARE_18:-h5ai_unused:/.h5ai-unused/18}:ro
+      - ${H5AI_SHARE_19:-h5ai_unused:/.h5ai-unused/19}:ro
+      - ${H5AI_SHARE_20:-h5ai_unused:/.h5ai-unused/20}:ro
     networks:
       - traefik_gateway
     deploy:
@@ -407,11 +424,6 @@ volumes:
     driver_opts:
       <<: *nfs-driver-opts
       device: :${MUSIC_PATH}
-  music_library:
-    driver: local
-    driver_opts:
-      <<: *nfs-driver-opts
-      device: :${MUSIC_LIBRARY_PATH}
   trash:
     driver: local
     driver_opts:
@@ -422,6 +434,35 @@ volumes:
     driver_opts:
       <<: *nfs-driver-opts
       device: :${BACKUPS_PATH}
+  # Always empty: target of the unset h5ai slots.
+  h5ai_unused:
+  # NFS exports that h5ai slots can mount, e.g. H5AI_SHARE_07=h5ai_nfs_01:/share/music.
+  # Docker creates them only when a slot uses them.
+  h5ai_nfs_01:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${H5AI_NFS_01:-/h5ai-nfs-01-unset}
+  h5ai_nfs_02:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${H5AI_NFS_02:-/h5ai-nfs-02-unset}
+  h5ai_nfs_03:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${H5AI_NFS_03:-/h5ai-nfs-03-unset}
+  h5ai_nfs_04:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${H5AI_NFS_04:-/h5ai-nfs-04-unset}
+  h5ai_nfs_05:
+    driver: local
+    driver_opts:
+      <<: *nfs-driver-opts
+      device: :${H5AI_NFS_05:-/h5ai-nfs-05-unset}
 
 networks:
   traefik_gateway:

@@ -188,6 +188,48 @@ Define these environment variables which are unique to this service:
 
 ---
 
+## 9. h5ai (`h5ai`)
+
+### Role
+Read-only web file browser for the media and photo folders, served at the root of `TRAEFIK_FQDN`.
+
+### External Links
+- **Docker Image**: [pad92/docker-h5ai](https://hub.docker.com/r/pad92/docker-h5ai)
+
+### Service-Specific Configuration Variables
+
+| Variable Name | Description | Placeholder / Default |
+| :--- | :--- | :--- |
+| `H5AI_ADMIN_PASSWORD` | Admin page password, hashed at each start. Empty keeps the stored hash. | `CHANGEME` |
+| `H5AI_SHARE_01` ... `H5AI_SHARE_20` | One folder under `/share` each, as `<source>:/share/<name>`. Unset slots show nothing. | *None (empty)* |
+| `H5AI_NFS_01` ... `H5AI_NFS_05` | Path exported by `NFS_SERVER_IP`, mounted by a slot through the volume `h5ai_nfs_01` ... `h5ai_nfs_05`. | *None (empty)* |
+
+### Shared folders
+Compose cannot loop over a list, so `docker-compose.yml` holds 20 fixed slots, and each one takes its whole value from a variable. Adding, moving or removing a share only means changing a variable in `.env` or in the Portainer/Dockhand stack, then redeploying: the compose file and the git repository stay unchanged.
+
+```text
+H5AI_SHARE_01=movies:/share/movies
+H5AI_SHARE_02=/volume1/data/subvol-101-disk-0/downloads/Games:/share/games
+H5AI_SHARE_03=h5ai_nfs_01:/share/music
+H5AI_NFS_01=/volume1/music/library
+```
+
+The value is `<source>:<target>`, without options: the compose file appends `:ro`, so every share is read-only (adding `:ro` yourself makes the mount invalid). The target starts with `/share/`. The source is one of:
+
+| Source | Meaning |
+| :--- | :--- |
+| A path on the Docker host | Bind mount of that folder |
+| `h5ai_nfs_01` ... `h5ai_nfs_05` | The NFS path set in `H5AI_NFS_01` ... `H5AI_NFS_05` |
+| A volume of the stack (`movies`, `series`, `download`, `backups`...) | The same folder as the service that uses it |
+
+An unset slot mounts the empty volume `h5ai_unused` at `/.h5ai-unused/<slot>`, outside `/share`, so it never shows in h5ai. A `h5ai_nfs_*` volume that no slot uses is not created. A volume name with a typo stops the deploy with `refers to undefined volume`. Paths cannot contain spaces or `:`.
+
+More than 20 shares or 5 NFS paths needs new lines in `docker-compose.yml`, following the same pattern.
+
+After an NFS path changes, Docker keeps the old options of the existing volume: remove the volume (`docker volume rm <project>_h5ai_nfs_01`) once the container is stopped, then redeploy.
+
+---
+
 ## Global / Other Variables
 The following variables are defined in `.env.example` but are either global configs or not directly referenced in the compose services:
 
