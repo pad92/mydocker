@@ -178,6 +178,131 @@ services:
       traefik.http.routers.uptime.tls: "true"
       traefik.http.routers.uptime.tls.certresolver: "stepca"
 
+  # --- Authentik (SSO / identity provider) -------------------------------
+  # Based on the official compose file (https://goauthentik.io/compose.yml).
+  # Redis is no longer needed since 2025.10: cache, tasks and websockets
+  # use PostgreSQL.
+  authentik_postgresql:
+    image: docker.io/library/postgres:16-alpine
+    container_name: authentik_postgresql
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASS:?Set AUTHENTIK_PG_PASS in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/database:/var/lib/postgresql/data
+    # Private network only: the database is never reachable from Traefik.
+    networks:
+      - authentik
+    security_opt:
+      - no-new-privileges:true
+
+  authentik_server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.6}
+    container_name: authentik_server
+    command: server
+    restart: unless-stopped
+    shm_size: 512mb
+    depends_on:
+      authentik_postgresql:
+        condition: service_healthy
+    environment: &authentik-env
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?Set AUTHENTIK_SECRET_KEY in .env}
+      AUTHENTIK_POSTGRESQL__HOST: authentik_postgresql
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASS:?Set AUTHENTIK_PG_PASS in .env}
+      # No data sent to the vendor (Sentry error reports, startup analytics).
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+    volumes:
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/data:/data
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/custom-templates:/templates
+      - *localtime-volume
+    networks:
+      - authentik
+      - traefik_gateway
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.authentik.loadbalancer.server.port: "9000"
+
+      # Internal host (.lan) and optional public host. When
+      # AUTHENTIK_HOST_PUBLIC is empty, the second Host() repeats the internal
+      # one, so the rule stays valid without a public name.
+      traefik.http.routers.authentik_http.rule: "Host(`${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}`) || Host(`${AUTHENTIK_HOST_PUBLIC:-${AUTHENTIK_HOST_LOCAL}}`)"
+      traefik.http.routers.authentik_http.entrypoints: web
+      traefik.http.routers.authentik_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      # One HTTPS router per host name, so each name gets its own certificate:
+      # a failed ACME order for the public name must not take the internal
+      # certificate down with it. When AUTHENTIK_HOST_PUBLIC is empty, the
+      # public router repeats the internal host and is harmless.
+      traefik.http.routers.authentik.rule: "Host(`${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}`)"
+      traefik.http.routers.authentik.entrypoints: "websecure"
+      traefik.http.routers.authentik.tls: "true"
+      traefik.http.routers.authentik.tls.certresolver: "stepca"
+      traefik.http.routers.authentik.service: "authentik"
+
+      traefik.http.routers.authentik_pub.rule: "Host(`${AUTHENTIK_HOST_PUBLIC:-${AUTHENTIK_HOST_LOCAL}}`)"
+      traefik.http.routers.authentik_pub.entrypoints: "websecure"
+      traefik.http.routers.authentik_pub.tls: "true"
+      traefik.http.routers.authentik_pub.tls.certresolver: "stepca"
+      traefik.http.routers.authentik_pub.service: "authentik"
+
+      # Embedded outpost callbacks (/outpost.goauthentik.io/...) on every
+      # protected host. The high priority keeps it ahead of the host routers.
+      # It matches every host, public ones included: see the README.
+      traefik.http.routers.authentik_outpost.rule: "PathPrefix(`/outpost.goauthentik.io/`)"
+      traefik.http.routers.authentik_outpost.entrypoints: "websecure"
+      traefik.http.routers.authentik_outpost.tls: "true"
+      traefik.http.routers.authentik_outpost.priority: "1000"
+      traefik.http.routers.authentik_outpost.service: "authentik"
+
+      # Forward-auth middleware, used by other routers as "authentik@docker".
+      # Declared here on purpose: if this container is down, routers that use
+      # it are disabled by Traefik instead of being served unauthenticated.
+      traefik.http.middlewares.authentik.forwardauth.address: "http://authentik_server:9000/outpost.goauthentik.io/auth/traefik"
+      traefik.http.middlewares.authentik.forwardauth.trustForwardHeader: "true"
+      traefik.http.middlewares.authentik.forwardauth.authResponseHeaders: "X-authentik-username,X-authentik-groups,X-authentik-entitlements,X-authentik-email,X-authentik-name,X-authentik-uid,X-authentik-jwt,X-authentik-meta-jwks,X-authentik-meta-outpost,X-authentik-meta-provider,X-authentik-meta-app,X-authentik-meta-version"
+
+  authentik_worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.6}
+    container_name: authentik_worker
+    command: worker
+    restart: unless-stopped
+    shm_size: 512mb
+    depends_on:
+      authentik_postgresql:
+        condition: service_healthy
+    environment: *authentik-env
+    # Unlike the official file, no "user: root" and no docker.sock: they are
+    # only used to deploy extra outposts automatically. The embedded outpost
+    # (inside authentik_server) is enough for Traefik forward auth.
+    volumes:
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/data:/data
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/certs:/certs
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/custom-templates:/templates
+      - *localtime-volume
+    networks:
+      - authentik
+    security_opt:
+      - no-new-privileges:true
+
 networks:
   traefik_gateway:
     name: traefik_gateway
+  authentik:
+    name: authentik
