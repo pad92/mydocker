@@ -246,14 +246,25 @@ services:
       traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
       traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
 
-      traefik.http.routers.authentik.rule: "Host(`${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}`) || Host(`${AUTHENTIK_HOST_PUBLIC:-${AUTHENTIK_HOST_LOCAL}}`)"
+      # One HTTPS router per host name, so each name gets its own certificate:
+      # a failed ACME order for the public name must not take the internal
+      # certificate down with it. When AUTHENTIK_HOST_PUBLIC is empty, the
+      # public router repeats the internal host and is harmless.
+      traefik.http.routers.authentik.rule: "Host(`${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}`)"
       traefik.http.routers.authentik.entrypoints: "websecure"
       traefik.http.routers.authentik.tls: "true"
       traefik.http.routers.authentik.tls.certresolver: "stepca"
       traefik.http.routers.authentik.service: "authentik"
 
+      traefik.http.routers.authentik_pub.rule: "Host(`${AUTHENTIK_HOST_PUBLIC:-${AUTHENTIK_HOST_LOCAL}}`)"
+      traefik.http.routers.authentik_pub.entrypoints: "websecure"
+      traefik.http.routers.authentik_pub.tls: "true"
+      traefik.http.routers.authentik_pub.tls.certresolver: "stepca"
+      traefik.http.routers.authentik_pub.service: "authentik"
+
       # Embedded outpost callbacks (/outpost.goauthentik.io/...) on every
       # protected host. The high priority keeps it ahead of the host routers.
+      # It matches every host, public ones included: see the README.
       traefik.http.routers.authentik_outpost.rule: "PathPrefix(`/outpost.goauthentik.io/`)"
       traefik.http.routers.authentik_outpost.entrypoints: "websecure"
       traefik.http.routers.authentik_outpost.tls: "true"
