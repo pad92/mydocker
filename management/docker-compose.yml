@@ -324,6 +324,10 @@ services:
       BLUEPRINT_OPENOBSERVE_HOST: ${OPENOBSERVE_HOST_LOCAL:?Set OPENOBSERVE_HOST_LOCAL in .env}
       # Must equal FORGEJO_DOMAIN of the forgejo stack (OIDC redirect URI).
       BLUEPRINT_FORGEJO_HOST: ${FORGEJO_HOST_LOCAL:?Set FORGEJO_HOST_LOCAL in .env}
+      # Library bookmarks of the network devices (host name or IP address).
+      BLUEPRINT_UNIFI_HOST: ${UNIFI_HOST_LOCAL:?Set UNIFI_HOST_LOCAL in .env}
+      BLUEPRINT_NAS_HOST: ${NAS_HOST_LOCAL:?Set NAS_HOST_LOCAL in .env}
+      BLUEPRINT_SWITCH_HOST: ${SWITCH_HOST_LOCAL:?Set SWITCH_HOST_LOCAL in .env}
     # Unlike the official file, no "user: root" and no docker.sock: they are
     # only used to deploy extra outposts automatically. The embedded outpost
     # (inside authentik_server) is enough for Traefik forward auth.

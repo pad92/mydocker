@@ -397,6 +397,69 @@ entries:
     attrs:
       order: 0
 
+  # --- Infrastructure ------------------------------------------------------
+  # Network devices outside this stack (not routed by its Traefik): bookmarks
+  # only, no provider, so each device keeps its own login and the bindings
+  # only decide who sees the tile. Not in the outpost list.
+  - model: authentik_core.group
+    id: infra-group
+    identifiers:
+      name: infra-users
+
+  - model: authentik_core.application
+    id: unifi-app
+    identifiers:
+      slug: unifi
+    attrs:
+      name: UniFi
+      group: Infrastructure
+      meta_icon: homelab/icons/unifi.svg
+      meta_description: Network controller
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_UNIFI_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf unifi-app
+      group: !KeyOf infra-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: nas-app
+    identifiers:
+      slug: nas
+    attrs:
+      name: Synology NAS
+      group: Infrastructure
+      meta_icon: homelab/icons/synology.svg
+      meta_description: DSM storage
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_NAS_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf nas-app
+      group: !KeyOf infra-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: switch-app
+    identifiers:
+      slug: switch
+    attrs:
+      name: XGS1210-12
+      group: Infrastructure
+      meta_icon: homelab/icons/zyxel.svg
+      meta_description: Zyxel switch
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_SWITCH_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf switch-app
+      group: !KeyOf infra-group
+    attrs:
+      order: 0
+
   # --- Embedded outpost ----------------------------------------------------
   # The provider list is replaced as a whole: keep every forward-auth provider
   # here. authentik_host is the URL the browser is sent to for login.
