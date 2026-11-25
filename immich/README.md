@@ -66,3 +66,66 @@ The following variables are defined in `.env.example` but are either global conf
 | `PHOTO_NAS_PATH` | Persistent host directory path for volume mount: PHOTO_NAS_PATH. | *None (empty)* |
 | `POSTGRES_INITDB_ARGS` | Configuration settings value for Postgres initdb args. | *None (empty)* |
 
+
+---
+
+## Sign-in with Authentik
+
+Immich signs users in with OAuth (OpenID Connect) against the `immich`
+application that the blueprint of the `management` stack creates. The
+login page shows an "Authentik" button; the local login stays on, so the
+admin account keeps working when Authentik is down. Traefik applies no
+forward auth to this host: the mobile app, the OAuth callback and the
+public proxy must reach Immich directly.
+
+Only members of the Authentik group `immich-users` can sign in. Immich
+creates the account at the first sign-in (auto register), with the
+Authentik username as storage label.
+
+Setup:
+
+1. Set `IMMICH_HOST_LOCAL` in the `.env` of the `management` stack to the
+   value of `TRAEFIK_HOST_LOCAL`, then redeploy it:
+   `docker compose up -d authentik_worker`, then
+   `docker compose exec authentik_worker ak apply_blueprint custom/20-forward-auth-apps.yaml`.
+   The redirect URIs `app.immich:///oauth-callback`,
+   `https://<TRAEFIK_HOST_LOCAL>/auth/login` and
+   `https://<TRAEFIK_HOST_LOCAL>/user-settings` are built from it.
+2. Add the users to `immich-users` (Directory > Groups).
+3. Redeploy this stack (it adds `NODE_EXTRA_CA_CERTS`, see below).
+4. In Immich, Administration > Settings > Authentication Settings > OAuth:
+
+   | Setting | Value |
+   | --- | --- |
+   | Issuer URL | `https://<Authentik host>/application/o/immich/` |
+   | Client ID | `immich` |
+   | Client secret | copied from the *Immich* provider in Authentik (Applications > Providers) |
+   | Scope | `openid email profile` |
+   | ID token signed response algorithm | `RS256` |
+   | Storage label claim | `preferred_username` |
+   | Button text | `Authentik` |
+   | Auto register | on |
+   | Auto launch | off, so the local login stays reachable |
+
+   `<Authentik host>` is `AUTHENTIK_HOST_PUBLIC` of the management stack
+   when set, else `AUTHENTIK_HOST_LOCAL`.
+
+The settings live in the Immich database, not in this repository: an
+Immich config file (`IMMICH_CONFIG_FILE`) would lock every setting of the
+admin UI, and the client secret would have to be in a file on the host.
+
+How Immich links an OAuth sign-in to an existing local account is not
+documented. To keep the photos of an existing user, have them sign in
+locally first, then link the account from Account Settings > OAuth
+(`/user-settings`) before their first Authentik sign-in.
+
+Authentik uses a certificate of the internal CA, and Node trusts only the
+roots it ships. `NODE_EXTRA_CA_CERTS` adds the host bundle
+`/etc/ssl/certs/ca-certificates.crt`, mounted read-only, so the host must
+trust that CA. If saving the OAuth settings or signing in fails with
+"fetch failed" or "unable to get local issuer certificate", check that
+bundle first.
+
+`tests/test_stack.sh` renders the Compose file with test values and
+checks this configuration (CA variable, read-only bundle mount, no forward
+auth on the router). It needs Docker Compose and `jq`.
