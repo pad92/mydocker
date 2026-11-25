@@ -8,7 +8,19 @@
 # - Uptime Kuma: forward_single provider on the URL built from the env var,
 #   application, group binding, provider attached to the embedded outpost,
 #   outpost authentik_host built from the env var;
-# - a second apply creates no duplicate.
+# - NG media: second forward_single provider, application, media-users group
+#   binding;
+# - Portainer: third forward_single provider, application, portainer-users
+#   group binding;
+# - OpenObserve: fourth forward_single provider, application,
+#   openobserve-users group binding; the outpost carries exactly these four
+#   providers;
+# - Forgejo: confidential OAuth2 provider (client_id "forgejo", one strict
+#   redirect URI to the "authentik" source callback, RS256 with the
+#   self-signed key, openid/email/profile scopes), application,
+#   forgejo-users group binding, and not attached to the outpost;
+# - a second apply creates no duplicate and keeps the generated Forgejo
+#   client secret.
 # Pulls ghcr.io/goauthentik/server and postgres:16-alpine if missing.
 # Takes 1 to 3 minutes. Usage: ./tests/test_blueprints.sh
 set -euo pipefail
@@ -46,6 +58,10 @@ docker run -d --name "$name-worker" --network "$name" \
   -e AUTHENTIK_DISABLE_STARTUP_ANALYTICS=true \
   -e BLUEPRINT_AUTHENTIK_HOST=auth.example.test \
   -e BLUEPRINT_UPTIME_HOST=uptime.example.test \
+  -e BLUEPRINT_NG_HOST=media.example.test \
+  -e BLUEPRINT_PORTAINER_HOST=portainer.example.test \
+  -e BLUEPRINT_OPENOBSERVE_HOST=logs.example.test \
+  -e BLUEPRINT_FORGEJO_HOST=git.example.test \
   -v "$stack_dir/authentik/blueprints:/blueprints/custom:ro" \
   "$image" worker >/dev/null
 
@@ -87,6 +103,7 @@ from authentik.blueprints.v1.importer import Importer
 from authentik.core.models import Application, Group
 from authentik.outposts.models import Outpost
 from authentik.policies.models import PolicyBinding
+from authentik.providers.oauth2.models import OAuth2Provider
 from authentik.providers.proxy.models import ProxyProvider
 from authentik.stages.authenticator_validate.models import AuthenticatorValidateStage
 
@@ -95,6 +112,18 @@ def state():
     p = ProxyProvider.objects.get(name="Uptime Kuma")
     a = Application.objects.get(slug="uptime-kuma")
     g = Group.objects.get(name="uptime-kuma-users")
+    m = ProxyProvider.objects.get(name="NG media")
+    ma = Application.objects.get(slug="ng-media")
+    mg = Group.objects.get(name="media-users")
+    pp = ProxyProvider.objects.get(name="Portainer")
+    pa = Application.objects.get(slug="portainer")
+    pg = Group.objects.get(name="portainer-users")
+    op = ProxyProvider.objects.get(name="OpenObserve")
+    oa = Application.objects.get(slug="openobserve")
+    og = Group.objects.get(name="openobserve-users")
+    f = OAuth2Provider.objects.get(name="Forgejo")
+    fa = Application.objects.get(slug="forgejo")
+    fg = Group.objects.get(name="forgejo-users")
     o = Outpost.objects.get(managed="goauthentik.io/outposts/embedded")
     return [
         s.not_configured_action,
@@ -103,11 +132,36 @@ def state():
         p.mode, p.external_host, p.authorization_flow.slug, p.invalidation_flow.slug,
         a.provider_id == p.pk,
         PolicyBinding.objects.filter(target=a, group=g).count(),
-        [x.pk for x in o.providers.all()] == [p.pk],
+        m.mode, m.external_host, m.authorization_flow.slug, m.invalidation_flow.slug,
+        ma.provider_id == m.pk,
+        PolicyBinding.objects.filter(target=ma, group=mg).count(),
+        pp.mode, pp.external_host, pp.authorization_flow.slug, pp.invalidation_flow.slug,
+        pa.provider_id == pp.pk,
+        PolicyBinding.objects.filter(target=pa, group=pg).count(),
+        op.mode, op.external_host, op.authorization_flow.slug, op.invalidation_flow.slug,
+        oa.provider_id == op.pk,
+        PolicyBinding.objects.filter(target=oa, group=og).count(),
+        f.client_type, f.client_id, len(f.client_secret) >= 40,
+        [(getattr(u.matching_mode, "value", u.matching_mode), u.url) for u in f.redirect_uris],
+        f.signing_key.name if f.signing_key else None,
+        f.authorization_flow.slug, f.invalidation_flow.slug,
+        sorted(x.scopemapping.scope_name for x in f.property_mappings.all()),
+        fa.provider_id == f.pk,
+        PolicyBinding.objects.filter(target=fa, group=fg).count(),
+        sorted(x.pk for x in o.providers.all()) == sorted([p.pk, m.pk, pp.pk, op.pk]),
         o.config.authentik_host,
         Group.objects.filter(name="uptime-kuma-users").count(),
         ProxyProvider.objects.filter(name="Uptime Kuma").count(),
+        Group.objects.filter(name="media-users").count(),
+        ProxyProvider.objects.filter(name="NG media").count(),
+        Group.objects.filter(name="portainer-users").count(),
+        ProxyProvider.objects.filter(name="Portainer").count(),
+        Group.objects.filter(name="openobserve-users").count(),
+        ProxyProvider.objects.filter(name="OpenObserve").count(),
+        Group.objects.filter(name="forgejo-users").count(),
+        OAuth2Provider.objects.filter(name="Forgejo").count(),
         Outpost.objects.filter(managed="goauthentik.io/outposts/embedded").count(),
+        f.client_secret,  # last: compared, then dropped (never printed)
     ]
 
 before = state()
@@ -117,9 +171,10 @@ for b in BlueprintInstance.objects.filter(path__startswith="custom/"):
     assert imp.validate()[0], b.path
     assert imp.apply(), b.path
 after = state()
-print("SAME" if before == after else "CHANGED", before)'
+same_secret = before.pop() == after.pop()
+print("SAME" if before == after and same_secret else "CHANGED", before)'
 result="$(ak_py "$check_py")"
-expected="SAME ['configure', ['default-authenticator-totp-setup', 'default-authenticator-webauthn-setup'], ['static', 'totp', 'webauthn'], 'forward_single', 'https://uptime.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, True, 'https://auth.example.test', 1, 1, 1]"
+expected="SAME ['configure', ['default-authenticator-totp-setup', 'default-authenticator-webauthn-setup'], ['static', 'totp', 'webauthn'], 'forward_single', 'https://uptime.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://media.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://portainer.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://logs.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'forgejo', True, [('strict', 'https://git.example.test/user/oauth2/authentik/callback')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 1, True, 'https://auth.example.test', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]"
 [ "$result" = "$expected" ] || { tail -n 30 "$out" >&2; fail "unexpected state after apply:
   got:  $result
   want: $expected"; }

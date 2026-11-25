@@ -13,7 +13,10 @@
 #   read (the outpost uses the public Authentik name when set, else the
 #   internal one), and the blueprints themselves hold no host name, URL or
 #   address;
-# - Uptime Kuma is behind forward auth, except its /api/push/ path.
+# - Uptime Kuma is behind forward auth, except its /api/push/ path;
+# - Portainer is behind forward auth, with no bypass router;
+# - the OpenObserve and Forgejo host names reach the blueprints (OpenObserve
+#   routers are checked in openobserve/tests/test_stack.sh).
 # Needs Docker Compose 2.23+ and jq. Usage: ./tests/test_stack.sh
 set -euo pipefail
 
@@ -35,10 +38,14 @@ sed -e "s|^ACME_CA_SERVER=.*|ACME_CA_SERVER=https://ca.test/acme/acme/directory|
   -e "s|^MANAGEMENT_UPTIME_KUMA_DATA_DIR=.*|MANAGEMENT_UPTIME_KUMA_DATA_DIR=$work_dir/uptime-kuma|" \
   -e "s|^PROXMOX_HOST_LOCAL=.*|PROXMOX_HOST_LOCAL=pve.home.test|" \
   -e "s|^UPTIME_HOST_LOCAL=.*|UPTIME_HOST_LOCAL=uptime.home.test|" \
+  -e "s|^NG_HOST_LOCAL=.*|NG_HOST_LOCAL=media.home.test|" \
+  -e "s|^PORTAINER_HOST_LOCAL=.*|PORTAINER_HOST_LOCAL=portainer.home.test|" \
+  -e "s|^OPENOBSERVE_HOST_LOCAL=.*|OPENOBSERVE_HOST_LOCAL=logs.home.test|" \
+  -e "s|^FORGEJO_HOST_LOCAL=.*|FORGEJO_HOST_LOCAL=git.home.test|" \
   -e "s|^PROXMOX_UPSTREAM_URL=.*|PROXMOX_UPSTREAM_URL=https://192.0.2.10:8006|" \
   "$stack_dir/.env.example" > "$work_dir/test.env"
 
-for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR; do
+for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL NG_HOST_LOCAL PORTAINER_HOST_LOCAL OPENOBSERVE_HOST_LOCAL FORGEJO_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR; do
   if render "$var=" >/dev/null 2>&1; then fail "$var is not required"; fi
 done
 
@@ -93,12 +100,20 @@ outpost_host="$(render AUTHENTIK_HOST_PUBLIC=auth.example.test \
   || fail "BLUEPRINT_AUTHENTIK_HOST is not AUTHENTIK_HOST_PUBLIC when set: $outpost_host"
 [ "$(jq -r "$worker.environment.BLUEPRINT_UPTIME_HOST" <<<"$config")" = uptime.home.test ] \
   || fail "BLUEPRINT_UPTIME_HOST is not UPTIME_HOST_LOCAL"
+[ "$(jq -r "$worker.environment.BLUEPRINT_NG_HOST" <<<"$config")" = media.home.test ] \
+  || fail "BLUEPRINT_NG_HOST is not NG_HOST_LOCAL"
+[ "$(jq -r "$worker.environment.BLUEPRINT_PORTAINER_HOST" <<<"$config")" = portainer.home.test ] \
+  || fail "BLUEPRINT_PORTAINER_HOST is not PORTAINER_HOST_LOCAL"
+[ "$(jq -r "$worker.environment.BLUEPRINT_OPENOBSERVE_HOST" <<<"$config")" = logs.home.test ] \
+  || fail "BLUEPRINT_OPENOBSERVE_HOST is not OPENOBSERVE_HOST_LOCAL"
+[ "$(jq -r "$worker.environment.BLUEPRINT_FORGEJO_HOST" <<<"$config")" = git.home.test ] \
+  || fail "BLUEPRINT_FORGEJO_HOST is not FORGEJO_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.AUTHENTIK_SECRET_KEY" <<<"$config")" != null ] \
   || fail "worker lost the shared Authentik environment"
 # Private names belong in .env only: no domain, URL, e-mail or IP address in
-# the versioned blueprints.
+# the versioned blueprints. goauthentik.io/... are Authentik managed keys.
 if grep -nE '[A-Za-z0-9-]+\.(lan|local|home|internal|com|fr|net|org|io)\b|https?://[^"%]|@|([0-9]{1,3}\.){3}[0-9]{1,3}' \
-  "$stack_dir"/authentik/blueprints/*.yaml | grep -vE '^[^:]+:[0-9]+:\s*#|goauthentik\.io/(outposts|blueprints)'; then
+  "$stack_dir"/authentik/blueprints/*.yaml | grep -vE '^[^:]+:[0-9]+:\s*#|goauthentik\.io/(outposts|blueprints|providers)/'; then
   fail "a blueprint holds a host name, URL, e-mail or address"
 fi
 
@@ -112,5 +127,19 @@ uptime='.services["uptime-kuma"].labels'
   || fail "push router has a middleware: push monitors would need a login"
 [ "$(jq -r "$uptime[\"traefik.http.routers.uptime_push.service\"]" <<<"$config")" = uptime ] \
   || fail "push router does not target the Uptime Kuma service"
+
+portainer='.services.portainer.labels'
+[ "$(jq -r "$portainer[\"traefik.http.routers.portainer.middlewares\"]" <<<"$config")" = \
+  authentik@docker,portainer-stripprefix@docker ] \
+  || fail "Portainer router is not behind forward auth (first middleware)"
+# Every router on the Portainer host other than the HTTP redirect must carry
+# the middleware: a bypass router would expose the whole API.
+jq -r "$portainer | to_entries[] | select(.key | test(\"^traefik.http.routers.[^.]+.rule$\"))
+  | select(.value | contains(\"portainer.home.test\")) | .key | split(\".\")[3]" <<<"$config" \
+  | while read -r router; do
+      [ "$router" = portainer_http ] && continue
+      jq -r "$portainer[\"traefik.http.routers.$router.middlewares\"] // \"\"" <<<"$config" \
+        | grep -q '^authentik@docker' || fail "Portainer router $router bypasses forward auth"
+    done
 
 echo "OK"

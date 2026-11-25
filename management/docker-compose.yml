@@ -93,7 +93,10 @@ services:
       traefik.http.routers.portainer.tls.certresolver: "stepca"
 
       traefik.http.middlewares.portainer-stripprefix.stripprefix.prefixes: "/portainer"
-      traefik.http.routers.portainer.middlewares: "portainer-stripprefix@docker"
+      # Behind Authentik (group portainer-users), API included: no bypass, the
+      # UI uses /api with the session. Unreachable while Authentik is down:
+      # fall back to docker compose over SSH.
+      traefik.http.routers.portainer.middlewares: "authentik@docker,portainer-stripprefix@docker"
 
 #  mirror:
 #    image: nginx:stable-alpine-slim
@@ -306,6 +309,13 @@ services:
       # the internal name.
       BLUEPRINT_AUTHENTIK_HOST: ${AUTHENTIK_HOST_PUBLIC:-${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}}
       BLUEPRINT_UPTIME_HOST: ${UPTIME_HOST_LOCAL:?Set UPTIME_HOST_LOCAL in .env}
+      # Must equal TRAEFIK_FQDN of the ng stack (host of the *arr paths).
+      BLUEPRINT_NG_HOST: ${NG_HOST_LOCAL:?Set NG_HOST_LOCAL in .env}
+      BLUEPRINT_PORTAINER_HOST: ${PORTAINER_HOST_LOCAL:?Set PORTAINER_HOST_LOCAL in .env}
+      # Must equal OPENOBSERVE_DOMAIN of the openobserve stack.
+      BLUEPRINT_OPENOBSERVE_HOST: ${OPENOBSERVE_HOST_LOCAL:?Set OPENOBSERVE_HOST_LOCAL in .env}
+      # Must equal FORGEJO_DOMAIN of the forgejo stack (OIDC redirect URI).
+      BLUEPRINT_FORGEJO_HOST: ${FORGEJO_HOST_LOCAL:?Set FORGEJO_HOST_LOCAL in .env}
     # Unlike the official file, no "user: root" and no docker.sock: they are
     # only used to deploy extra outposts automatically. The embedded outpost
     # (inside authentik_server) is enough for Traefik forward auth.

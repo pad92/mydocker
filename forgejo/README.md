@@ -65,6 +65,51 @@ docker exec -u git forgejo forgejo admin user create --admin \
   --username <name> --email <email> --random-password
 ```
 
+## Login with Authentik (OIDC)
+
+Forgejo is not behind the Traefik forward-auth middleware: Git over HTTPS,
+the API, `fj` and the runner cannot follow a browser login. Forgejo instead
+uses Authentik as an OpenID Connect login source, next to its local accounts.
+
+The management stack creates the Authentik side with the
+`20-forward-auth-apps.yaml` blueprint: a confidential OAuth2 provider with
+client ID `forgejo`, the application `forgejo` and the group `forgejo-users`.
+Its only redirect URI is
+`https://<FORGEJO_DOMAIN>/user/oauth2/authentik/callback`, built from
+`FORGEJO_HOST_LOCAL` in `management/.env`, which must equal `FORGEJO_DOMAIN`.
+The source must therefore be named `authentik` in Forgejo.
+
+1. In Authentik, *Applications > Providers > Forgejo*, copy the client
+   secret. Authentik generates it once and keeps it across blueprint applies.
+2. Add the source. `read -rs` keeps the secret out of the shell history.
+   `<auth host>` is the Authentik host browsers use (`AUTHENTIK_HOST_PUBLIC`
+   if set, else `AUTHENTIK_HOST_LOCAL`); the Forgejo container must resolve
+   it and trust its certificate (the host CA bundle is mounted):
+
+   ```sh
+   read -rs secret
+   docker exec -u git forgejo forgejo admin auth add-oauth \
+     --name authentik --provider openidConnect \
+     --key forgejo --secret "$secret" \
+     --auto-discover-url https://<auth host>/application/o/forgejo/.well-known/openid-configuration
+   unset secret
+   ```
+
+3. Add the users to `forgejo-users` in Authentik. Authentik refuses the
+   login of anyone else.
+4. Link the existing accounts: with `DISABLE_REGISTRATION=true`, a first
+   *Sign in with authentik* leads to a page where the user logs in with the
+   local Forgejo password once; the Authentik identity is then linked to that
+   account. No account is created through Authentik.
+
+Limits:
+
+- The `forgejo-users` binding only filters logins through Authentik. Local
+  passwords, SSH keys and access tokens keep working as before.
+- `docker exec -u git forgejo forgejo admin auth list` shows the source;
+  `update-oauth --id <id> --secret ...` changes the secret after a rotation
+  in Authentik.
+
 ## Actions runner
 
 The runner connects to `http://forgejo:3000` inside the compose network. It

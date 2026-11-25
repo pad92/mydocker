@@ -45,6 +45,32 @@ These environment variables are shared and used by multiple services in this sta
 
 ---
 
+## Access control (Authentik forward auth)
+
+Radarr, Sonarr, Bazarr, Lidarr, SABnzbd, and Prowlarr sit behind the `authentik@docker` middleware of the `management` stack. A browser that opens one of them is sent to the Authentik login first; only members of the `media-users` group get through. Add users to that group in Authentik (*Directory > Groups*).
+
+Requirements:
+- The `management` stack runs Authentik, and `NG_HOST_LOCAL` in `management/.env` has the same value as `TRAEFIK_FQDN` here. The provider is created by the blueprint `management/authentik/blueprints/20-forward-auth-apps.yaml`. If the two values differ, Authentik does not recognise the host and refuses the request.
+- If Authentik is down, Traefik disables the protected routers: these apps answer 404 until it is back.
+
+Not protected:
+- **h5ai** (root of `TRAEFIK_FQDN`) stays public.
+- **Seerr** keeps its own login (Plex accounts) on `SEERR_DOMAIN`.
+- **API paths.** A second router per app (`<app>_api`) serves the paths below without the middleware. Each call still needs the app API key. Its rule is longer, so Traefik gives it a higher priority than the protected router.
+
+| App | Paths without forward auth |
+| :--- | :--- |
+| Radarr, Sonarr, Lidarr | `/<app>/api`, `/<app>/feed` (iCal feeds) |
+| Bazarr, SABnzbd | `/<app>/api` |
+| Prowlarr | `/prowlarr/api`, `/prowlarr/<id>/api` and `/prowlarr/<id>/download` (Torznab/Newznab endpoints) |
+
+Notes:
+- The apps should reach each other by container name on the `ng` network (for example `http://radarr:7878/radarr`), not through Traefik. Calls through Traefik only work on the API paths above.
+- The native login of each app stays enabled for now. Switching it to *External* (trust the proxy) is a later step, once forward auth is validated.
+- Uptime Kuma monitors that probe the UI through Traefik get a 302 to the login page. Probe the `/<app>/api` path with the API key, or the container on the internal network.
+
+---
+
 ## 1. Radarr (`radarr`)
 
 ### Role

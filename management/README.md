@@ -45,6 +45,7 @@ The Compose file follows the [official one](https://goauthentik.io/compose.yml) 
 | `AUTHENTIK_PG_PASS` | PostgreSQL password |
 | `AUTHENTIK_TAG` | Image version, pinned. Authentik no longer publishes `latest` |
 | `MANAGEMENT_AUTHENTIK_DATA_DIR` | Host directory for `database/`, `data/`, `certs/`, and `custom-templates/` |
+| `NG_HOST_LOCAL` | Host name of the `ng` media apps, protected by forward auth. Must equal `TRAEFIK_FQDN` in `ng/.env` |
 
 Generate each secret with:
 
@@ -54,7 +55,7 @@ openssl rand -base64 60 | tr -d '\n'
 
 ### First start
 
-The Compose file requires `AUTHENTIK_HOST_LOCAL`, `AUTHENTIK_PG_PASS`, `AUTHENTIK_SECRET_KEY`, and `MANAGEMENT_AUTHENTIK_DATA_DIR` for the whole project. On a host whose `.env` predates Authentik, add them before running any `docker compose` command in this stack: without them, even `docker compose up -d traefik` stops with a "Set ... in .env" error.
+The Compose file requires `AUTHENTIK_HOST_LOCAL`, `AUTHENTIK_PG_PASS`, `AUTHENTIK_SECRET_KEY`, `MANAGEMENT_AUTHENTIK_DATA_DIR`, `UPTIME_HOST_LOCAL`, `NG_HOST_LOCAL`, `PORTAINER_HOST_LOCAL`, `OPENOBSERVE_HOST_LOCAL`, and `FORGEJO_HOST_LOCAL` for the whole project. On a host whose `.env` predates Authentik, add them before running any `docker compose` command in this stack: without them, even `docker compose up -d traefik` stops with a "Set ... in .env" error.
 
 The server and worker run as UID 1000. Create the directories with that owner before the first start. The shell does not read `.env`, so set the variable first; the `:?` makes the commands stop instead of running on `/data`, `/certs`, and `/custom-templates` when it is empty:
 
@@ -96,7 +97,7 @@ Three pieces are needed. The first two are already in this stack.
 
 1. The `authentik` middleware, declared in the labels of `authentik_server`. Other stacks use it as `authentik@docker`.
 2. The `authentik_outpost` router. It sends `/outpost.goauthentik.io/` on any host to Authentik, which receives the login callback there. Its priority (1000) keeps it ahead of the service routers. Because it has no `Host()`, it also answers on public host names forwarded by Cloudflare Tunnel, even when `AUTHENTIK_HOST_PUBLIC` is empty: the outpost endpoints are reachable from the internet, though the login itself happens on the Authentik host. To keep Authentik strictly internal, replace the rule with `Host(...) && PathPrefix(...)` listing only the protected hosts.
-3. A provider and an application in Authentik, plus the middleware on the service router. Both are per service, see below. Uptime Kuma is already set up this way.
+3. A provider and an application in Authentik, plus the middleware on the service router. Both are per service, see below. Uptime Kuma, Portainer, OpenObserve, and the `ng` media apps are already set up this way.
 
 Per service:
 
@@ -122,10 +123,10 @@ The **Forward auth (domain level)** mode protects many hosts with a single provi
 
 ### Behaviour and limits
 
-- **Fail closed.** If `authentik_server` is stopped, the `authentik@docker` middleware disappears and Traefik disables the routers that reference it: the protected services answer 404 instead of being served without authentication. Keep this in mind for Portainer and the Traefik dashboard: protecting them with Authentik makes them unreachable while Authentik is down.
+- **Fail closed.** If `authentik_server` is stopped, the `authentik@docker` middleware disappears and Traefik disables the routers that reference it: the protected services answer 404 instead of being served without authentication. Portainer is protected, so it is unreachable while Authentik is down: repair Authentik over SSH with `docker compose` in this directory, not through Portainer.
 - **Monitoring.** Uptime Kuma probes a protected service through Traefik and gets the login redirect. Check the service on its internal address, or accept the 302 status as healthy.
 - **Uptime Kuma push monitors.** Uptime Kuma itself is protected, except `/api/push/`: the `uptime_push` router serves that path without the middleware, so scripts and cron jobs can still report heartbeats. Push URLs carry their own token.
-- **APIs and mobile apps.** Clients that cannot follow a browser login (API tokens, mobile apps, WebDAV) break behind forward auth. For those services, use the native OIDC/SAML support of the application with Authentik as provider, or leave the API path outside the protected router.
+- **APIs and mobile apps.** Clients that cannot follow a browser login (API tokens, mobile apps, WebDAV) break behind forward auth. For those services, use the native OIDC/SAML support of the application with Authentik as provider, or leave the API path outside the protected router. Forgejo takes the first route (Git over HTTPS, API, runner): see [its README](../forgejo/README.md#login-with-authentik-oidc) for the source to add in Forgejo with the client secret. OpenObserve takes the second: a router without the middleware serves only `POST` on the ingestion endpoints, see [its README](../openobserve/README.md#access-control-authentik).
 - **Trusted headers.** The service must trust the `X-authentik-*` headers only because they come from Traefik. Do not publish a protected service on a host port, or a client could reach it directly and forge those headers.
 - **Backups.** Back up `MANAGEMENT_AUTHENTIK_DATA_DIR` and `AUTHENTIK_SECRET_KEY` together. For the database, prefer a `pg_dump` over a copy of the files of a running server.
 - **Upgrades.** Change `AUTHENTIK_TAG` one minor version at a time and read the [release notes](https://docs.goauthentik.io/releases/) first: migrations are not reversible.
@@ -137,7 +138,7 @@ The Authentik configuration is versioned as [blueprints](https://docs.goauthenti
 | File | Effect |
 | --- | --- |
 | `10-mfa.yaml` | The default authentication flow asks for a second factor (TOTP, WebAuthn, or a static recovery code). A user without one must enroll TOTP or WebAuthn at the next login. |
-| `20-forward-auth-apps.yaml` | Forward auth providers and applications (Uptime Kuma), their access groups, and the provider list of the embedded outpost. |
+| `20-forward-auth-apps.yaml` | Forward auth providers and applications, their access groups, and the provider list of the embedded outpost. Uptime Kuma (`uptime-kuma-users`), Portainer (`portainer-users`), the `ng` media apps (`media-users`, one provider for the Radarr, Sonarr, Bazarr, Lidarr, SABnzbd, and Prowlarr paths on `NG_HOST_LOCAL`), and OpenObserve (`openobserve-users`, on `OPENOBSERVE_HOST_LOCAL`). Also the Forgejo OIDC provider and application (`forgejo-users`, redirect URI on `FORGEJO_HOST_LOCAL`), which is not a forward auth provider and stays off the outpost. |
 
 How they behave:
 
@@ -149,9 +150,15 @@ How they behave:
 
 `tests/test_blueprints.sh` applies the blueprints on a throw-away Authentik (PostgreSQL and worker on an internal Docker network, no published port, removed at the end), checks the resulting objects, and applies them a second time to check that nothing is duplicated. It pulls the Authentik and PostgreSQL images if needed and takes one to three minutes.
 
+### Host names of other stacks
+
+`OPENOBSERVE_HOST_LOCAL` and `FORGEJO_HOST_LOCAL` only feed the blueprints. They must equal `OPENOBSERVE_DOMAIN` and `FORGEJO_DOMAIN` in the `.env` of those stacks: a different value gives a provider that never matches (OpenObserve answers 404 through the middleware) or a redirect URI that Authentik rejects (Forgejo login fails with "redirect URI error").
+
 ## Portainer
 
 Portainer manages the Docker environment. Set `MANAGEMENT_PORTAINER_DATA_DIR` to its existing data directory and `PORTAINER_HOST_LOCAL` to its host name.
+
+The whole Portainer host is behind Authentik forward auth (group `portainer-users`), then Portainer asks for its own login. There is no bypass router for `/api`: the web UI calls the API with the browser session, so a bypass would expose everything that Authentik protects. Scripts that call the Portainer API with an access token (`X-API-Key`) through Traefik therefore get the login redirect. Call them on the container from the `traefik_gateway` network (`http://portainer:9000`) instead.
 
 ## Uptime Kuma
 
