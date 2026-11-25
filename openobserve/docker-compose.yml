@@ -83,6 +83,14 @@ services:
       traefik.http.routers.openobserve_ingest.tls: "true"
       traefik.http.routers.openobserve_ingest.tls.certresolver: "stepca"
       traefik.http.routers.openobserve_ingest.service: "openobserve"
+      # Health check bypass: GET/HEAD on /healthz only, which returns
+      # {"status":"ok"} without auth. Uptime Kuma cannot follow a browser
+      # login, and a 302 to Authentik would only prove Authentik is up.
+      traefik.http.routers.openobserve_health.rule: "Host(`${OPENOBSERVE_DOMAIN:?Set OPENOBSERVE_DOMAIN}`) && (Method(`GET`) || Method(`HEAD`)) && Path(`/healthz`)"
+      traefik.http.routers.openobserve_health.entrypoints: "websecure"
+      traefik.http.routers.openobserve_health.tls: "true"
+      traefik.http.routers.openobserve_health.tls.certresolver: "stepca"
+      traefik.http.routers.openobserve_health.service: "openobserve"
 
     logging: *default-logging
   # Online copy of the SQLite metadata (users, alerts, dashboards, functions,
