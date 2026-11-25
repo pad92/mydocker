@@ -114,10 +114,16 @@ The settings live in the Immich database, not in this repository: an
 Immich config file (`IMMICH_CONFIG_FILE`) would lock every setting of the
 admin UI, and the client secret would have to be in a file on the host.
 
-How Immich links an OAuth sign-in to an existing local account is not
-documented. To keep the photos of an existing user, have them sign in
-locally first, then link the account from Account Settings > OAuth
-(`/user-settings`) before their first Authentik sign-in.
+Link every existing local account before its first Authentik sign-in:
+sign in locally, then Account Settings > OAuth (`/user-settings`) > Link
+to OAuth. Immich then finds the account by its Authentik ID. Otherwise,
+when Immich does not recognise the account (here the Authentik and
+Immich e-mails differed), auto register tries to create a new one with
+the Authentik username as storage label. That label already belongs to
+the existing account, so the sign-in fails with "Failed to finish
+oauth", and the server log shows `duplicate key value violates unique
+constraint "user_storageLabel_uq"`. Do not clear the storage label claim
+to get past it: that creates a second, empty account.
 
 Authentik uses a certificate of the internal CA, and Node trusts only the
 roots it ships. `NODE_EXTRA_CA_CERTS` adds the host bundle
