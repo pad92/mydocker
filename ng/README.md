@@ -49,6 +49,8 @@ These environment variables are shared and used by multiple services in this sta
 
 Radarr, Sonarr, Bazarr, Lidarr, SABnzbd, and Prowlarr sit behind the `authentik@docker` middleware of the `management` stack. A browser that opens one of them is sent to the Authentik login first; only members of the `media-users` group get through. Add users to that group in Authentik (*Directory > Groups*).
 
+Each app also has its own application in Authentik (slugs `radarr`, `sonarr`, `bazarr`, `lidarr`, `sabnzbd`, `prowlarr`, library group *NG media*). These are bookmarks: they put a tile in the user portal and nothing else. Access is decided by the hidden *NG media* application, the same for all six apps. A forward-auth provider is tied to a host, and the apps share one, so per-app rights would need one subdomain per app. Do not bind another group to a bookmark expecting it to grant or restrict access: it only changes who sees the tile.
+
 Requirements:
 - The `management` stack runs Authentik, and `NG_HOST_LOCAL` in `management/.env` has the same value as `TRAEFIK_FQDN` here. The provider is created by the blueprint `management/authentik/blueprints/20-forward-auth-apps.yaml`. If the two values differ, Authentik does not recognise the host and refuses the request.
 - If Authentik is down, Traefik disables the protected routers: these apps answer 404 until it is back.

@@ -71,6 +71,10 @@ entries:
   # Radarr, Sonarr, Bazarr, Lidarr, SABnzbd and Prowlarr share one host, each
   # under its own path: one provider covers all of them. h5ai (root of that
   # host) and Seerr (own host, own logins) are not behind forward auth.
+  # A forward_single provider is tied to a host, not a path, so the apps
+  # cannot get one provider each on a shared host. The "NG media" application
+  # below is the access gate (hidden from the library); each app then gets a
+  # bookmark application (no provider) that only shows a tile to the group.
   - model: authentik_core.group
     id: media-group
     identifiers:
@@ -94,12 +98,111 @@ entries:
     attrs:
       name: NG media
       provider: !KeyOf media-provider
-      meta_launch_url: !Format ["https://%s/radarr", !Env BLUEPRINT_NG_HOST]
+      # Hidden from the library: the bookmarks below are the tiles.
+      meta_launch_url: blank://blank
       policy_engine_mode: any
 
   - model: authentik_policies.policybinding
     identifiers:
       target: !KeyOf media-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  # Bookmarks: no provider, so their bindings only decide who sees the tile.
+  # Access stays the "NG media" gate above (same group for every app).
+  - model: authentik_core.application
+    id: radarr-app
+    identifiers:
+      slug: radarr
+    attrs:
+      name: Radarr
+      group: NG media
+      meta_launch_url: !Format ["https://%s/radarr", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf radarr-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: sonarr-app
+    identifiers:
+      slug: sonarr
+    attrs:
+      name: Sonarr
+      group: NG media
+      meta_launch_url: !Format ["https://%s/sonarr", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf sonarr-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: bazarr-app
+    identifiers:
+      slug: bazarr
+    attrs:
+      name: Bazarr
+      group: NG media
+      meta_launch_url: !Format ["https://%s/bazarr", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf bazarr-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: lidarr-app
+    identifiers:
+      slug: lidarr
+    attrs:
+      name: Lidarr
+      group: NG media
+      meta_launch_url: !Format ["https://%s/lidarr", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf lidarr-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: sabnzbd-app
+    identifiers:
+      slug: sabnzbd
+    attrs:
+      name: SABnzbd
+      group: NG media
+      meta_launch_url: !Format ["https://%s/sabnzbd", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf sabnzbd-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: prowlarr-app
+    identifiers:
+      slug: prowlarr
+    attrs:
+      name: Prowlarr
+      group: NG media
+      meta_launch_url: !Format ["https://%s/prowlarr", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf prowlarr-app
       group: !KeyOf media-group
     attrs:
       order: 0

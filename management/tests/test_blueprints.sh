@@ -8,8 +8,11 @@
 # - Uptime Kuma: forward_single provider on the URL built from the env var,
 #   application, group binding, provider attached to the embedded outpost,
 #   outpost authentik_host built from the env var;
-# - NG media: second forward_single provider, application, media-users group
-#   binding;
+# - NG media: second forward_single provider, application hidden from the
+#   library, media-users group binding; plus one bookmark application per
+#   *arr app (Radarr, Sonarr, Bazarr, Lidarr, SABnzbd, Prowlarr): no provider
+#   (a provider is tied to a host, the apps share one), launch URL on the NG
+#   host and the app path, "NG media" library group, media-users binding;
 # - Portainer: third forward_single provider, application, portainer-users
 #   group binding; plus a confidential OAuth2 provider (client_id
 #   "portainer", authorization_code and refresh_token grant types (none by
@@ -140,8 +143,14 @@ def state():
         a.provider_id == p.pk,
         PolicyBinding.objects.filter(target=a, group=g).count(),
         m.mode, m.external_host, m.authorization_flow.slug, m.invalidation_flow.slug,
-        ma.provider_id == m.pk,
+        ma.provider_id == m.pk, ma.meta_launch_url,
         PolicyBinding.objects.filter(target=ma, group=mg).count(),
+        [(b.slug, b.name, b.provider_id, b.group, b.meta_launch_url,
+          PolicyBinding.objects.filter(target=b).count(),
+          PolicyBinding.objects.filter(target=b, group=mg).count(),
+          Application.objects.filter(slug=b.slug).count())
+         for b in (Application.objects.get(slug=x) for x in
+                   ("radarr", "sonarr", "bazarr", "lidarr", "sabnzbd", "prowlarr"))],
         pp.mode, pp.external_host, pp.authorization_flow.slug, pp.invalidation_flow.slug,
         pa.provider_id == pp.pk,
         PolicyBinding.objects.filter(target=pa, group=pg).count(),
@@ -189,7 +198,7 @@ after = state()
 same_secret = before.pop() == after.pop()
 print("SAME" if before == after and same_secret else "CHANGED", before)'
 result="$(ak_py "$check_py")"
-expected="SAME ['configure', ['default-authenticator-totp-setup', 'default-authenticator-webauthn-setup'], ['static', 'totp', 'webauthn'], 'forward_single', 'https://uptime.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://media.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://portainer.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'portainer', True, ['authorization_code', 'refresh_token'], [('strict', 'https://portainer.example.test/')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 'blank://blank', 1, 'forward_single', 'https://logs.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'forgejo', True, ['authorization_code', 'refresh_token'], [('strict', 'https://git.example.test/user/oauth2/authentik/callback')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 1, True, 'https://auth.example.test', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]"
+expected="SAME ['configure', ['default-authenticator-totp-setup', 'default-authenticator-webauthn-setup'], ['static', 'totp', 'webauthn'], 'forward_single', 'https://uptime.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://media.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 'blank://blank', 1, [('radarr', 'Radarr', None, 'NG media', 'https://media.example.test/radarr', 1, 1, 1), ('sonarr', 'Sonarr', None, 'NG media', 'https://media.example.test/sonarr', 1, 1, 1), ('bazarr', 'Bazarr', None, 'NG media', 'https://media.example.test/bazarr', 1, 1, 1), ('lidarr', 'Lidarr', None, 'NG media', 'https://media.example.test/lidarr', 1, 1, 1), ('sabnzbd', 'SABnzbd', None, 'NG media', 'https://media.example.test/sabnzbd', 1, 1, 1), ('prowlarr', 'Prowlarr', None, 'NG media', 'https://media.example.test/prowlarr', 1, 1, 1)], 'forward_single', 'https://portainer.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'portainer', True, ['authorization_code', 'refresh_token'], [('strict', 'https://portainer.example.test/')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 'blank://blank', 1, 'forward_single', 'https://logs.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'forgejo', True, ['authorization_code', 'refresh_token'], [('strict', 'https://git.example.test/user/oauth2/authentik/callback')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 1, True, 'https://auth.example.test', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]"
 [ "$result" = "$expected" ] || { tail -n 30 "$out" >&2; fail "unexpected state after apply:
   got:  $result
   want: $expected"; }
