@@ -147,6 +147,11 @@ How they behave:
 - **Applied when the file changes.** Authentik re-applies a blueprint when the hash of its file changes, not when an environment variable does. After changing a host name in `.env`, force an apply under *Customization > Blueprints* (Apply button) or with `docker compose exec authentik_worker ak apply_blueprint custom/20-forward-auth-apps.yaml`.
 - **The file wins.** Each apply resets the fields it declares. Change those fields in the file, not in the admin UI. Fields it does not declare (users, group members, other applications) stay as set in the UI.
 - **Fail closed.** An application is only reachable by members of its group, for example `uptime-kuma-users`. Nobody is a member at first, administrators included: add users under *Directory > Groups*.
+- **Library cache after a group change.** Authentik caches each user's application list for 24 hours. Creating an application or changing a binding clears that cache, but adding a user to a group does not, so the new tiles stay hidden from that user's library. Access itself is not cached and works at once. To show the tiles now, clear the cache, then reload the library:
+
+  ```bash
+  docker compose exec -T authentik_worker ak shell -c "from django.core.cache import cache; from authentik.core.api.applications import user_app_cache_key; cache.delete_many(cache.keys(user_app_cache_key('*')))"
+  ```
 - **Removing an entry from a file does not delete the object.** Delete it in the admin UI as well.
 
 `tests/test_blueprints.sh` applies the blueprints on a throw-away Authentik (PostgreSQL and worker on an internal Docker network, no published port, removed at the end), checks the resulting objects, and applies them a second time to check that nothing is duplicated. It pulls the Authentik and PostgreSQL images if needed and takes one to three minutes.
