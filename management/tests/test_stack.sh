@@ -46,13 +46,14 @@ sed -e "s|^ACME_CA_SERVER=.*|ACME_CA_SERVER=https://ca.test/acme/acme/directory|
   -e "s|^OPENOBSERVE_HOST_LOCAL=.*|OPENOBSERVE_HOST_LOCAL=logs.home.test|" \
   -e "s|^FORGEJO_HOST_LOCAL=.*|FORGEJO_HOST_LOCAL=git.home.test|" \
   -e "s|^GRAMPSWEB_HOST_LOCAL=.*|GRAMPSWEB_HOST_LOCAL=genealogy.home.test|" \
+  -e "s|^IMMICH_HOST_LOCAL=.*|IMMICH_HOST_LOCAL=photos.home.test|" \
   -e "s|^UNIFI_HOST_LOCAL=.*|UNIFI_HOST_LOCAL=unifi.home.test|" \
   -e "s|^NAS_HOST_LOCAL=.*|NAS_HOST_LOCAL=nas.home.test|" \
   -e "s|^SWITCH_HOST_LOCAL=.*|SWITCH_HOST_LOCAL=192.0.2.30|" \
   -e "s|^PROXMOX_UPSTREAM_URL=.*|PROXMOX_UPSTREAM_URL=https://192.0.2.10:8006|" \
   "$stack_dir/.env.example" > "$work_dir/test.env"
 
-for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS CA_CERT_NAME MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL NG_HOST_LOCAL PORTAINER_HOST_LOCAL OPENOBSERVE_HOST_LOCAL FORGEJO_HOST_LOCAL GRAMPSWEB_HOST_LOCAL UNIFI_HOST_LOCAL NAS_HOST_LOCAL SWITCH_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR; do
+for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS CA_CERT_NAME MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL NG_HOST_LOCAL PORTAINER_HOST_LOCAL OPENOBSERVE_HOST_LOCAL FORGEJO_HOST_LOCAL GRAMPSWEB_HOST_LOCAL IMMICH_HOST_LOCAL UNIFI_HOST_LOCAL NAS_HOST_LOCAL SWITCH_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR; do
   if render "$var=" >/dev/null 2>&1; then fail "$var is not required"; fi
 done
 
@@ -117,6 +118,8 @@ outpost_host="$(render AUTHENTIK_HOST_PUBLIC=auth.example.test \
   || fail "BLUEPRINT_FORGEJO_HOST is not FORGEJO_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_GRAMPSWEB_HOST" <<<"$config")" = genealogy.home.test ] \
   || fail "BLUEPRINT_GRAMPSWEB_HOST is not GRAMPSWEB_HOST_LOCAL"
+[ "$(jq -r "$worker.environment.BLUEPRINT_IMMICH_HOST" <<<"$config")" = photos.home.test ] \
+  || fail "BLUEPRINT_IMMICH_HOST is not IMMICH_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_UNIFI_HOST" <<<"$config")" = unifi.home.test ] \
   || fail "BLUEPRINT_UNIFI_HOST is not UNIFI_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_NAS_HOST" <<<"$config")" = nas.home.test ] \

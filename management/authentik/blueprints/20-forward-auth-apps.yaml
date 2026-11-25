@@ -496,6 +496,62 @@ entries:
     attrs:
       order: 2
 
+  # --- Immich (OpenID Connect) ---------------------------------------------
+  # Not a forward-auth provider: not in the outpost list, since the mobile
+  # app and the public share proxy call the API directly. Immich is set up in
+  # its admin UI (Administration > Settings > OAuth): Authentik generates the
+  # client secret on first apply and keeps it, copy it there. The redirect
+  # URIs are the three Immich documents: the mobile app's custom scheme, the
+  # web login and the manual account linking in the user settings.
+  - model: authentik_core.group
+    id: immich-group
+    identifiers:
+      name: immich-users
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: immich-provider
+    identifiers:
+      name: Immich
+    attrs:
+      client_type: confidential
+      client_id: immich
+      # Empty by default on providers created by a blueprint (see Forgejo).
+      grant_types: [authorization_code, refresh_token]
+      redirect_uris:
+        - matching_mode: strict
+          url: app.immich:///oauth-callback
+        - matching_mode: strict
+          url: !Format ["https://%s/auth/login", !Env BLUEPRINT_IMMICH_HOST]
+        - matching_mode: strict
+          url: !Format ["https://%s/user-settings", !Env BLUEPRINT_IMMICH_HOST]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+
+  - model: authentik_core.application
+    id: immich-app
+    identifiers:
+      slug: immich
+    attrs:
+      name: Immich
+      group: Photos
+      meta_icon: homelab/icons/immich.svg
+      meta_description: Photo library
+      provider: !KeyOf immich-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_IMMICH_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf immich-app
+      group: !KeyOf immich-group
+    attrs:
+      order: 0
+
   # --- Infrastructure ------------------------------------------------------
   # Network devices outside this stack (not routed by its Traefik): bookmarks
   # only, no provider, so each device keeps its own login and the bindings

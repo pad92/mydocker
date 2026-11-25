@@ -326,6 +326,8 @@ services:
       BLUEPRINT_FORGEJO_HOST: ${FORGEJO_HOST_LOCAL:?Set FORGEJO_HOST_LOCAL in .env}
       # Must equal GRAMPSWEB_DOMAIN of the grampsweb stack (OIDC redirect URI).
       BLUEPRINT_GRAMPSWEB_HOST: ${GRAMPSWEB_HOST_LOCAL:?Set GRAMPSWEB_HOST_LOCAL in .env}
+      # Must equal TRAEFIK_HOST_LOCAL of the immich stack (OIDC redirect URIs).
+      BLUEPRINT_IMMICH_HOST: ${IMMICH_HOST_LOCAL:?Set IMMICH_HOST_LOCAL in .env}
       # Library bookmarks of the network devices (host name or IP address).
       BLUEPRINT_UNIFI_HOST: ${UNIFI_HOST_LOCAL:?Set UNIFI_HOST_LOCAL in .env}
       BLUEPRINT_NAS_HOST: ${NAS_HOST_LOCAL:?Set NAS_HOST_LOCAL in .env}
