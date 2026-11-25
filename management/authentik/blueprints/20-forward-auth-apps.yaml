@@ -417,6 +417,84 @@ entries:
     attrs:
       order: 0
 
+  # --- Gramps Web (OpenID Connect) -----------------------------------------
+  # Not a forward-auth provider: not in the outpost list. Gramps Web maps the
+  # "groups" claim (profile scope) to its roles at every login, the highest
+  # mapped group winning: grampsweb-owners -> Owner, grampsweb-editors ->
+  # Editor, grampsweb-members -> Member. A user in none of them is disabled
+  # by Gramps Web. Authentik generates the client secret on first apply and
+  # keeps it; copy it into GRAMPSWEB_OIDC_CLIENT_SECRET of the grampsweb
+  # stack. The redirect URI is the one Gramps Web builds from its BASE_URL
+  # for a custom provider.
+  - model: authentik_core.group
+    id: grampsweb-owners-group
+    identifiers:
+      name: grampsweb-owners
+
+  - model: authentik_core.group
+    id: grampsweb-editors-group
+    identifiers:
+      name: grampsweb-editors
+
+  - model: authentik_core.group
+    id: grampsweb-members-group
+    identifiers:
+      name: grampsweb-members
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: grampsweb-provider
+    identifiers:
+      name: Gramps Web
+    attrs:
+      client_type: confidential
+      client_id: grampsweb
+      # Empty by default on providers created by a blueprint (see Forgejo).
+      grant_types: [authorization_code, refresh_token]
+      redirect_uris:
+        - matching_mode: strict
+          url: !Format ["https://%s/api/oidc/callback/custom", !Env BLUEPRINT_GRAMPSWEB_HOST]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+
+  - model: authentik_core.application
+    id: grampsweb-app
+    identifiers:
+      slug: grampsweb
+    attrs:
+      name: Gramps Web
+      group: Genealogy
+      meta_icon: homelab/icons/grampsweb.svg
+      meta_description: Family tree
+      provider: !KeyOf grampsweb-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_GRAMPSWEB_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf grampsweb-app
+      group: !KeyOf grampsweb-owners-group
+    attrs:
+      order: 0
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf grampsweb-app
+      group: !KeyOf grampsweb-editors-group
+    attrs:
+      order: 1
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf grampsweb-app
+      group: !KeyOf grampsweb-members-group
+    attrs:
+      order: 2
+
   # --- Infrastructure ------------------------------------------------------
   # Network devices outside this stack (not routed by its Traefik): bookmarks
   # only, no provider, so each device keeps its own login and the bindings

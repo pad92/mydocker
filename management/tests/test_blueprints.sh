@@ -28,6 +28,15 @@
 #   types, one strict redirect URI to the "authentik" source callback, RS256 with the
 #   self-signed key, openid/email/profile scopes), application,
 #   forgejo-users group binding, and not attached to the outpost;
+# - Gramps Web: confidential OAuth2 provider (client_id "grampsweb", same
+#   grant types, one strict redirect URI to the /api/oidc/callback/custom
+#   path Gramps Web builds from its BASE_URL, RS256 with the self-signed key,
+#   openid/email/profile scopes), application in the "Genealogy" library
+#   group, one binding to each of grampsweb-owners, grampsweb-editors and
+#   grampsweb-members, not attached to the outpost; and the profile scope,
+#   evaluated for a throw-away member of grampsweb-editors, emits exactly
+#   that group in the "groups" claim Gramps Web maps to its roles (no claim
+#   would leave every new account disabled);
 # - Infrastructure: UniFi, Synology NAS and switch bookmarks (no provider,
 #   launch URL built from the env var, an IP address for the switch,
 #   "Infrastructure" library group, a single binding, to infra-users);
@@ -37,8 +46,8 @@
 #   (files: tests/test_media.sh). The default authentication flow blueprint
 #   can win the race on the title (30-branding.yaml), so the check first
 #   re-applies 30-branding.yaml, as the README says to;
-# - a second apply creates no duplicate and keeps the generated Forgejo and
-#   Portainer client secrets.
+# - a second apply creates no duplicate and keeps the generated Forgejo,
+#   Portainer and Gramps Web client secrets.
 # Pulls ghcr.io/goauthentik/server and postgres:16-alpine if missing.
 # Takes 1 to 3 minutes. Usage: ./tests/test_blueprints.sh
 set -euo pipefail
@@ -80,6 +89,7 @@ docker run -d --name "$name-worker" --network "$name" \
   -e BLUEPRINT_PORTAINER_HOST=portainer.example.test \
   -e BLUEPRINT_OPENOBSERVE_HOST=logs.example.test \
   -e BLUEPRINT_FORGEJO_HOST=git.example.test \
+  -e BLUEPRINT_GRAMPSWEB_HOST=genealogy.example.test \
   -e BLUEPRINT_UNIFI_HOST=unifi.example.test \
   -e BLUEPRINT_NAS_HOST=nas.example.test \
   -e BLUEPRINT_SWITCH_HOST=192.0.2.30 \
@@ -126,13 +136,23 @@ check_py='
 from authentik.blueprints.models import BlueprintInstance
 from authentik.blueprints.v1.importer import Importer
 from authentik.brands.models import Brand
-from authentik.core.models import Application, Group
+from authentik.core.models import Application, Group, User
 from authentik.flows.models import Flow
 from authentik.outposts.models import Outpost
 from authentik.policies.models import PolicyBinding
-from authentik.providers.oauth2.models import OAuth2Provider
+from authentik.providers.oauth2.models import OAuth2Provider, ScopeMapping
 from authentik.providers.proxy.models import ProxyProvider
 from authentik.stages.authenticator_validate.models import AuthenticatorValidateStage
+
+# "groups" claim of the profile scope for a throw-away user in one group.
+def groups_claim(provider, group):
+    u = User.objects.create(username="bp-test-claims")
+    try:
+        group.users.add(u)
+        m = ScopeMapping.objects.get(managed="goauthentik.io/providers/oauth2/scope-profile")
+        return m.evaluate(u, None, provider=provider).get("groups")
+    finally:
+        u.delete()
 
 def state():
     s = AuthenticatorValidateStage.objects.get(name="default-authentication-mfa-validation")
@@ -154,6 +174,10 @@ def state():
     fa = Application.objects.get(slug="forgejo")
     fg = Group.objects.get(name="forgejo-users")
     ig = Group.objects.get(name="infra-users")
+    gp = OAuth2Provider.objects.get(name="Gramps Web")
+    ga = Application.objects.get(slug="grampsweb")
+    gw = [Group.objects.get(name=x)
+          for x in ("grampsweb-owners", "grampsweb-editors", "grampsweb-members")]
     o = Outpost.objects.get(managed="goauthentik.io/outposts/embedded")
     br = Brand.objects.get(default=True)
     return [
@@ -166,7 +190,7 @@ def state():
             "default-invalidation-flow", "default-provider-invalidation-flow")).order_by("slug")],
         [(x.slug, str(x.meta_icon), x.meta_description, x.group)
          for x in (Application.objects.get(slug=y) for y in
-                   ("uptime-kuma", "portainer", "openobserve", "forgejo", "radarr",
+                   ("uptime-kuma", "portainer", "openobserve", "forgejo", "grampsweb", "radarr",
                     "sonarr", "bazarr", "lidarr", "sabnzbd", "prowlarr", "h5ai"))],
         s.not_configured_action,
         sorted(x.name for x in s.configuration_stages.all()),
@@ -225,7 +249,19 @@ def state():
           Application.objects.filter(slug=b.slug).count())
          for b in (Application.objects.get(slug=x) for x in ("unifi", "nas", "switch"))],
         Group.objects.filter(name="infra-users").count(),
-        (f.client_secret, ps.client_secret),  # last: compared, then dropped (never printed)
+        gp.client_type, gp.client_id, len(gp.client_secret) >= 40, sorted(gp.grant_types),
+        [(getattr(u.matching_mode, "value", u.matching_mode), u.url) for u in gp.redirect_uris],
+        gp.signing_key.name if gp.signing_key else None,
+        gp.authorization_flow.slug, gp.invalidation_flow.slug,
+        sorted(x.scopemapping.scope_name for x in gp.property_mappings.all()),
+        ga.name, ga.provider_id == gp.pk, ga.meta_launch_url, ga.policy_engine_mode,
+        PolicyBinding.objects.filter(target=ga).count(),
+        [PolicyBinding.objects.filter(target=ga, group=x).count() for x in gw],
+        [Group.objects.filter(name=x.name).count() for x in gw],
+        OAuth2Provider.objects.filter(name="Gramps Web").count(),
+        Application.objects.filter(slug="grampsweb").count(),
+        groups_claim(gp, gw[1]),
+        (f.client_secret, ps.client_secret, gp.client_secret),  # last: compared, then dropped (never printed)
     ]
 
 # Same steps as the apply_blueprint task, without its task context.
@@ -242,7 +278,7 @@ after = state()
 same_secret = before.pop() == after.pop()
 print("SAME" if before == after and same_secret else "CHANGED", before)'
 result="$(ak_py "$check_py")"
-expected="SAME ['authentik-default', 'Homelab', 'homelab/logo.svg', 'homelab/favicon.svg', 'homelab/background.svg', {'settings': {'theme': {'base': 'dark'}}}, 'Homelab', [('default-authentication-flow', 'homelab/background.svg'), ('default-authenticator-static-setup', 'homelab/background.svg'), ('default-authenticator-totp-setup', 'homelab/background.svg'), ('default-authenticator-webauthn-setup', 'homelab/background.svg'), ('default-invalidation-flow', 'homelab/background.svg'), ('default-provider-invalidation-flow', 'homelab/background.svg')], [('uptime-kuma', 'homelab/icons/uptime-kuma.svg', 'Uptime monitoring', 'Administration'), ('portainer', 'homelab/icons/portainer.svg', 'Docker management', 'Administration'), ('openobserve', 'homelab/icons/openobserve.svg', 'Logs and metrics', 'Administration'), ('forgejo', 'homelab/icons/forgejo.svg', 'Git forge', 'Administration'), ('radarr', 'homelab/icons/radarr.svg', 'Movies', 'NG media'), ('sonarr', 'homelab/icons/sonarr.svg', 'TV series', 'NG media'), ('bazarr', 'homelab/icons/bazarr.svg', 'Subtitles', 'NG media'), ('lidarr', 'homelab/icons/lidarr.svg', 'Music', 'NG media'), ('sabnzbd', 'homelab/icons/sabnzbd.svg', 'Usenet downloads', 'NG media'), ('prowlarr', 'homelab/icons/prowlarr.svg', 'Indexers', 'NG media'), ('h5ai', 'homelab/icons/h5ai.svg', 'File browser', 'NG media')], 'configure', ['default-authenticator-totp-setup', 'default-authenticator-webauthn-setup'], ['static', 'totp', 'webauthn'], 'forward_single', 'https://uptime.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://media.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 'blank://blank', 1, [('radarr', 'Radarr', None, 'NG media', 'https://media.example.test/radarr', 1, 1, 1), ('sonarr', 'Sonarr', None, 'NG media', 'https://media.example.test/sonarr', 1, 1, 1), ('bazarr', 'Bazarr', None, 'NG media', 'https://media.example.test/bazarr', 1, 1, 1), ('lidarr', 'Lidarr', None, 'NG media', 'https://media.example.test/lidarr', 1, 1, 1), ('sabnzbd', 'SABnzbd', None, 'NG media', 'https://media.example.test/sabnzbd', 1, 1, 1), ('prowlarr', 'Prowlarr', None, 'NG media', 'https://media.example.test/prowlarr', 1, 1, 1), ('h5ai', 'h5ai', None, 'NG media', 'https://media.example.test', 1, 1, 1)], 'forward_single', 'https://portainer.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'portainer', True, ['authorization_code', 'refresh_token'], [('strict', 'https://portainer.example.test/')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 'blank://blank', 1, 'forward_single', 'https://logs.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'forgejo', True, ['authorization_code', 'refresh_token'], [('strict', 'https://git.example.test/user/oauth2/authentik/callback')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 1, True, 'https://auth.example.test', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, [('unifi', 'UniFi', None, 'Infrastructure', 'homelab/icons/unifi.svg', 'Network controller', 'https://unifi.example.test', 1, 1, 1), ('nas', 'Synology NAS', None, 'Infrastructure', 'homelab/icons/synology.svg', 'DSM storage', 'https://nas.example.test', 1, 1, 1), ('switch', 'XGS1210-12', None, 'Infrastructure', 'homelab/icons/zyxel.svg', 'Zyxel switch', 'https://192.0.2.30', 1, 1, 1)], 1]"
+expected="SAME ['authentik-default', 'Homelab', 'homelab/logo.svg', 'homelab/favicon.svg', 'homelab/background.svg', {'settings': {'theme': {'base': 'dark'}}}, 'Homelab', [('default-authentication-flow', 'homelab/background.svg'), ('default-authenticator-static-setup', 'homelab/background.svg'), ('default-authenticator-totp-setup', 'homelab/background.svg'), ('default-authenticator-webauthn-setup', 'homelab/background.svg'), ('default-invalidation-flow', 'homelab/background.svg'), ('default-provider-invalidation-flow', 'homelab/background.svg')], [('uptime-kuma', 'homelab/icons/uptime-kuma.svg', 'Uptime monitoring', 'Administration'), ('portainer', 'homelab/icons/portainer.svg', 'Docker management', 'Administration'), ('openobserve', 'homelab/icons/openobserve.svg', 'Logs and metrics', 'Administration'), ('forgejo', 'homelab/icons/forgejo.svg', 'Git forge', 'Administration'), ('grampsweb', 'homelab/icons/grampsweb.svg', 'Family tree', 'Genealogy'), ('radarr', 'homelab/icons/radarr.svg', 'Movies', 'NG media'), ('sonarr', 'homelab/icons/sonarr.svg', 'TV series', 'NG media'), ('bazarr', 'homelab/icons/bazarr.svg', 'Subtitles', 'NG media'), ('lidarr', 'homelab/icons/lidarr.svg', 'Music', 'NG media'), ('sabnzbd', 'homelab/icons/sabnzbd.svg', 'Usenet downloads', 'NG media'), ('prowlarr', 'homelab/icons/prowlarr.svg', 'Indexers', 'NG media'), ('h5ai', 'homelab/icons/h5ai.svg', 'File browser', 'NG media')], 'configure', ['default-authenticator-totp-setup', 'default-authenticator-webauthn-setup'], ['static', 'totp', 'webauthn'], 'forward_single', 'https://uptime.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://media.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 'blank://blank', 1, [('radarr', 'Radarr', None, 'NG media', 'https://media.example.test/radarr', 1, 1, 1), ('sonarr', 'Sonarr', None, 'NG media', 'https://media.example.test/sonarr', 1, 1, 1), ('bazarr', 'Bazarr', None, 'NG media', 'https://media.example.test/bazarr', 1, 1, 1), ('lidarr', 'Lidarr', None, 'NG media', 'https://media.example.test/lidarr', 1, 1, 1), ('sabnzbd', 'SABnzbd', None, 'NG media', 'https://media.example.test/sabnzbd', 1, 1, 1), ('prowlarr', 'Prowlarr', None, 'NG media', 'https://media.example.test/prowlarr', 1, 1, 1), ('h5ai', 'h5ai', None, 'NG media', 'https://media.example.test', 1, 1, 1)], 'forward_single', 'https://portainer.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'portainer', True, ['authorization_code', 'refresh_token'], [('strict', 'https://portainer.example.test/')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 'blank://blank', 1, 'forward_single', 'https://logs.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'forgejo', True, ['authorization_code', 'refresh_token'], [('strict', 'https://git.example.test/user/oauth2/authentik/callback')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 1, True, 'https://auth.example.test', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, [('unifi', 'UniFi', None, 'Infrastructure', 'homelab/icons/unifi.svg', 'Network controller', 'https://unifi.example.test', 1, 1, 1), ('nas', 'Synology NAS', None, 'Infrastructure', 'homelab/icons/synology.svg', 'DSM storage', 'https://nas.example.test', 1, 1, 1), ('switch', 'XGS1210-12', None, 'Infrastructure', 'homelab/icons/zyxel.svg', 'Zyxel switch', 'https://192.0.2.30', 1, 1, 1)], 1, 'confidential', 'grampsweb', True, ['authorization_code', 'refresh_token'], [('strict', 'https://genealogy.example.test/api/oidc/callback/custom')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], 'Gramps Web', True, 'https://genealogy.example.test', 'any', 3, [1, 1, 1], [1, 1, 1], 1, 1, ['grampsweb-editors']]"
 [ "$result" = "$expected" ] || { tail -n 30 "$out" >&2; fail "unexpected state after apply:
   got:  $result
   want: $expected"; }

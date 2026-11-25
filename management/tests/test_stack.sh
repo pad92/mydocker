@@ -18,7 +18,7 @@
 # - Uptime Kuma is behind forward auth, except its /api/push/ path;
 # - Portainer is behind forward auth, with no bypass router, and mounts the
 #   step-ca root read-only (its OAuth login calls Authentik over HTTPS);
-# - the OpenObserve and Forgejo host names reach the blueprints (OpenObserve
+# - the OpenObserve, Forgejo and Gramps Web host names reach the blueprints (OpenObserve
 #   routers are checked in openobserve/tests/test_stack.sh).
 # Needs Docker Compose 2.23+ and jq. Usage: ./tests/test_stack.sh
 set -euo pipefail
@@ -45,13 +45,14 @@ sed -e "s|^ACME_CA_SERVER=.*|ACME_CA_SERVER=https://ca.test/acme/acme/directory|
   -e "s|^PORTAINER_HOST_LOCAL=.*|PORTAINER_HOST_LOCAL=portainer.home.test|" \
   -e "s|^OPENOBSERVE_HOST_LOCAL=.*|OPENOBSERVE_HOST_LOCAL=logs.home.test|" \
   -e "s|^FORGEJO_HOST_LOCAL=.*|FORGEJO_HOST_LOCAL=git.home.test|" \
+  -e "s|^GRAMPSWEB_HOST_LOCAL=.*|GRAMPSWEB_HOST_LOCAL=genealogy.home.test|" \
   -e "s|^UNIFI_HOST_LOCAL=.*|UNIFI_HOST_LOCAL=unifi.home.test|" \
   -e "s|^NAS_HOST_LOCAL=.*|NAS_HOST_LOCAL=nas.home.test|" \
   -e "s|^SWITCH_HOST_LOCAL=.*|SWITCH_HOST_LOCAL=192.0.2.30|" \
   -e "s|^PROXMOX_UPSTREAM_URL=.*|PROXMOX_UPSTREAM_URL=https://192.0.2.10:8006|" \
   "$stack_dir/.env.example" > "$work_dir/test.env"
 
-for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS CA_CERT_NAME MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL NG_HOST_LOCAL PORTAINER_HOST_LOCAL OPENOBSERVE_HOST_LOCAL FORGEJO_HOST_LOCAL UNIFI_HOST_LOCAL NAS_HOST_LOCAL SWITCH_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR; do
+for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS CA_CERT_NAME MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL NG_HOST_LOCAL PORTAINER_HOST_LOCAL OPENOBSERVE_HOST_LOCAL FORGEJO_HOST_LOCAL GRAMPSWEB_HOST_LOCAL UNIFI_HOST_LOCAL NAS_HOST_LOCAL SWITCH_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR; do
   if render "$var=" >/dev/null 2>&1; then fail "$var is not required"; fi
 done
 
@@ -114,6 +115,8 @@ outpost_host="$(render AUTHENTIK_HOST_PUBLIC=auth.example.test \
   || fail "BLUEPRINT_OPENOBSERVE_HOST is not OPENOBSERVE_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_FORGEJO_HOST" <<<"$config")" = git.home.test ] \
   || fail "BLUEPRINT_FORGEJO_HOST is not FORGEJO_HOST_LOCAL"
+[ "$(jq -r "$worker.environment.BLUEPRINT_GRAMPSWEB_HOST" <<<"$config")" = genealogy.home.test ] \
+  || fail "BLUEPRINT_GRAMPSWEB_HOST is not GRAMPSWEB_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_UNIFI_HOST" <<<"$config")" = unifi.home.test ] \
   || fail "BLUEPRINT_UNIFI_HOST is not UNIFI_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_NAS_HOST" <<<"$config")" = nas.home.test ] \
