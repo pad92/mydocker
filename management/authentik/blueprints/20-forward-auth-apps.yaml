@@ -222,6 +222,26 @@ entries:
     attrs:
       order: 0
 
+  # h5ai sits at the root of the host, outside the NG media provider paths,
+  # and stays public: the binding only decides who sees the tile.
+  - model: authentik_core.application
+    id: h5ai-app
+    identifiers:
+      slug: h5ai
+    attrs:
+      name: h5ai
+      meta_icon: homelab/icons/h5ai.svg
+      meta_description: File browser
+      group: NG media
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf h5ai-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
   # --- Portainer -----------------------------------------------------------
   # Whole host behind forward auth, API included: the web UI calls /api with
   # the browser session. Portainer then signs users in through its own OAuth
