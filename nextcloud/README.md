@@ -21,6 +21,8 @@ Define these environment variables which are unique to this service:
 | `NEXTCLOUD_DATA_DIR` | Persistent host directory path for volume mount: NEXTCLOUD_DATA_DIR. | *None (empty)* |
 | `NEXTCLOUD_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `PGID` | Group ID matching host permissions to run the container. | *None (empty)* |
+| `PHOTO_NAS_NATH_PATH` | NFS export path of a per-user photo folder on the NAS, mounted read-only on `/mnt/photos_nath`. Required. | *None (empty)* |
+| `PHOTO_NAS_PASCAL_PATH` | NFS export path of a per-user photo folder on the NAS, mounted read-only on `/mnt/photos_pascal`. Required. | *None (empty)* |
 | `PUID` | User ID matching host permissions to run the container. | *None (empty)* |
 | `TZ` | Timezone configuration for container operations and logs (e.g. Europe/Paris). | *None (empty)* |
 
