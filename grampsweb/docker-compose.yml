@@ -44,7 +44,8 @@ x-grampsweb: &grampsweb
     # Copied from the Authentik provider; set it in Portainer, not in Git.
     GRAMPSWEB_OIDC_CLIENT_SECRET: "${GRAMPSWEB_OIDC_CLIENT_SECRET:?Set GRAMPSWEB_OIDC_CLIENT_SECRET}"
     # Authentik group names in the "groups" claim give the Gramps role (the
-    # highest wins). A user in none of them is disabled at each sign-in.
+    # highest wins). Authentik refuses a user in none of them; the Gramps
+    # account stays as it was until an owner disables it.
     GRAMPSWEB_OIDC_ROLE_CLAIM: "groups"
     GRAMPSWEB_OIDC_GROUP_OWNER: "grampsweb-owners"
     GRAMPSWEB_OIDC_GROUP_EDITOR: "grampsweb-editors"

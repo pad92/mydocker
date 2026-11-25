@@ -421,8 +421,9 @@ entries:
   # Not a forward-auth provider: not in the outpost list. Gramps Web maps the
   # "groups" claim (profile scope) to its roles at every login, the highest
   # mapped group winning: grampsweb-owners -> Owner, grampsweb-editors ->
-  # Editor, grampsweb-members -> Member. A user in none of them is disabled
-  # by Gramps Web. Authentik generates the client secret on first apply and
+  # Editor, grampsweb-members -> Member. The bindings below refuse a user in
+  # none of them; the Gramps Web account stays as it was until an owner
+  # disables it. Authentik generates the client secret on first apply and
   # keeps it; copy it into GRAMPSWEB_OIDC_CLIENT_SECRET of the grampsweb
   # stack. The redirect URI is the one Gramps Web builds from its BASE_URL
   # for a custom provider.
