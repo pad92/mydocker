@@ -1,0 +1,106 @@
+# yaml-language-server: $schema=https://goauthentik.io/blueprints/schema.json
+#
+# Homelab look for the login page and the user interface (Library).
+#
+# The files live in management/authentik/media/, mounted read-only on the
+# server at /data/media/public/homelab. Authentik serves a file field such as
+# "homelab/logo.svg" from /data/media/public/ with a signed URL. Application
+# icons are set in 20-forward-auth-apps.yaml the same way.
+#
+# - Brand: "Default - Brand" only creates the brand when none exists, so it
+#   never resets these fields. "attributes" is replaced as a whole: add any
+#   other brand attribute here, not in the admin UI.
+# - Flow background: Authentik 2026.8 builds the flow page without the
+#   request, so a flow with no background of its own shows the stock image,
+#   never the brand default. Each flow a user sees gets the background here:
+#   login, MFA enrolment, logout. The default blueprints do not set it.
+# - Flow title: "Default - Authentication flow" sets "Welcome to authentik!".
+#   Authentik applies every changed blueprint at once, in no set order, so on
+#   first start and after an upgrade that changes that file the default may
+#   win. Re-apply "Homelab - Branding" then (README, Branding).
+version: 1
+metadata:
+  name: Homelab - Branding
+entries:
+  # Make sure the default brand and flows exist before they are changed
+  # (first start on an empty database).
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Brand
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Authentication flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Static MFA setup flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - TOTP MFA setup flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - WebAuthn MFA setup flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Invalidation flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider invalidation flow
+      required: true
+
+  - model: authentik_brands.brand
+    identifiers:
+      domain: authentik-default
+    attrs:
+      branding_title: Homelab
+      branding_logo: homelab/logo.svg
+      branding_favicon: homelab/favicon.svg
+      branding_default_flow_background: homelab/background.svg
+      attributes:
+        settings:
+          theme:
+            base: dark
+
+  - model: authentik_flows.flow
+    identifiers:
+      slug: default-authentication-flow
+    attrs:
+      title: Homelab
+      background: homelab/background.svg
+  - model: authentik_flows.flow
+    identifiers:
+      slug: default-authenticator-static-setup
+    attrs:
+      background: homelab/background.svg
+  - model: authentik_flows.flow
+    identifiers:
+      slug: default-authenticator-totp-setup
+    attrs:
+      background: homelab/background.svg
+  - model: authentik_flows.flow
+    identifiers:
+      slug: default-authenticator-webauthn-setup
+    attrs:
+      background: homelab/background.svg
+  - model: authentik_flows.flow
+    identifiers:
+      slug: default-invalidation-flow
+    attrs:
+      background: homelab/background.svg
+  - model: authentik_flows.flow
+    identifiers:
+      slug: default-provider-invalidation-flow
+    attrs:
+      background: homelab/background.svg

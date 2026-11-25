@@ -13,6 +13,8 @@
 #   read (the outpost uses the public Authentik name when set, else the
 #   internal one), and the blueprints themselves hold no host name, URL or
 #   address;
+# - the server gets the branding files read-only where Authentik serves the
+#   "homelab/..." file names of the blueprints (files: tests/test_media.sh);
 # - Uptime Kuma is behind forward auth, except its /api/push/ path;
 # - Portainer is behind forward auth, with no bypass router, and mounts the
 #   step-ca root read-only (its OAuth login calls Authentik over HTTPS);
@@ -113,6 +115,9 @@ outpost_host="$(render AUTHENTIK_HOST_PUBLIC=auth.example.test \
   || fail "worker lost the shared Authentik environment"
 # Private names belong in .env only: no domain, URL, e-mail or IP address in
 # the versioned blueprints. goauthentik.io/... are Authentik managed keys.
+jq -e "$server.volumes[] | select(.source == \"$stack_dir/authentik/media\"
+  and .target == \"/data/media/public/homelab\" and .read_only == true)" <<<"$config" >/dev/null \
+  || fail "server does not mount the branding files read-only on /data/media/public/homelab"
 if grep -nE '[A-Za-z0-9-]+\.(lan|local|home|internal|com|fr|net|org|io)\b|https?://[^"%]|@|([0-9]{1,3}\.){3}[0-9]{1,3}' \
   "$stack_dir"/authentik/blueprints/*.yaml | grep -vE '^[^:]+:[0-9]+:\s*#|goauthentik\.io/(outposts|blueprints|providers)/'; then
   fail "a blueprint holds a host name, URL, e-mail or address"

@@ -56,6 +56,9 @@ entries:
       slug: uptime-kuma
     attrs:
       name: Uptime Kuma
+      group: Administration
+      meta_icon: homelab/icons/uptime-kuma.svg
+      meta_description: Uptime monitoring
       provider: !KeyOf uptime-kuma-provider
       meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_UPTIME_HOST]
       policy_engine_mode: any
@@ -117,6 +120,8 @@ entries:
       slug: radarr
     attrs:
       name: Radarr
+      meta_icon: homelab/icons/radarr.svg
+      meta_description: Movies
       group: NG media
       meta_launch_url: !Format ["https://%s/radarr", !Env BLUEPRINT_NG_HOST]
       policy_engine_mode: any
@@ -133,6 +138,8 @@ entries:
       slug: sonarr
     attrs:
       name: Sonarr
+      meta_icon: homelab/icons/sonarr.svg
+      meta_description: TV series
       group: NG media
       meta_launch_url: !Format ["https://%s/sonarr", !Env BLUEPRINT_NG_HOST]
       policy_engine_mode: any
@@ -149,6 +156,8 @@ entries:
       slug: bazarr
     attrs:
       name: Bazarr
+      meta_icon: homelab/icons/bazarr.svg
+      meta_description: Subtitles
       group: NG media
       meta_launch_url: !Format ["https://%s/bazarr", !Env BLUEPRINT_NG_HOST]
       policy_engine_mode: any
@@ -165,6 +174,8 @@ entries:
       slug: lidarr
     attrs:
       name: Lidarr
+      meta_icon: homelab/icons/lidarr.svg
+      meta_description: Music
       group: NG media
       meta_launch_url: !Format ["https://%s/lidarr", !Env BLUEPRINT_NG_HOST]
       policy_engine_mode: any
@@ -181,6 +192,8 @@ entries:
       slug: sabnzbd
     attrs:
       name: SABnzbd
+      meta_icon: homelab/icons/sabnzbd.svg
+      meta_description: Usenet downloads
       group: NG media
       meta_launch_url: !Format ["https://%s/sabnzbd", !Env BLUEPRINT_NG_HOST]
       policy_engine_mode: any
@@ -197,6 +210,8 @@ entries:
       slug: prowlarr
     attrs:
       name: Prowlarr
+      meta_icon: homelab/icons/prowlarr.svg
+      meta_description: Indexers
       group: NG media
       meta_launch_url: !Format ["https://%s/prowlarr", !Env BLUEPRINT_NG_HOST]
       policy_engine_mode: any
@@ -233,6 +248,9 @@ entries:
       slug: portainer
     attrs:
       name: Portainer
+      group: Administration
+      meta_icon: homelab/icons/portainer.svg
+      meta_description: Docker management
       provider: !KeyOf portainer-provider
       meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_PORTAINER_HOST]
       policy_engine_mode: any
@@ -314,6 +332,9 @@ entries:
       slug: openobserve
     attrs:
       name: OpenObserve
+      group: Administration
+      meta_icon: homelab/icons/openobserve.svg
+      meta_description: Logs and metrics
       provider: !KeyOf openobserve-provider
       meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_OPENOBSERVE_HOST]
       policy_engine_mode: any
@@ -362,6 +383,9 @@ entries:
       slug: forgejo
     attrs:
       name: Forgejo
+      group: Administration
+      meta_icon: homelab/icons/forgejo.svg
+      meta_description: Git forge
       provider: !KeyOf forgejo-provider
       meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_FORGEJO_HOST]
       policy_engine_mode: any

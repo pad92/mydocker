@@ -129,7 +129,7 @@ The **Forward auth (domain level)** mode protects many hosts with a single provi
 - **APIs and mobile apps.** Clients that cannot follow a browser login (API tokens, mobile apps, WebDAV) break behind forward auth. For those services, use the native OIDC/SAML support of the application with Authentik as provider, or leave the API path outside the protected router. Forgejo takes the first route (Git over HTTPS, API, runner): see [its README](../forgejo/README.md#login-with-authentik-oidc) for the source to add in Forgejo with the client secret. OpenObserve takes the second: a router without the middleware serves only `POST` on the ingestion endpoints, see [its README](../openobserve/README.md#access-control-authentik).
 - **Trusted headers.** The service must trust the `X-authentik-*` headers only because they come from Traefik. Do not publish a protected service on a host port, or a client could reach it directly and forge those headers.
 - **Backups.** Back up `MANAGEMENT_AUTHENTIK_DATA_DIR` and `AUTHENTIK_SECRET_KEY` together. For the database, prefer a `pg_dump` over a copy of the files of a running server.
-- **Upgrades.** Change `AUTHENTIK_TAG` one minor version at a time and read the [release notes](https://docs.goauthentik.io/releases/) first: migrations are not reversible.
+- **Upgrades.** Change `AUTHENTIK_TAG` one minor version at a time and read the [release notes](https://docs.goauthentik.io/releases/) first: migrations are not reversible. After the upgrade, re-apply the branding (see [Branding](#branding)).
 
 ### Blueprints
 
@@ -138,7 +138,8 @@ The Authentik configuration is versioned as [blueprints](https://docs.goauthenti
 | File | Effect |
 | --- | --- |
 | `10-mfa.yaml` | The default authentication flow asks for a second factor (TOTP, WebAuthn, or a static recovery code). A user without one must enroll TOTP or WebAuthn at the next login. |
-| `20-forward-auth-apps.yaml` | Forward auth providers and applications, their access groups, and the provider list of the embedded outpost. Uptime Kuma (`uptime-kuma-users`), Portainer (`portainer-users`), the `ng` media apps (`media-users`, one provider for the Radarr, Sonarr, Bazarr, Lidarr, SABnzbd, and Prowlarr paths on `NG_HOST_LOCAL`), and OpenObserve (`openobserve-users`, on `OPENOBSERVE_HOST_LOCAL`). Also two OIDC providers, which are not forward auth providers and stay off the outpost: Forgejo (`forgejo-users`, redirect URI on `FORGEJO_HOST_LOCAL`) and Portainer SSO (hidden application `portainer-sso`, group `portainer-users`, redirect URI on `PORTAINER_HOST_LOCAL`). |
+| `20-forward-auth-apps.yaml` | Forward auth providers and applications, their access groups, and the provider list of the embedded outpost. Uptime Kuma (`uptime-kuma-users`), Portainer (`portainer-users`), the `ng` media apps (`media-users`, one provider for the Radarr, Sonarr, Bazarr, Lidarr, SABnzbd, and Prowlarr paths on `NG_HOST_LOCAL`), and OpenObserve (`openobserve-users`, on `OPENOBSERVE_HOST_LOCAL`). Also two OIDC providers, which are not forward auth providers and stay off the outpost: Forgejo (`forgejo-users`, redirect URI on `FORGEJO_HOST_LOCAL`) and Portainer SSO (hidden application `portainer-sso`, group `portainer-users`, redirect URI on `PORTAINER_HOST_LOCAL`). Each visible application also gets an icon, a description, and a group in the library (*Administration* or *NG media*). |
+| `30-branding.yaml` | Look of the login page and of the user interface: title *Homelab*, logo, favicon, dark theme, and background. See [Branding](#branding). |
 
 How they behave:
 
@@ -149,6 +150,16 @@ How they behave:
 - **Removing an entry from a file does not delete the object.** Delete it in the admin UI as well.
 
 `tests/test_blueprints.sh` applies the blueprints on a throw-away Authentik (PostgreSQL and worker on an internal Docker network, no published port, removed at the end), checks the resulting objects, and applies them a second time to check that nothing is duplicated. It pulls the Authentik and PostgreSQL images if needed and takes one to three minutes.
+
+### Branding
+
+The logo, favicon, background, and application icons are SVG files in `authentik/media/`, mounted read-only on `authentik_server` at `/data/media/public/homelab`. The blueprints name them `homelab/<file>`; Authentik serves them from its own host with a signed URL that expires after 15 minutes.
+
+- **Title after the first start or an upgrade.** The *Default - Authentication flow* blueprint sets the login title to "Welcome to authentik!". Authentik applies every new or changed blueprint at the same time, in no set order, so on the first start, and after an upgrade that changes that file, the default title may win. Check the login page and, if needed, re-apply ours: `docker compose exec authentik_worker ak apply_blueprint custom/30-branding.yaml`.
+- **Background.** Authentik 2026.8 ignores the brand's default background on flow pages and shows its stock image. The blueprint therefore sets the background on each flow a user sees: login, MFA enrolment (static, TOTP, WebAuthn), and logout. A flow you add needs the same `background` field.
+- **Brand attributes.** The blueprint replaces the `attributes` of the default brand as a whole (they hold the dark theme). Add any other brand attribute to the file, not in the admin UI, or the next apply removes it.
+- **Adding a file.** Put it in `authentik/media/` and name it in a blueprint. `tests/test_media.sh` fails on a file that no blueprint names, on a name with no file, and on an SVG that is not inert: an SVG opened directly runs as a page of the Authentik host, so it must hold no script, event handler, embedded document, or external reference.
+- **Icon sources.** `logo.svg`, `favicon.svg`, `background.svg`, and `icons/openobserve.svg` are made for this repository. The other icons come from [homarr-labs/dashboard-icons](https://github.com/homarr-labs/dashboard-icons) (Apache-2.0); the logos themselves remain the trademarks of their projects.
 
 ### Host names of other stacks
 

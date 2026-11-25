@@ -244,6 +244,9 @@ services:
     volumes:
       - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/data:/data
       - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/custom-templates:/templates
+      # Branding files (logo, background, app icons) of the blueprints, served
+      # by the server as "homelab/..." (authentik/blueprints/30-branding.yaml).
+      - ./authentik/media:/data/media/public/homelab:ro
       - *localtime-volume
     networks:
       - authentik

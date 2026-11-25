@@ -3,7 +3,7 @@
 # worker, private network, no published port) and checks the objects they
 # create. The worker is the component that applies blueprints in production.
 # Checks:
-# - both blueprints end in status "successful";
+# - the three blueprints end in status "successful";
 # - MFA validation: "configure" with TOTP and WebAuthn as enrolment choices;
 # - Uptime Kuma: forward_single provider on the URL built from the env var,
 #   application, group binding, provider attached to the embedded outpost,
@@ -27,6 +27,12 @@
 #   types, one strict redirect URI to the "authentik" source callback, RS256 with the
 #   self-signed key, openid/email/profile scopes), application,
 #   forgejo-users group binding, and not attached to the outpost;
+# - branding: default brand title, logo, favicon, flow background and dark
+#   theme attribute; login flow title and the background of each flow a user
+#   sees; icon, description and library group of each visible application
+#   (files: tests/test_media.sh). The default authentication flow blueprint
+#   can win the race on the title (30-branding.yaml), so the check first
+#   re-applies 30-branding.yaml, as the README says to;
 # - a second apply creates no duplicate and keeps the generated Forgejo and
 #   Portainer client secrets.
 # Pulls ghcr.io/goauthentik/server and postgres:16-alpine if missing.
@@ -84,7 +90,10 @@ ak_py() {
 
 status_py='
 from authentik.blueprints.models import BlueprintInstance as B
-print(",".join(sorted(f"{b.path}={b.status}" for b in B.objects.filter(path__startswith="custom/"))))'
+# Also counts the instances not applied yet (the defaults among them): one
+# applied after the check would undo the re-apply of 30-branding.yaml.
+print(",".join(sorted(f"{b.path}={b.status}" for b in B.objects.filter(path__startswith="custom/")))
+      + f",unapplied={B.objects.filter(status=\"unknown\").count()}")'
 # Messages of the apply tasks of a blueprint in error, shown on failure.
 logs_py='
 from authentik.blueprints.models import BlueprintInstance as B
@@ -92,7 +101,7 @@ for b in B.objects.filter(path__startswith="custom/", status="error"):
     for t in b.tasks.all():
         for m in t._previous_messages + t._messages:
             print(b.path, m)'
-want="custom/10-mfa.yaml=successful,custom/20-forward-auth-apps.yaml=successful"
+want="custom/10-mfa.yaml=successful,custom/20-forward-auth-apps.yaml=successful,custom/30-branding.yaml=successful,unapplied=0"
 status=""
 for _ in $(seq 60); do
   status="$(ak_py "$status_py" || true)"
@@ -108,7 +117,9 @@ done
 check_py='
 from authentik.blueprints.models import BlueprintInstance
 from authentik.blueprints.v1.importer import Importer
+from authentik.brands.models import Brand
 from authentik.core.models import Application, Group
+from authentik.flows.models import Flow
 from authentik.outposts.models import Outpost
 from authentik.policies.models import PolicyBinding
 from authentik.providers.oauth2.models import OAuth2Provider
@@ -135,7 +146,19 @@ def state():
     fa = Application.objects.get(slug="forgejo")
     fg = Group.objects.get(name="forgejo-users")
     o = Outpost.objects.get(managed="goauthentik.io/outposts/embedded")
+    br = Brand.objects.get(default=True)
     return [
+        br.domain, br.branding_title, str(br.branding_logo), str(br.branding_favicon),
+        str(br.branding_default_flow_background), br.attributes,
+        Flow.objects.get(slug="default-authentication-flow").title,
+        [(x.slug, str(x.background)) for x in Flow.objects.filter(slug__in=(
+            "default-authentication-flow", "default-authenticator-static-setup",
+            "default-authenticator-totp-setup", "default-authenticator-webauthn-setup",
+            "default-invalidation-flow", "default-provider-invalidation-flow")).order_by("slug")],
+        [(x.slug, str(x.meta_icon), x.meta_description, x.group)
+         for x in (Application.objects.get(slug=y) for y in
+                   ("uptime-kuma", "portainer", "openobserve", "forgejo", "radarr",
+                    "sonarr", "bazarr", "lidarr", "sabnzbd", "prowlarr"))],
         s.not_configured_action,
         sorted(x.name for x in s.configuration_stages.all()),
         sorted(s.device_classes),
@@ -185,20 +208,25 @@ def state():
         OAuth2Provider.objects.filter(name="Forgejo").count(),
         OAuth2Provider.objects.filter(name="Portainer SSO").count(),
         Outpost.objects.filter(managed="goauthentik.io/outposts/embedded").count(),
+        Brand.objects.filter(default=True).count(),
         (f.client_secret, ps.client_secret),  # last: compared, then dropped (never printed)
     ]
 
-before = state()
 # Same steps as the apply_blueprint task, without its task context.
-for b in BlueprintInstance.objects.filter(path__startswith="custom/"):
-    imp = Importer.from_string(b.retrieve(), b.context)
-    assert imp.validate()[0], b.path
-    assert imp.apply(), b.path
+def apply(**filt):
+    for b in BlueprintInstance.objects.filter(**filt):
+        imp = Importer.from_string(b.retrieve(), b.context)
+        assert imp.validate()[0], b.path
+        assert imp.apply(), b.path
+
+apply(path="custom/30-branding.yaml")
+before = state()
+apply(path__startswith="custom/")
 after = state()
 same_secret = before.pop() == after.pop()
 print("SAME" if before == after and same_secret else "CHANGED", before)'
 result="$(ak_py "$check_py")"
-expected="SAME ['configure', ['default-authenticator-totp-setup', 'default-authenticator-webauthn-setup'], ['static', 'totp', 'webauthn'], 'forward_single', 'https://uptime.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://media.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 'blank://blank', 1, [('radarr', 'Radarr', None, 'NG media', 'https://media.example.test/radarr', 1, 1, 1), ('sonarr', 'Sonarr', None, 'NG media', 'https://media.example.test/sonarr', 1, 1, 1), ('bazarr', 'Bazarr', None, 'NG media', 'https://media.example.test/bazarr', 1, 1, 1), ('lidarr', 'Lidarr', None, 'NG media', 'https://media.example.test/lidarr', 1, 1, 1), ('sabnzbd', 'SABnzbd', None, 'NG media', 'https://media.example.test/sabnzbd', 1, 1, 1), ('prowlarr', 'Prowlarr', None, 'NG media', 'https://media.example.test/prowlarr', 1, 1, 1)], 'forward_single', 'https://portainer.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'portainer', True, ['authorization_code', 'refresh_token'], [('strict', 'https://portainer.example.test/')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 'blank://blank', 1, 'forward_single', 'https://logs.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'forgejo', True, ['authorization_code', 'refresh_token'], [('strict', 'https://git.example.test/user/oauth2/authentik/callback')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 1, True, 'https://auth.example.test', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]"
+expected="SAME ['authentik-default', 'Homelab', 'homelab/logo.svg', 'homelab/favicon.svg', 'homelab/background.svg', {'settings': {'theme': {'base': 'dark'}}}, 'Homelab', [('default-authentication-flow', 'homelab/background.svg'), ('default-authenticator-static-setup', 'homelab/background.svg'), ('default-authenticator-totp-setup', 'homelab/background.svg'), ('default-authenticator-webauthn-setup', 'homelab/background.svg'), ('default-invalidation-flow', 'homelab/background.svg'), ('default-provider-invalidation-flow', 'homelab/background.svg')], [('uptime-kuma', 'homelab/icons/uptime-kuma.svg', 'Uptime monitoring', 'Administration'), ('portainer', 'homelab/icons/portainer.svg', 'Docker management', 'Administration'), ('openobserve', 'homelab/icons/openobserve.svg', 'Logs and metrics', 'Administration'), ('forgejo', 'homelab/icons/forgejo.svg', 'Git forge', 'Administration'), ('radarr', 'homelab/icons/radarr.svg', 'Movies', 'NG media'), ('sonarr', 'homelab/icons/sonarr.svg', 'TV series', 'NG media'), ('bazarr', 'homelab/icons/bazarr.svg', 'Subtitles', 'NG media'), ('lidarr', 'homelab/icons/lidarr.svg', 'Music', 'NG media'), ('sabnzbd', 'homelab/icons/sabnzbd.svg', 'Usenet downloads', 'NG media'), ('prowlarr', 'homelab/icons/prowlarr.svg', 'Indexers', 'NG media')], 'configure', ['default-authenticator-totp-setup', 'default-authenticator-webauthn-setup'], ['static', 'totp', 'webauthn'], 'forward_single', 'https://uptime.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://media.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 'blank://blank', 1, [('radarr', 'Radarr', None, 'NG media', 'https://media.example.test/radarr', 1, 1, 1), ('sonarr', 'Sonarr', None, 'NG media', 'https://media.example.test/sonarr', 1, 1, 1), ('bazarr', 'Bazarr', None, 'NG media', 'https://media.example.test/bazarr', 1, 1, 1), ('lidarr', 'Lidarr', None, 'NG media', 'https://media.example.test/lidarr', 1, 1, 1), ('sabnzbd', 'SABnzbd', None, 'NG media', 'https://media.example.test/sabnzbd', 1, 1, 1), ('prowlarr', 'Prowlarr', None, 'NG media', 'https://media.example.test/prowlarr', 1, 1, 1)], 'forward_single', 'https://portainer.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'portainer', True, ['authorization_code', 'refresh_token'], [('strict', 'https://portainer.example.test/')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 'blank://blank', 1, 'forward_single', 'https://logs.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'forgejo', True, ['authorization_code', 'refresh_token'], [('strict', 'https://git.example.test/user/oauth2/authentik/callback')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 1, True, 'https://auth.example.test', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]"
 [ "$result" = "$expected" ] || { tail -n 30 "$out" >&2; fail "unexpected state after apply:
   got:  $result
   want: $expected"; }
