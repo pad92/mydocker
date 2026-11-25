@@ -12,15 +12,16 @@
 #   binding;
 # - Portainer: third forward_single provider, application, portainer-users
 #   group binding; plus a confidential OAuth2 provider (client_id
-#   "portainer", one strict redirect URI to the Portainer root URL, RS256
-#   with the self-signed key, openid/email/profile scopes) on a second
+#   "portainer", authorization_code and refresh_token grant types (none by
+#   default: every login would fail), one strict redirect URI to the
+#   Portainer root URL, RS256 with the self-signed key, openid/email/profile scopes) on a second
 #   application hidden from the library, bound to the same group, not on the
 #   outpost;
 # - OpenObserve: fourth forward_single provider, application,
 #   openobserve-users group binding; the outpost carries exactly these four
 #   providers;
-# - Forgejo: confidential OAuth2 provider (client_id "forgejo", one strict
-#   redirect URI to the "authentik" source callback, RS256 with the
+# - Forgejo: confidential OAuth2 provider (client_id "forgejo", same grant
+#   types, one strict redirect URI to the "authentik" source callback, RS256 with the
 #   self-signed key, openid/email/profile scopes), application,
 #   forgejo-users group binding, and not attached to the outpost;
 # - a second apply creates no duplicate and keeps the generated Forgejo and
@@ -144,7 +145,7 @@ def state():
         pp.mode, pp.external_host, pp.authorization_flow.slug, pp.invalidation_flow.slug,
         pa.provider_id == pp.pk,
         PolicyBinding.objects.filter(target=pa, group=pg).count(),
-        ps.client_type, ps.client_id, len(ps.client_secret) >= 40,
+        ps.client_type, ps.client_id, len(ps.client_secret) >= 40, sorted(ps.grant_types),
         [(getattr(u.matching_mode, "value", u.matching_mode), u.url) for u in ps.redirect_uris],
         ps.signing_key.name if ps.signing_key else None,
         ps.authorization_flow.slug, ps.invalidation_flow.slug,
@@ -154,7 +155,7 @@ def state():
         op.mode, op.external_host, op.authorization_flow.slug, op.invalidation_flow.slug,
         oa.provider_id == op.pk,
         PolicyBinding.objects.filter(target=oa, group=og).count(),
-        f.client_type, f.client_id, len(f.client_secret) >= 40,
+        f.client_type, f.client_id, len(f.client_secret) >= 40, sorted(f.grant_types),
         [(getattr(u.matching_mode, "value", u.matching_mode), u.url) for u in f.redirect_uris],
         f.signing_key.name if f.signing_key else None,
         f.authorization_flow.slug, f.invalidation_flow.slug,
@@ -188,7 +189,7 @@ after = state()
 same_secret = before.pop() == after.pop()
 print("SAME" if before == after and same_secret else "CHANGED", before)'
 result="$(ak_py "$check_py")"
-expected="SAME ['configure', ['default-authenticator-totp-setup', 'default-authenticator-webauthn-setup'], ['static', 'totp', 'webauthn'], 'forward_single', 'https://uptime.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://media.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://portainer.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'portainer', True, [('strict', 'https://portainer.example.test/')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 'blank://blank', 1, 'forward_single', 'https://logs.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'forgejo', True, [('strict', 'https://git.example.test/user/oauth2/authentik/callback')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 1, True, 'https://auth.example.test', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]"
+expected="SAME ['configure', ['default-authenticator-totp-setup', 'default-authenticator-webauthn-setup'], ['static', 'totp', 'webauthn'], 'forward_single', 'https://uptime.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://media.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'forward_single', 'https://portainer.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'portainer', True, ['authorization_code', 'refresh_token'], [('strict', 'https://portainer.example.test/')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 'blank://blank', 1, 'forward_single', 'https://logs.example.test', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', True, 1, 'confidential', 'forgejo', True, ['authorization_code', 'refresh_token'], [('strict', 'https://git.example.test/user/oauth2/authentik/callback')], 'authentik Self-signed Certificate', 'default-provider-authorization-implicit-consent', 'default-provider-invalidation-flow', ['email', 'openid', 'profile'], True, 1, True, 'https://auth.example.test', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]"
 [ "$result" = "$expected" ] || { tail -n 30 "$out" >&2; fail "unexpected state after apply:
   got:  $result
   want: $expected"; }

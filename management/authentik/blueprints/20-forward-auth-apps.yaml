@@ -154,6 +154,9 @@ entries:
     attrs:
       client_type: confidential
       client_id: portainer
+      # Empty by default on providers created by a blueprint: every
+      # authorization request would fail ("otherwise malformed").
+      grant_types: [authorization_code, refresh_token]
       redirect_uris:
         - matching_mode: strict
           url: !Format ["https://%s/", !Env BLUEPRINT_PORTAINER_HOST]
@@ -236,6 +239,9 @@ entries:
     attrs:
       client_type: confidential
       client_id: forgejo
+      # Empty by default on providers created by a blueprint: every
+      # authorization request would fail ("otherwise malformed").
+      grant_types: [authorization_code, refresh_token]
       redirect_uris:
         - matching_mode: strict
           url: !Format ["https://%s/user/oauth2/authentik/callback", !Env BLUEPRINT_FORGEJO_HOST]
