@@ -177,6 +177,17 @@ services:
       traefik.http.routers.uptime.entrypoints: "websecure"
       traefik.http.routers.uptime.tls: "true"
       traefik.http.routers.uptime.tls.certresolver: "stepca"
+      # Login through Authentik (provider and access group: see
+      # authentik/blueprints/20-forward-auth-apps.yaml).
+      traefik.http.routers.uptime.middlewares: "authentik@docker"
+
+      # Push monitors call /api/push/<token> from scripts that cannot log in.
+      # They stay outside forward auth; the token in the URL is their secret.
+      traefik.http.routers.uptime_push.rule: "Host(`${UPTIME_HOST_LOCAL}`) && PathPrefix(`/api/push/`)"
+      traefik.http.routers.uptime_push.entrypoints: "websecure"
+      traefik.http.routers.uptime_push.tls: "true"
+      traefik.http.routers.uptime_push.tls.certresolver: "stepca"
+      traefik.http.routers.uptime_push.service: "uptime"
 
   # --- Authentik (SSO / identity provider) -------------------------------
   # Based on the official compose file (https://goauthentik.io/compose.yml).
@@ -287,13 +298,20 @@ services:
     depends_on:
       authentik_postgresql:
         condition: service_healthy
-    environment: *authentik-env
+    environment:
+      <<: *authentik-env
+      # Host names read by the blueprints (!Env). Kept out of the YAML files
+      # so the repository holds no private name.
+      BLUEPRINT_AUTHENTIK_HOST: ${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}
+      BLUEPRINT_UPTIME_HOST: ${UPTIME_HOST_LOCAL:?Set UPTIME_HOST_LOCAL in .env}
     # Unlike the official file, no "user: root" and no docker.sock: they are
     # only used to deploy extra outposts automatically. The embedded outpost
     # (inside authentik_server) is enough for Traefik forward auth.
     volumes:
       - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/data:/data
       - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/certs:/certs
+      # Versioned blueprints, applied by the worker (see the README).
+      - ./authentik/blueprints:/blueprints/custom:ro
       - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/custom-templates:/templates
       - *localtime-volume
     networks:

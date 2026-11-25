@@ -39,7 +39,7 @@ The Compose file follows the [official one](https://goauthentik.io/compose.yml) 
 
 | Variable | Purpose |
 | --- | --- |
-| `AUTHENTIK_HOST_LOCAL` | Internal host name of the Authentik UI, for example `auth.home.lan` |
+| `AUTHENTIK_HOST_LOCAL` | Internal host name of the Authentik UI, for example `auth.example.lan` |
 | `AUTHENTIK_HOST_PUBLIC` | Optional public host name, for example `auth.example.com`. Leave empty to keep Authentik internal |
 | `AUTHENTIK_SECRET_KEY` | Signs sessions and tokens. Never change it after the first start |
 | `AUTHENTIK_PG_PASS` | PostgreSQL password |
@@ -73,16 +73,16 @@ The `authentik` router answers on `AUTHENTIK_HOST_LOCAL` and the `authentik_pub`
 
 **Pick one canonical URL.** An identity provider does not behave like an ordinary web app when it has two names:
 
-- **Sessions.** The login cookie is set per host. A user logged in on `auth.home.lan` is not logged in on `auth.example.com`.
-- **Passkeys (WebAuthn).** A passkey is bound to the domain it was created on. A passkey registered on `auth.home.lan` does not work on `auth.example.com`, and the reverse.
+- **Sessions.** The login cookie is set per host. A user logged in on `auth.example.lan` is not logged in on `auth.example.com`.
+- **Passkeys (WebAuthn).** A passkey is bound to the domain it was created on. A passkey registered on `auth.example.lan` does not work on `auth.example.com`, and the reverse.
 - **OIDC.** The issuer URL of a provider contains the host name the request came on. An application configured with the `.lan` issuer rejects tokens issued through the public name.
 - **Forward auth.** The embedded outpost redirects browsers to a single Authentik URL. If that URL is the `.lan` one, a visitor coming from the internet is sent to a host name they cannot resolve.
 
-The setup that avoids all four problems: use the public name everywhere (OIDC applications, outpost, passkeys), and make it resolve to Traefik on the LAN with a DNS rewrite in AdGuard (split-horizon DNS). LAN traffic then never leaves the network, and `auth.home.lan` stays as a fallback to reach the admin UI if the public DNS or the tunnel is down. Set the URL the outpost uses under *Applications > Outposts > authentik Embedded Outpost > Advanced settings*, key `authentik_host`.
+The setup that avoids all four problems: use the public name everywhere (OIDC applications, outpost, passkeys), and make it resolve to Traefik on the LAN with a DNS rewrite in AdGuard (split-horizon DNS). LAN traffic then never leaves the network, and `auth.example.lan` stays as a fallback to reach the admin UI if the public DNS or the tunnel is down. The URL the outpost uses (`authentik_host`) is set by the forward auth blueprint from `AUTHENTIK_HOST_LOCAL`: to switch to the public name, change the `BLUEPRINT_AUTHENTIK_HOST` line of `authentik_worker` in `docker-compose.yml`, not the admin UI, which the next blueprint apply would overwrite.
 
 **Before publishing**, harden the instance. Once Authentik is public, it is the front door of every service it protects:
 
-- Enforce MFA (WebAuthn or TOTP) in the authentication flow, at least for administrators, and set a strong `akadmin` password, or replace `akadmin` with a named admin account.
+- MFA is enforced for every user by the `10-mfa.yaml` blueprint (see [Blueprints](#blueprints)). Set a strong `akadmin` password, or replace `akadmin` with a named admin account and deactivate `akadmin`.
 - Keep the default reputation policy, which slows down brute force by client IP, and check that the logs show real client IPs. Behind Cloudflare Tunnel, Traefik sees `cloudflared` as the client. Traefik only keeps the `X-Forwarded-For` header sent by `cloudflared` if the source address of `cloudflared` is in `--entrypoints.websecure.forwardedHeaders.trustedIPs`. That flag is not set today: add it with the exact source address of `cloudflared` (host network, so a loopback or host address) after checking it in the Traefik access log. Never trust a wide range: any client in it could fake its IP.
 - Disable enrollment and recovery flows you do not use, so that the public host offers nothing but login.
 
@@ -94,13 +94,13 @@ Three pieces are needed. The first two are already in this stack.
 
 1. The `authentik` middleware, declared in the labels of `authentik_server`. Other stacks use it as `authentik@docker`.
 2. The `authentik_outpost` router. It sends `/outpost.goauthentik.io/` on any host to Authentik, which receives the login callback there. Its priority (1000) keeps it ahead of the service routers. Because it has no `Host()`, it also answers on public host names forwarded by Cloudflare Tunnel, even when `AUTHENTIK_HOST_PUBLIC` is empty: the outpost endpoints are reachable from the internet, though the login itself happens on the Authentik host. To keep Authentik strictly internal, replace the rule with `Host(...) && PathPrefix(...)` listing only the protected hosts.
-3. A provider and an application in Authentik, plus the middleware on the service router. Both are per service, see below.
+3. A provider and an application in Authentik, plus the middleware on the service router. Both are per service, see below. Uptime Kuma is already set up this way.
 
 Per service:
 
-1. In Authentik, under *Applications > Providers*, create a **Proxy Provider** in **Forward auth (single application)** mode, with the external URL of the service (for example `https://uptime.home.lan`).
-2. Under *Applications > Applications*, create an application that uses this provider. Restrict access with a policy or group binding if needed.
-3. Under *Applications > Outposts*, edit the **authentik Embedded Outpost** and add the application to it. Without this step, Authentik answers 404 and the service stays unreachable.
+1. In `authentik/blueprints/20-forward-auth-apps.yaml`, copy the Uptime Kuma entries: a group, a **Proxy Provider** in `forward_single` mode, an application, and a policy binding between them. Take the host name from a new `BLUEPRINT_*` variable on `authentik_worker`, never write it in the file.
+2. Add the provider to the `providers` list of the embedded outpost at the end of the file. Without this step, Authentik answers 404 and the service stays unreachable.
+3. Run `./tests/test_blueprints.sh` (extend its checks for the new service), then `docker compose up -d authentik_worker`.
 4. Add the middleware to the HTTPS router of the service, for example in its `docker-compose.yml`:
 
    ```yaml
@@ -116,16 +116,36 @@ For a service in the file provider (`traefik_dynamic.toml`, for example Proxmox)
   middlewares = ["authentik@docker"]
 ```
 
-The **Forward auth (domain level)** mode protects many hosts with a single provider and shares the session cookie across a domain such as `home.lan`. It saves configuration but gives every protected service the same access rules.
+The **Forward auth (domain level)** mode protects many hosts with a single provider and shares the session cookie across a domain such as `example.lan`. It saves configuration but gives every protected service the same access rules.
 
 ### Behaviour and limits
 
 - **Fail closed.** If `authentik_server` is stopped, the `authentik@docker` middleware disappears and Traefik disables the routers that reference it: the protected services answer 404 instead of being served without authentication. Keep this in mind for Portainer and the Traefik dashboard: protecting them with Authentik makes them unreachable while Authentik is down.
 - **Monitoring.** Uptime Kuma probes a protected service through Traefik and gets the login redirect. Check the service on its internal address, or accept the 302 status as healthy.
+- **Uptime Kuma push monitors.** Uptime Kuma itself is protected, except `/api/push/`: the `uptime_push` router serves that path without the middleware, so scripts and cron jobs can still report heartbeats. Push URLs carry their own token.
 - **APIs and mobile apps.** Clients that cannot follow a browser login (API tokens, mobile apps, WebDAV) break behind forward auth. For those services, use the native OIDC/SAML support of the application with Authentik as provider, or leave the API path outside the protected router.
 - **Trusted headers.** The service must trust the `X-authentik-*` headers only because they come from Traefik. Do not publish a protected service on a host port, or a client could reach it directly and forge those headers.
 - **Backups.** Back up `MANAGEMENT_AUTHENTIK_DATA_DIR` and `AUTHENTIK_SECRET_KEY` together. For the database, prefer a `pg_dump` over a copy of the files of a running server.
 - **Upgrades.** Change `AUTHENTIK_TAG` one minor version at a time and read the [release notes](https://docs.goauthentik.io/releases/) first: migrations are not reversible.
+
+### Blueprints
+
+The Authentik configuration is versioned as [blueprints](https://docs.goauthentik.io/customize/blueprints/) in `authentik/blueprints/`, mounted read-only on the worker at `/blueprints/custom`. The worker applies them at start and every time a file changes.
+
+| File | Effect |
+| --- | --- |
+| `10-mfa.yaml` | The default authentication flow asks for a second factor (TOTP, WebAuthn, or a static recovery code). A user without one must enroll TOTP or WebAuthn at the next login. |
+| `20-forward-auth-apps.yaml` | Forward auth providers and applications (Uptime Kuma), their access groups, and the provider list of the embedded outpost. |
+
+How they behave:
+
+- **No private data.** The files contain no host name, login, or address. Host names come from the `BLUEPRINT_*` environment variables of `authentik_worker`, built from `.env`, and `tests/test_stack.sh` fails if a domain, URL, e-mail, or IP shows up in them.
+- **Applied when the file changes.** Authentik re-applies a blueprint when the hash of its file changes, not when an environment variable does. After changing a host name in `.env`, force an apply under *Customization > Blueprints* (Apply button) or with `docker compose exec authentik_worker ak apply_blueprint custom/20-forward-auth-apps.yaml`.
+- **The file wins.** Each apply resets the fields it declares. Change those fields in the file, not in the admin UI. Fields it does not declare (users, group members, other applications) stay as set in the UI.
+- **Fail closed.** An application is only reachable by members of its group, for example `uptime-kuma-users`. Nobody is a member at first, administrators included: add users under *Directory > Groups*.
+- **Removing an entry from a file does not delete the object.** Delete it in the admin UI as well.
+
+`tests/test_blueprints.sh` applies the blueprints on a throw-away Authentik (PostgreSQL and worker on an internal Docker network, no published port, removed at the end), checks the resulting objects, and applies them a second time to check that nothing is duplicated. It pulls the Authentik and PostgreSQL images if needed and takes one to three minutes.
 
 ## Portainer
 
