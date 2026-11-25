@@ -86,8 +86,11 @@ Setup:
 
 1. Set `IMMICH_HOST_LOCAL` in the `.env` of the `management` stack to the
    value of `TRAEFIK_HOST_LOCAL`, then redeploy it:
-   `docker compose up -d authentik_worker`, then
-   `docker compose exec authentik_worker ak apply_blueprint custom/20-forward-auth-apps.yaml`.
+   `docker compose up -d authentik_worker`, wait about a minute for the
+   worker's startup apply to finish, then
+   `docker compose exec authentik_worker ak apply_blueprint custom/20-forward-auth-apps.yaml`
+   (see "Applied when the file changes" in `management/README.md` if it
+   fails with a deadlock).
    The redirect URIs `app.immich:///oauth-callback`,
    `https://<TRAEFIK_HOST_LOCAL>/auth/login` and
    `https://<TRAEFIK_HOST_LOCAL>/user-settings` are built from it.
