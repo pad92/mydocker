@@ -63,14 +63,15 @@ Log shippers cannot follow a browser login, so a second router, `openobserve_ing
 
 These requests still need the OpenObserve Basic auth credentials. The UI, the search API (`_search`) and the management API stay behind Authentik.
 
+A third router, `openobserve_health`, skips the middleware for `GET` and `HEAD` on the exact path `/healthz`, so that the Uptime Kuma HTTP monitor on `https://<OPENOBSERVE_DOMAIN>/healthz` reaches OpenObserve and expects `200`. That endpoint needs no OpenObserve login and only returns `{"status":"ok"}`.
+
 Limits:
 
 - OpenObserve keeps its own login page behind Authentik: users log in twice (Authentik, then OpenObserve).
 - While `authentik_server` is down, the UI is unreachable (the middleware fails closed). Ingestion keeps working.
-- An Uptime Kuma HTTP monitor on `https://<OPENOBSERVE_DOMAIN>/healthz` now gets a `302` to Authentik. Accept `302` as up, or monitor the container instead.
 - The `openobserve-syslog` Vector container sends to `http://openobserve:5080` on the Docker network and does not go through Traefik, so it is not affected. OTLP over gRPC is not published either.
 
-[`tests/test_stack.sh`](./tests/test_stack.sh) checks these routers without starting anything: forward auth on the UI router, the ingest router limited to `POST` on the host, no middleware on it, its regex tested against allowed and denied paths, and no other router on the host without the middleware.
+[`tests/test_stack.sh`](./tests/test_stack.sh) checks these routers without starting anything: forward auth on the UI router, the ingest router limited to `POST` on the host, no middleware on it, its regex tested against allowed and denied paths, the health router limited to `GET`/`HEAD` `/healthz` without middleware, and no other router on the host without the middleware.
 
 ```bash
 ./tests/test_stack.sh

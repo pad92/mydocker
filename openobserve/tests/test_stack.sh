@@ -7,6 +7,9 @@
 # - its path regex accepts the ingestion paths and rejects the UI, the query
 #   API and look-alike paths (matched like Traefik: unanchored search, so the
 #   ^ and $ anchors are what keeps it narrow);
+# - the health check bypass router matches only GET/HEAD on /healthz of the
+#   OpenObserve host, has no middleware and targets OpenObserve (Uptime Kuma
+#   cannot follow a browser login);
 # - every other router on the host carries the middleware, except the HTTP
 #   to HTTPS redirect.
 # Needs Docker Compose 2.23+, jq and python3. Usage: ./tests/test_stack.sh
@@ -79,13 +82,23 @@ for p in bad:
 sys.exit(1 if bad else 0)
 EOF
 
-# Every router on the host other than the HTTP redirect and the ingest
-# bypass must carry the middleware.
+health='traefik.http.routers.openobserve_health'
+[ "$(label "$health.rule")" = "Host(\`$host\`) && (Method(\`GET\`) || Method(\`HEAD\`)) && Path(\`/healthz\`)" ] \
+  || fail "health router is not limited to GET/HEAD /healthz on the OpenObserve host: $(label "$health.rule")"
+[ -z "$(label "$health.middlewares")" ] \
+  || fail "health router has a middleware: Uptime Kuma would get a 302 to Authentik"
+[ "$(label "$health.service")" = openobserve ] \
+  || fail "health router does not target the OpenObserve service"
+[ "$(label "$health.entrypoints")" = websecure ] \
+  || fail "health router is not on the HTTPS entry point"
+
+# Every router on the host other than the HTTP redirect and the ingest and
+# health check bypasses must carry the middleware.
 routers="$(jq -r "$labels | to_entries[] | select(.key | test(\"^traefik.http.routers.[^.]+.rule$\"))
   | select(.value | contains(\"$host\")) | .key | split(\".\")[3]" <<<"$config")"
 [ -n "$routers" ] || fail "no router found on the OpenObserve host"
 for router in $routers; do
-  case "$router" in openobserve_http|openobserve_ingest) continue ;; esac
+  case "$router" in openobserve_http|openobserve_ingest|openobserve_health) continue ;; esac
   label "traefik.http.routers.$router.middlewares" | grep -q '^authentik@docker' \
     || fail "OpenObserve router $router bypasses forward auth"
 done
