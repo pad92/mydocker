@@ -34,6 +34,8 @@ Copy `.env.example` to `.env`, fill it in and run `chmod 600 .env`.
 | `GRAMPSWEB_VERSION` | `latest` | Image tag of Gramps Web |
 | `GRAMPSWEB_VALKEY_VERSION` | `8-alpine` | Image tag of Valkey |
 | `GRAMPSWEB_DOMAIN` | required | Traefik host and base of `GRAMPSWEB_BASE_URL` |
+| `AUTHENTIK_DOMAIN` | required | Authentik host, base of the OIDC issuer |
+| `GRAMPSWEB_OIDC_CLIENT_SECRET` | required | Client secret of the Authentik provider |
 | `GRAMPSWEB_TREE` | `Gramps Web` | Tree name, created on first start if missing |
 | `GRAMPSWEB_DATA_DIR` | required | Host directory for the app data (see below) |
 | `GRAMPSWEB_MEDIA_DIR` | required | Host directory for photos and documents |
@@ -68,11 +70,59 @@ address, with an SMTP token generated in Settings > IMAP/SMTP > SMTP tokens
 (the account password does not work). Under Portainer, enter these values in
 the stack's environment variables, then redeploy the stack.
 
-Other settings (OIDC, registration, AI chat) are
+Other settings (registration, AI chat) are
 `GRAMPSWEB_*` variables listed in the
 [configuration page](https://www.grampsweb.org/install_setup/configuration/).
 Add them to the `x-grampsweb` block of `docker-compose.yml` so the worker gets
 them too. Most of them can also be set from the web interface.
+
+## Sign-in with Authentik
+
+Gramps Web signs users in with OpenID Connect against the `grampsweb`
+application that the blueprint of the `management` stack creates. The login
+page shows an "Authentik" button next to the local login, which stays on:
+the first-run owner account and any local account keep working, for example
+when Authentik is down. Traefik applies no forward auth to this host, since
+the API and the OIDC callback must reach Gramps Web directly.
+
+The role comes from the Authentik groups in the `groups` claim, at each
+sign-in, the highest one winning:
+
+| Authentik group | Gramps Web role |
+| --- | --- |
+| `grampsweb-owners` | Owner |
+| `grampsweb-editors` | Editor |
+| `grampsweb-members` | Member |
+
+Authentik only lets members of these groups reach the application: a user
+removed from all three can no longer sign in with Authentik, but the Gramps
+Web account stays as it was until an owner disables it. A
+role changed in the Gramps Web interface for an OIDC user is overwritten at
+the next sign-in: change the group in Authentik instead.
+
+The first OIDC sign-in creates a new Gramps Web account. It is not merged
+with a local account of the same name or e-mail address.
+
+Setup:
+
+1. Set `GRAMPSWEB_HOST_LOCAL` in the `.env` of the `management` stack to the
+   value of `GRAMPSWEB_DOMAIN`, then redeploy it. The redirect URI
+   `https://<GRAMPSWEB_DOMAIN>/api/oidc/callback/custom` is built from it.
+2. In Authentik, copy the client secret of the *Gramps Web* provider
+   (Applications > Providers) into `GRAMPSWEB_OIDC_CLIENT_SECRET`, in the
+   Portainer stack variables. The stack does not deploy while it is empty.
+3. Add the users to one of the three groups (Directory > Groups).
+4. Redeploy this stack.
+
+Gramps Web reads its `GRAMPSWEB_*` variables as JSON: write booleans in
+lowercase (`true`), since `True` is read as a non-empty string. Authentik
+uses a certificate of the internal CA: the host bundle
+`/etc/ssl/certs/ca-certificates.crt` is mounted read-only and
+`REQUESTS_CA_BUNDLE` points at it, so the host must trust that CA.
+
+`tests/test_stack.sh` renders the Compose file with test values and checks
+this configuration (OIDC settings, roles, CA bundle, no forward auth, local
+login kept, failure without the secret). It needs Docker Compose and `jq`.
 
 ## First start
 
