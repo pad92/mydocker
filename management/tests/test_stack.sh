@@ -14,7 +14,8 @@
 #   internal one), and the blueprints themselves hold no host name, URL or
 #   address;
 # - Uptime Kuma is behind forward auth, except its /api/push/ path;
-# - Portainer is behind forward auth, with no bypass router;
+# - Portainer is behind forward auth, with no bypass router, and mounts the
+#   step-ca root read-only (its OAuth login calls Authentik over HTTPS);
 # - the OpenObserve and Forgejo host names reach the blueprints (OpenObserve
 #   routers are checked in openobserve/tests/test_stack.sh).
 # Needs Docker Compose 2.23+ and jq. Usage: ./tests/test_stack.sh
@@ -141,5 +142,11 @@ jq -r "$portainer | to_entries[] | select(.key | test(\"^traefik.http.routers.[^
       jq -r "$portainer[\"traefik.http.routers.$router.middlewares\"] // \"\"" <<<"$config" \
         | grep -q '^authentik@docker' || fail "Portainer router $router bypasses forward auth"
     done
+ca_name="$(sed -n 's/^CA_CERT_NAME=//p' "$work_dir/test.env")"
+ca_dir="$(sed -n 's/^MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR=//p' "$work_dir/test.env")"
+[ -n "$ca_name" ] && [ -n "$ca_dir" ] || fail "CA_CERT_NAME or its directory is empty in .env.example"
+jq -e ".services.portainer.volumes[] | select(.source == \"$ca_dir/$ca_name\"
+  and .target == \"/etc/ssl/certs/$ca_name\" and .read_only == true)" <<<"$config" >/dev/null \
+  || fail "Portainer does not mount the step-ca root read-only: OAuth login would fail on TLS"
 
 echo "OK"

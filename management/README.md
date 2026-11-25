@@ -138,7 +138,7 @@ The Authentik configuration is versioned as [blueprints](https://docs.goauthenti
 | File | Effect |
 | --- | --- |
 | `10-mfa.yaml` | The default authentication flow asks for a second factor (TOTP, WebAuthn, or a static recovery code). A user without one must enroll TOTP or WebAuthn at the next login. |
-| `20-forward-auth-apps.yaml` | Forward auth providers and applications, their access groups, and the provider list of the embedded outpost. Uptime Kuma (`uptime-kuma-users`), Portainer (`portainer-users`), the `ng` media apps (`media-users`, one provider for the Radarr, Sonarr, Bazarr, Lidarr, SABnzbd, and Prowlarr paths on `NG_HOST_LOCAL`), and OpenObserve (`openobserve-users`, on `OPENOBSERVE_HOST_LOCAL`). Also the Forgejo OIDC provider and application (`forgejo-users`, redirect URI on `FORGEJO_HOST_LOCAL`), which is not a forward auth provider and stays off the outpost. |
+| `20-forward-auth-apps.yaml` | Forward auth providers and applications, their access groups, and the provider list of the embedded outpost. Uptime Kuma (`uptime-kuma-users`), Portainer (`portainer-users`), the `ng` media apps (`media-users`, one provider for the Radarr, Sonarr, Bazarr, Lidarr, SABnzbd, and Prowlarr paths on `NG_HOST_LOCAL`), and OpenObserve (`openobserve-users`, on `OPENOBSERVE_HOST_LOCAL`). Also two OIDC providers, which are not forward auth providers and stay off the outpost: Forgejo (`forgejo-users`, redirect URI on `FORGEJO_HOST_LOCAL`) and Portainer SSO (hidden application `portainer-sso`, group `portainer-users`, redirect URI on `PORTAINER_HOST_LOCAL`). |
 
 How they behave:
 
@@ -158,7 +158,31 @@ How they behave:
 
 Portainer manages the Docker environment. Set `MANAGEMENT_PORTAINER_DATA_DIR` to its existing data directory and `PORTAINER_HOST_LOCAL` to its host name.
 
-The whole Portainer host is behind Authentik forward auth (group `portainer-users`), then Portainer asks for its own login. There is no bypass router for `/api`: the web UI calls the API with the browser session, so a bypass would expose everything that Authentik protects. Scripts that call the Portainer API with an access token (`X-API-Key`) through Traefik therefore get the login redirect. Call them on the container from the `traefik_gateway` network (`http://portainer:9000`) instead.
+The whole Portainer host is behind Authentik forward auth (group `portainer-users`). Forward auth only decides who reaches Portainer: Portainer still keeps its own users and asks for a login. The blueprint therefore also creates an OIDC provider, `Portainer SSO`, so that the Portainer login goes through Authentik too (see below). There is no bypass router for `/api`: the web UI calls the API with the browser session, so a bypass would expose everything that Authentik protects. Scripts that call the Portainer API with an access token (`X-API-Key`) through Traefik therefore get the login redirect. Call them on the container from the `traefik_gateway` network (`http://portainer:9000`) instead.
+
+### Login with Authentik (OIDC)
+
+The blueprint creates the `Portainer SSO` provider (client ID `portainer`) and the `portainer-sso` application, hidden from the Authentik library because the `Portainer` forward auth application already opens the same host. Both applications are bound to `portainer-users`, so the same people pass both checks.
+
+Portainer exchanges the OAuth code with Authentik server-side, over HTTPS. The Compose file mounts the step-ca root (`CA_CERT_NAME`) in `/etc/ssl/certs` of the container for that call. Recreate the container once after this change (`docker compose up -d portainer`): without the root, the login fails with a TLS error in the Portainer logs.
+
+Then, in Portainer, go to **Settings > Authentication**, pick **OAuth**, then **Custom**:
+
+| Field | Value |
+| --- | --- |
+| Client ID | `portainer` |
+| Client secret | In Authentik, **Applications > Providers > Portainer SSO**, copy the generated secret. |
+| Authorization URL | `https://<Authentik host>/application/o/authorize/` |
+| Access token URL | `https://<Authentik host>/application/o/token/` |
+| Resource URL | `https://<Authentik host>/application/o/userinfo/` |
+| Redirect URL | `https://<PORTAINER_HOST_LOCAL>/`, with the final slash: Authentik matches the URI exactly. |
+| Logout URL | `https://<Authentik host>/application/o/portainer-sso/end-session/` |
+| User identifier | `preferred_username` |
+| Scopes | `email openid profile` |
+
+`<Authentik host>` is the name the blueprints use, `AUTHENTIK_HOST_PUBLIC` when set, else `AUTHENTIK_HOST_LOCAL`.
+
+Turn on **Automatic user provisioning** if new Authentik users should get a Portainer account on first login (with no access until an administrator grants it). An existing Portainer administrator keeps the rights only if the Authentik username is the same as the Portainer username. Test the OAuth login in a private window before turning on **Hide internal authentication prompt**: if Authentik is down or misconfigured, the internal login is the only way back in.
 
 ## Uptime Kuma
 
