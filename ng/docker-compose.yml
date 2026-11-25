@@ -26,6 +26,9 @@ services:
     container_name: radarr
     environment:
       <<: *common-env
+      # Login handled by Authentik forward auth; overrides config.xml.
+      # The API key is still required on every API call.
+      RADARR__AUTH__METHOD: External
     volumes:
       - *localtime-volume
       - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
@@ -76,6 +79,9 @@ services:
     restart: unless-stopped
     environment:
       <<: *common-env
+      # Login handled by Authentik forward auth; overrides config.xml.
+      # The API key is still required on every API call.
+      SONARR__AUTH__METHOD: External
     volumes:
       - *localtime-volume
       - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
@@ -172,6 +178,9 @@ services:
     image: lscr.io/linuxserver/lidarr:latest
     environment:
       <<: *common-env
+      # Login handled by Authentik forward auth; overrides config.xml.
+      # The API key is still required on every API call.
+      LIDARR__AUTH__METHOD: External
     volumes:
       - *localtime-volume
       - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro
@@ -268,6 +277,9 @@ services:
     restart: unless-stopped
     environment:
       <<: *common-env
+      # Login handled by Authentik forward auth; overrides config.xml.
+      # The API key is still required on every API call.
+      PROWLARR__AUTH__METHOD: External
     volumes:
       - *localtime-volume
       - ${LOCAL_CA_CERT_PATH}:/etc/ssl/certs/ca.crt:ro

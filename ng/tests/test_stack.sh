@@ -8,6 +8,9 @@
 # - its path regex accepts the API paths and rejects the UI and look-alike
 #   paths such as /radarr/apix (matched like Traefik: unanchored search, so
 #   the ^ anchor and the (/|$) segment end are what keep it narrow).
+# Apps with their native login off (<APP>__AUTH__METHOD=External) are exactly
+# the expected ones, publish no port, and every router to them other than the
+# API bypass starts with forward auth or the HTTPS redirect.
 # Needs Docker Compose 2.23+, jq and python3. Usage: ./tests/test_stack.sh
 set -euo pipefail
 
@@ -82,5 +85,36 @@ done
 check_app prowlarr \
   "/prowlarr/api /prowlarr/api/v1/indexer /prowlarr/1/api /prowlarr/12/download" \
   "/prowlarr /prowlarr/ /prowlarr/apix /prowlarr/1/apix /prowlarr/1/downloadx /prowlarr/a/api /prowlarr/1/settings /prowlarr/feed"
+
+# Native login switched off (<APP>__AUTH__METHOD=External): the app trusts
+# whoever reaches its UI, so the UI must only be reachable through forward
+# auth. Every service that sets it must publish no port and route every
+# request either to the API bypass (checked above) or through a router whose
+# first middleware is forward auth or the HTTPS redirect.
+external="$(jq -r '.services | to_entries[]
+  | select((.value.environment // {}) | to_entries
+      | any(.[]; (.key | test("__AUTH__METHOD$")) and .value == "External"))
+  | .key' <<<"$config" | sort | xargs)"
+[ "$external" = "lidarr prowlarr radarr sonarr" ] \
+  || fail "apps with native login off: '$external', expected 'lidarr prowlarr radarr sonarr'"
+for app in $external; do
+  [ "$(jq -r ".services.$app.ports // [] | length" <<<"$config")" = 0 ] \
+    || fail "$app has native login off and publishes a port: its UI bypasses forward auth"
+  [ "$(jq -r ".services.$app.network_mode // \"\"" <<<"$config")" != host ] \
+    || fail "$app has native login off and uses the host network"
+  open_routers="$(jq -r --arg app "$app" '.services[$app].labels | to_entries[]
+    | select(.key | test("^traefik\\.http\\.routers\\.[^.]+\\.rule$"))
+    | (.key | split(".")[3]) as $r
+    | select($r != ($app + "_api"))
+    | $r' <<<"$config")"
+  for router in $open_routers; do
+    first="$(jq -r --arg k "traefik.http.routers.$router.middlewares" \
+      ".services.$app.labels[\$k] // \"\" | split(\",\")[0]" <<<"$config")"
+    case "$first" in
+      authentik@docker|redirect-https) ;;
+      *) fail "$app has native login off and router $router serves it without forward auth" ;;
+    esac
+  done
+done
 
 echo "OK"

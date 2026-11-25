@@ -68,8 +68,13 @@ Not protected:
 
 Notes:
 - The apps should reach each other by container name on the `ng` network (for example `http://radarr:7878/radarr`), not through Traefik. Calls through Traefik only work on the API paths above.
-- The native login of each app stays enabled for now. Switching it to *External* (trust the proxy) is a later step, once forward auth is validated.
 - Uptime Kuma monitors that probe the UI through Traefik get a 302 to the login page. Probe the `/<app>/api` path with the API key, or the container on the internal network.
+
+Native app login:
+- **Radarr, Sonarr, Lidarr, Prowlarr** have their own login switched off: `<APP>__AUTH__METHOD: External` in the compose file tells the app that the proxy handles it. The variable takes precedence over `AuthenticationMethod` in `config.xml`, so editing it in the UI has no effect. Remove the variable to get the login back.
+- **Bazarr and SABnzbd** have no such variable. Switch their login off by hand if you want it: Bazarr in *Settings > General > Security* (Authentication: None), SABnzbd in *Config > General > Security* (empty username and password).
+- The API key is still required on every API call, so the `<app>_api` routers and the links between apps keep working.
+- With the login off, the app trusts any client that reaches it directly, and its UI hands out the API key. Only Traefik must reach the UI: never publish a port of these apps, and keep in mind that any container on `traefik_gateway` or `ng` can open them without a login. `tests/test_stack.sh` checks the ports and the routers of the apps that set the variable.
 
 ---
 
