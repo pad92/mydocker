@@ -10,7 +10,9 @@
 # - PostgreSQL stays on the private network, no Authentik port is published,
 #   and the worker has neither root nor the Docker socket;
 # - the worker gets the versioned blueprints read-only and the host names they
-#   read, and the blueprints themselves hold no host name, URL or address;
+#   read (the outpost uses the public Authentik name when set, else the
+#   internal one), and the blueprints themselves hold no host name, URL or
+#   address;
 # - Uptime Kuma is behind forward auth, except its /api/push/ path.
 # Needs Docker Compose 2.23+ and jq. Usage: ./tests/test_stack.sh
 set -euo pipefail
@@ -84,7 +86,11 @@ jq -e "$worker.volumes[] | select(.source == \"$stack_dir/authentik/blueprints\"
   and .target == \"/blueprints/custom\" and .read_only == true)" <<<"$config" >/dev/null \
   || fail "worker does not mount the blueprints read-only on /blueprints/custom"
 [ "$(jq -r "$worker.environment.BLUEPRINT_AUTHENTIK_HOST" <<<"$config")" = auth.home.test ] \
-  || fail "BLUEPRINT_AUTHENTIK_HOST is not AUTHENTIK_HOST_LOCAL"
+  || fail "BLUEPRINT_AUTHENTIK_HOST does not fall back to AUTHENTIK_HOST_LOCAL"
+outpost_host="$(render AUTHENTIK_HOST_PUBLIC=auth.example.test \
+  | jq -r "$worker.environment.BLUEPRINT_AUTHENTIK_HOST")"
+[ "$outpost_host" = auth.example.test ] \
+  || fail "BLUEPRINT_AUTHENTIK_HOST is not AUTHENTIK_HOST_PUBLIC when set: $outpost_host"
 [ "$(jq -r "$worker.environment.BLUEPRINT_UPTIME_HOST" <<<"$config")" = uptime.home.test ] \
   || fail "BLUEPRINT_UPTIME_HOST is not UPTIME_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.AUTHENTIK_SECRET_KEY" <<<"$config")" != null ] \

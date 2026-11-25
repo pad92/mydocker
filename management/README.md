@@ -40,7 +40,7 @@ The Compose file follows the [official one](https://goauthentik.io/compose.yml) 
 | Variable | Purpose |
 | --- | --- |
 | `AUTHENTIK_HOST_LOCAL` | Internal host name of the Authentik UI, for example `auth.example.lan` |
-| `AUTHENTIK_HOST_PUBLIC` | Optional public host name, for example `auth.example.com`. Leave empty to keep Authentik internal |
+| `AUTHENTIK_HOST_PUBLIC` | Optional public host name, for example `auth.example.com`. Leave empty to keep Authentik internal. When set, forward auth logins use it (see [Internal and public exposure](#internal-and-public-exposure)) |
 | `AUTHENTIK_SECRET_KEY` | Signs sessions and tokens. Never change it after the first start |
 | `AUTHENTIK_PG_PASS` | PostgreSQL password |
 | `AUTHENTIK_TAG` | Image version, pinned. Authentik no longer publishes `latest` |
@@ -78,7 +78,9 @@ The `authentik` router answers on `AUTHENTIK_HOST_LOCAL` and the `authentik_pub`
 - **OIDC.** The issuer URL of a provider contains the host name the request came on. An application configured with the `.lan` issuer rejects tokens issued through the public name.
 - **Forward auth.** The embedded outpost redirects browsers to a single Authentik URL. If that URL is the `.lan` one, a visitor coming from the internet is sent to a host name they cannot resolve.
 
-The setup that avoids all four problems: use the public name everywhere (OIDC applications, outpost, passkeys), and make it resolve to Traefik on the LAN with a DNS rewrite in AdGuard (split-horizon DNS). LAN traffic then never leaves the network, and `auth.example.lan` stays as a fallback to reach the admin UI if the public DNS or the tunnel is down. The URL the outpost uses (`authentik_host`) is set by the forward auth blueprint from `AUTHENTIK_HOST_LOCAL`: to switch to the public name, change the `BLUEPRINT_AUTHENTIK_HOST` line of `authentik_worker` in `docker-compose.yml`, not the admin UI, which the next blueprint apply would overwrite.
+The setup that avoids all four problems: use the public name everywhere (OIDC applications, outpost, passkeys), and make it resolve to Traefik on the LAN with a DNS rewrite in AdGuard (split-horizon DNS). LAN traffic then never leaves the network, and `auth.example.lan` stays as a fallback to reach the admin UI if the public DNS or the tunnel is down. The forward auth blueprint follows this rule for the URL the outpost uses (`authentik_host`): it is `AUTHENTIK_HOST_PUBLIC` when set, otherwise `AUTHENTIK_HOST_LOCAL`. Do not change it in the admin UI, because the next blueprint apply overwrites it.
+
+**Setting `AUTHENTIK_HOST_PUBLIC` therefore also moves every forward auth login, LAN included, to the public name.** Before you set it, the public name must work end to end: tunnel ingress rule, certificate, and the AdGuard DNS rewrite. Without the rewrite, LAN logins go out through Cloudflare. If the tunnel is down, nobody can log in to the protected services. After changing the variable, run `docker compose up -d authentik_worker`, then force the blueprint apply (see [Blueprints](#blueprints)).
 
 **Before publishing**, harden the instance. Once Authentik is public, it is the front door of every service it protects:
 

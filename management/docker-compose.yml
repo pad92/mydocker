@@ -301,8 +301,10 @@ services:
     environment:
       <<: *authentik-env
       # Host names read by the blueprints (!Env). Kept out of the YAML files
-      # so the repository holds no private name.
-      BLUEPRINT_AUTHENTIK_HOST: ${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}
+      # so the repository holds no private name. The outpost sends browsers
+      # to the public name when there is one (see the README), otherwise to
+      # the internal name.
+      BLUEPRINT_AUTHENTIK_HOST: ${AUTHENTIK_HOST_PUBLIC:-${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}}
       BLUEPRINT_UPTIME_HOST: ${UPTIME_HOST_LOCAL:?Set UPTIME_HOST_LOCAL in .env}
     # Unlike the official file, no "user: root" and no docker.sock: they are
     # only used to deploy extra outposts automatically. The embedded outpost
