@@ -29,7 +29,7 @@ Define these environment variables which are unique to this service:
 | `DB_PASSWORD` | Secret authentication credentials, token, or key value. | `CHANGEME` |
 | `DB_USERNAME` | Configuration settings value for Db username. | *None (empty)* |
 | `IMMICH_VERSION` | Configuration settings value for Immich version. | `release` |
-| `TRAEFIK_HOST_LOCAL` | Internal domain routing host rule (e.g. local.home.lan). | *None (empty)* |
+| `TRAEFIK_HOST_LOCAL` | Internal domain routing host rule (e.g. local.example.lan). | *None (empty)* |
 | `UPLOAD_LOCATION` | Configuration settings value for Upload location. | *None (empty)* |
 
 ---

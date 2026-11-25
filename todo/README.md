@@ -18,7 +18,7 @@ Define these environment variables which are unique to this service:
 | :--- | :--- | :--- |
 | `DT_ENV` | Configuration settings value for Dt env. | *None (empty)* |
 | `DT_SQLITE_PATH` | Persistent host directory path for volume mount: DT_SQLITE_PATH. | *None (empty)* |
-| `TODO_DOMAIN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `TODO_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `TODO_DONETICK_DATA_DIR` | Persistent host directory path for volume mount: TODO_DONETICK_DATA_DIR. | *None (empty)* |
 
 ---

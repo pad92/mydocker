@@ -6,7 +6,7 @@ This stack runs Traefik, Authentik, Portainer, and Uptime Kuma.
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `CA_CERT_NAME` | CA certificate filename mounted into Traefik and Uptime Kuma | `home-lan-root-ca.crt` |
+| `CA_CERT_NAME` | CA certificate filename mounted into Traefik and Uptime Kuma | `example-root-ca.crt` |
 | `MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR` | Host directory containing the CA certificate | `/usr/local/share/ca-certificates` |
 
 ## Traefik

@@ -35,12 +35,12 @@ These environment variables are shared and used by multiple services in this sta
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
 | `DOCKER_CONFIG_PATH` | Persistent host directory path for volume mount: DOCKER_CONFIG_PATH. | *None (empty)* |
-| `LOCAL_CA_CERT_PATH` | Persistent host directory path for volume mount: LOCAL_CA_CERT_PATH. | `/usr/local/share/ca-certificates/home-lan-root-ca.crt` |
+| `LOCAL_CA_CERT_PATH` | Persistent host directory path for volume mount: LOCAL_CA_CERT_PATH. | `/usr/local/share/ca-certificates/example-root-ca.crt` |
 | `PGID` | Group ID matching host permissions to run the container. | *None (empty)* |
 | `PUID` | User ID matching host permissions to run the container. | *None (empty)* |
 | `SERIES_LOCAL_PATH` | Persistent host directory path for volume mount: SERIES_LOCAL_PATH. | *None (empty)* |
 | `TORRENTS_PATH` | Persistent host directory path for volume mount: TORRENTS_PATH. | *None (empty)* |
-| `TRAEFIK_FQDN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `TRAEFIK_FQDN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `TZ` | Timezone configuration for container operations and logs (e.g. Europe/Paris). | *None (empty)* |
 
 ---
@@ -178,7 +178,7 @@ Define these environment variables which are unique to this service:
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
-| `SEERR_DOMAIN` | Dedicated FQDN routed to Seerr (e.g. `requests.home.lan`). | *None (empty)* |
+| `SEERR_DOMAIN` | Dedicated FQDN routed to Seerr (e.g. `requests.example.lan`). | *None (empty)* |
 | `SEERR_PORT` | Configuration settings value for Seerr port. | `5055` |
 
 ### Notes

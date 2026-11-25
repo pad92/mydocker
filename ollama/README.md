@@ -29,7 +29,7 @@ Define these environment variables which are unique to this service:
 | `MODEL_DOWNLOAD_DIR` | Persistent host directory path for volume mount: MODEL_DOWNLOAD_DIR. | *None (empty)* |
 | `OLLAMA_API_BASE_URL` | Configuration settings value for Ollama api base url. | *None (empty)* |
 | `OLLAMA_API_URL` | Configuration settings value for Ollama api url. | *None (empty)* |
-| `OLLAMA_DOMAIN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `OLLAMA_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR` | Persistent host directory path for volume mount: OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR. | *None (empty)* |
 | `OLLAMA_OPEN_WEBUI_DATA_DIR` | Persistent host directory path for volume mount: OLLAMA_OPEN_WEBUI_DATA_DIR. | *None (empty)* |
 | `WEBUI_SECRET_KEY` | Secret authentication credentials, token, or key value. | `CHANGEME` |

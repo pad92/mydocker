@@ -50,7 +50,7 @@ Define these environment variables which are unique to this service:
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
-| `TAUTULLI_DOMAIN` | Required. Host name Traefik routes to Tautulli (e.g., tautulli.home.lan). | *None (empty)* |
+| `TAUTULLI_DOMAIN` | Required. Host name Traefik routes to Tautulli (e.g., tautulli.example.lan). | *None (empty)* |
 | `PLEX_MEDIA_SERVER_LOGS_DATA_DIR` | Persistent host directory path for volume mount: PLEX_MEDIA_SERVER_LOGS_DATA_DIR. | *None (empty)* |
 | `PLEX_TAUTULLI_DATA_DIR` | Persistent host directory path for volume mount: PLEX_TAUTULLI_DATA_DIR. | *None (empty)* |
 

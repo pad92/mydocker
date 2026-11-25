@@ -45,7 +45,7 @@ Settings that differ from Forgejo's defaults:
   an invalid certificate, with no way to click through: renew the step-ca
   certificate before it expires.
 - Forgejo and the runner mount the host CA bundle, so they trust the step-ca
-  certificates of `*.home.lan`.
+  certificates of `*.example.lan`.
 
 ## First start
 
@@ -145,7 +145,7 @@ Gitea's data in `/rpool/docker/gitea` is never modified.
 ### Procedure
 
 1. Run Forgejo next to Gitea under a temporary DNS name that points at
-   Traefik, with `FORGEJO_DOMAIN=forgejo.home.lan`, `FORGEJO_SSH_PORT=2223`
+   Traefik, with `FORGEJO_DOMAIN=forgejo.example.lan`, `FORGEJO_SSH_PORT=2223`
    and `FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS=true`. Before the first start,
    copy Gitea's SSH host keys, so that clients get no "host key changed"
    warning after the switch:
@@ -167,12 +167,12 @@ Gitea's data in `/rpool/docker/gitea` is never modified.
 4. Check: browse a few repositories, clone over HTTPS and over SSH (port
    2223), run a trusted workflow, and push a test image to the registry.
 5. Switch: stop the `gitea` stack. In `forgejo/.env`, set
-   `FORGEJO_DOMAIN=git.home.lan`, `FORGEJO_SSH_PORT=2222` and
+   `FORGEJO_DOMAIN=git.example.lan`, `FORGEJO_SSH_PORT=2222` and
    `FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS=false`, run `docker compose up -d`,
    and remove the temporary DNS name. Clone URLs do not change. Registry
    users log in again with a Forgejo token. If the SSH host keys were not
    copied, clients remove the old key with
-   `ssh-keygen -R '[git.home.lan]:2222'`.
+   `ssh-keygen -R '[git.example.lan]:2222'`.
 
 To roll back, stop the `forgejo` stack and restart the `gitea` stack.
 Anything pushed to Forgejo in the meantime has to be pushed again to Gitea.
@@ -194,8 +194,8 @@ create:
 
 ```sh
 read -rs GITEA_TOKEN && read -rs FORGEJO_TOKEN && export GITEA_TOKEN FORGEJO_TOKEN
-python3 migrate_repos.py --source https://git.home.lan \
-  --target https://forgejo.home.lan
+python3 migrate_repos.py --source https://git.example.lan \
+  --target https://forgejo.example.lan
 ```
 
 Add `--apply` to run it, and `--only owner/repo` to restrict it to one
@@ -237,7 +237,7 @@ the time of the import.
 ### Not copied
 
 Push container images again, for example with
-`skopeo copy --all docker://git.home.lan/<owner>/<image>:<tag> docker://forgejo.home.lan/<owner>/<image>:<tag>`
+`skopeo copy --all docker://git.example.lan/<owner>/<image>:<tag> docker://forgejo.example.lan/<owner>/<image>:<tag>`
 after logging in to both registries.
 
 Forgejo's migration does not copy the SSH and GPG keys of users, two-factor

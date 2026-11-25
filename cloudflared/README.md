@@ -16,7 +16,7 @@ Define these environment variables which are unique to this service:
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
-| `CA_CERT_PATH` | Persistent host directory path for volume mount: CA_CERT_PATH. | `/usr/local/share/ca-certificates/home-lan-root-ca.crt` |
+| `CA_CERT_PATH` | Persistent host directory path for volume mount: CA_CERT_PATH. | `/usr/local/share/ca-certificates/example-root-ca.crt` |
 | `CLOUDFLARE_TUNNEL_TOKEN` | Cloudflare Tunnel routing token identifier. | `CHANGEME` |
 | `DNS_SERVER_1` | Configuration settings value for Dns server 1. | *None (empty)* |
 | `DNS_SERVER_2` | Configuration settings value for Dns server 2. | *None (empty)* |

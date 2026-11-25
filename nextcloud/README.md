@@ -19,7 +19,7 @@ Define these environment variables which are unique to this service:
 | `DOCKER_MODS` | Configuration settings value for Docker mods. | *None (empty)* |
 | `NEXTCLOUD_ALLOW_INSECURE` | Configuration settings value for Nextcloud allow insecure. | *None (empty)* |
 | `NEXTCLOUD_DATA_DIR` | Persistent host directory path for volume mount: NEXTCLOUD_DATA_DIR. | *None (empty)* |
-| `NEXTCLOUD_DOMAIN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `NEXTCLOUD_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `PGID` | Group ID matching host permissions to run the container. | *None (empty)* |
 | `PUID` | User ID matching host permissions to run the container. | *None (empty)* |
 | `TZ` | Timezone configuration for container operations and logs (e.g. Europe/Paris). | *None (empty)* |

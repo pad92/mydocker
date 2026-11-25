@@ -78,7 +78,7 @@ Define these environment variables which are unique to this service:
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
-| `AUDIOMUSE_AI_DOMAIN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `AUDIOMUSE_AI_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `FRONTEND_PORT` | Configuration settings value for Frontend port. | `8000` |
 | `JELLYFIN_TOKEN` | Secret authentication credentials, token, or key value. | `CHANGEME` |
 | `JELLYFIN_URL` | Configuration settings value for Jellyfin url. | *None (empty)* |

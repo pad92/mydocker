@@ -64,7 +64,7 @@ Define these environment variables which are unique to this service:
 | `DB_USER` | Configuration settings value for Db user. | *None (empty)* |
 | `DOCKER_MODS` | Configuration settings value for Docker mods. | *None (empty)* |
 | `INSTALL_PIP_PACKAGES` | Configuration settings value for Install pip packages. | *None (empty)* |
-| `NETBOX_DOMAIN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `NETBOX_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `PGID` | Group ID matching host permissions to run the container. | *None (empty)* |
 | `PUID` | User ID matching host permissions to run the container. | *None (empty)* |
 | `REDIS_DB_CACHE` | Configuration settings value for Redis db cache. | *None (empty)* |
