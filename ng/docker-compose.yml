@@ -63,7 +63,7 @@ services:
       traefik.http.routers.radarr.middlewares: "authentik@docker"
       traefik.http.routers.radarr.tls.certresolver: "stepca"
       # API calls (apikey) bypass forward auth; longer rule = higher priority.
-      traefik.http.routers.radarr_api.rule: "Host(`${TRAEFIK_FQDN}`) && (PathPrefix(`/radarr/api`) || PathPrefix(`/radarr/feed`))"
+      traefik.http.routers.radarr_api.rule: "Host(`${TRAEFIK_FQDN}`) && PathRegexp(`^/radarr/(api|feed)(/|$$)`)"
       traefik.http.routers.radarr_api.entrypoints: "websecure"
       traefik.http.routers.radarr_api.tls: "true"
       traefik.http.routers.radarr_api.tls.certresolver: "stepca"
@@ -112,7 +112,7 @@ services:
       traefik.http.routers.sonarr.middlewares: "authentik@docker"
       traefik.http.routers.sonarr.tls.certresolver: "stepca"
       # API calls (apikey) bypass forward auth; longer rule = higher priority.
-      traefik.http.routers.sonarr_api.rule: "Host(`${TRAEFIK_FQDN}`) && (PathPrefix(`/sonarr/api`) || PathPrefix(`/sonarr/feed`))"
+      traefik.http.routers.sonarr_api.rule: "Host(`${TRAEFIK_FQDN}`) && PathRegexp(`^/sonarr/(api|feed)(/|$$)`)"
       traefik.http.routers.sonarr_api.entrypoints: "websecure"
       traefik.http.routers.sonarr_api.tls: "true"
       traefik.http.routers.sonarr_api.tls.certresolver: "stepca"
@@ -160,7 +160,7 @@ services:
       traefik.http.routers.bazarr.middlewares: "authentik@docker"
       traefik.http.routers.bazarr.tls.certresolver: "stepca"
       # API calls (apikey) bypass forward auth; longer rule = higher priority.
-      traefik.http.routers.bazarr_api.rule: "Host(`${TRAEFIK_FQDN}`) && (PathPrefix(`/bazarr/api`))"
+      traefik.http.routers.bazarr_api.rule: "Host(`${TRAEFIK_FQDN}`) && PathRegexp(`^/bazarr/api(/|$$)`)"
       traefik.http.routers.bazarr_api.entrypoints: "websecure"
       traefik.http.routers.bazarr_api.tls: "true"
       traefik.http.routers.bazarr_api.tls.certresolver: "stepca"
@@ -206,7 +206,7 @@ services:
       traefik.http.routers.lidarr.middlewares: "authentik@docker"
       traefik.http.routers.lidarr.tls.certresolver: "stepca"
       # API calls (apikey) bypass forward auth; longer rule = higher priority.
-      traefik.http.routers.lidarr_api.rule: "Host(`${TRAEFIK_FQDN}`) && (PathPrefix(`/lidarr/api`) || PathPrefix(`/lidarr/feed`))"
+      traefik.http.routers.lidarr_api.rule: "Host(`${TRAEFIK_FQDN}`) && PathRegexp(`^/lidarr/(api|feed)(/|$$)`)"
       traefik.http.routers.lidarr_api.entrypoints: "websecure"
       traefik.http.routers.lidarr_api.tls: "true"
       traefik.http.routers.lidarr_api.tls.certresolver: "stepca"
@@ -255,7 +255,7 @@ services:
       traefik.http.routers.sabnzbd.middlewares: "authentik@docker"
       traefik.http.routers.sabnzbd.tls.certresolver: "stepca"
       # API calls (apikey) bypass forward auth; longer rule = higher priority.
-      traefik.http.routers.sabnzbd_api.rule: "Host(`${TRAEFIK_FQDN}`) && (PathPrefix(`/sabnzbd/api`))"
+      traefik.http.routers.sabnzbd_api.rule: "Host(`${TRAEFIK_FQDN}`) && PathRegexp(`^/sabnzbd/api(/|$$)`)"
       traefik.http.routers.sabnzbd_api.entrypoints: "websecure"
       traefik.http.routers.sabnzbd_api.tls: "true"
       traefik.http.routers.sabnzbd_api.tls.certresolver: "stepca"
@@ -299,7 +299,7 @@ services:
       traefik.http.routers.prowlarr.middlewares: "authentik@docker"
       traefik.http.routers.prowlarr.tls.certresolver: "stepca"
       # API calls (apikey) bypass forward auth; longer rule = higher priority.
-      traefik.http.routers.prowlarr_api.rule: "Host(`${TRAEFIK_FQDN}`) && (PathPrefix(`/prowlarr/api`) || PathRegexp(`^/prowlarr/[0-9]+/(api|download)`))"
+      traefik.http.routers.prowlarr_api.rule: "Host(`${TRAEFIK_FQDN}`) && PathRegexp(`^/prowlarr/([0-9]+/)?(api|download)(/|$$)`)"
       traefik.http.routers.prowlarr_api.entrypoints: "websecure"
       traefik.http.routers.prowlarr_api.tls: "true"
       traefik.http.routers.prowlarr_api.tls.certresolver: "stepca"

@@ -76,7 +76,9 @@ services:
       - ${MANAGEMENT_PORTAINER_DATA_DIR}:/data
       # step-ca root: the OAuth login exchanges the code with Authentik over
       # HTTPS from the container (Go reads every file in /etc/ssl/certs).
-      - ${MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR}/${CA_CERT_NAME}:/etc/ssl/certs/${CA_CERT_NAME}:ro
+      # Both values are required: an empty name would mount the whole folder
+      # over /etc/ssl/certs and hide the system CAs.
+      - ${MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR:?Set MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR}/${CA_CERT_NAME:?Set CA_CERT_NAME}:/etc/ssl/certs/${CA_CERT_NAME:?Set CA_CERT_NAME}:ro
     networks:
       - traefik_gateway
     labels:

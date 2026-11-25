@@ -58,7 +58,7 @@ Requirements:
 Not protected:
 - **h5ai** (root of `TRAEFIK_FQDN`) stays public.
 - **Seerr** keeps its own login (Plex accounts) on `SEERR_DOMAIN`.
-- **API paths.** A second router per app (`<app>_api`) serves the paths below without the middleware. Each call still needs the app API key. Its rule is longer, so Traefik gives it a higher priority than the protected router.
+- **API paths.** A second router per app (`<app>_api`) serves the paths below without the middleware. Each call still needs the app API key. Its rule is longer, so Traefik gives it a higher priority than the protected router. The rule matches whole path segments only: `/radarr/api/v3/movie` is served without forward auth, `/radarr/apix` stays protected.
 
 | App | Paths without forward auth |
 | :--- | :--- |
