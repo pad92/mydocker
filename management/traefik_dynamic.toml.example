@@ -14,10 +14,13 @@
       [[http.services.proxmox-svc.loadBalancer.servers]]
         url = '{{ env "PROXMOX_UPSTREAM_URL" }}'
   
+  # pveproxy sert un certificat émis par la CA maison (rôle Ansible
+  # proxmox_tls) : on le vérifie. L'URL amont est une IP, donc le nom attendu
+  # dans le certificat est fixé ici. Le chemin de la CA correspond au montage
+  # ${CA_CERT_NAME} du docker-compose.yml.
   [http.serversTransports.pveTransport]
-    # Indispensable car Proxmox utilise un certificat auto-signé par défaut
-    insecureSkipVerify = true
-
+    serverName = "chataigne.home.lan"
+    rootCAs = ["/etc/ssl/certs/home-lan-root-ca.crt"]
 
   [http.middlewares.compression.compress]
     excludedContentTypes = ["text/event-stream"]
@@ -34,9 +37,6 @@
     referrerPolicy = "same-origin"
     [http.middlewares.security.headers.customResponseHeaders]
       X-Robots-Tag = "noindex, nofollow"
-
-  [http.middlewares.authdl.basicAuth]
-    users = ["YOUR_USERNAME:YOUR_APR1_MD5_PASSWORD_HASH"]
 
 # --- Configuration TLS (Certificats) ---
 [tls]
