@@ -8,11 +8,11 @@ services:
     image: gitlab/gitlab-ce:latest
     container_name: gitlab
     restart: unless-stopped
-    hostname: 'git.home.lan'
+    hostname: '${GITLAB_HOSTNAME:?Set GITLAB_HOSTNAME}'
     environment:
       GITLAB_OMNIBUS_CONFIG: |
         # Add any other gitlab.rb configuration here, each on its own line
-        external_url 'http://git.home.lan'
+        external_url 'http://${GITLAB_HOSTNAME:?Set GITLAB_HOSTNAME}'
     ports:
       - '${GITLAB_IP_2}:80:80'
       - '${GITLAB_IP_2}:443:443'

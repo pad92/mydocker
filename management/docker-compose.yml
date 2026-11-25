@@ -74,6 +74,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${MANAGEMENT_PORTAINER_DATA_DIR}:/data
+      # step-ca root: the OAuth login exchanges the code with Authentik over
+      # HTTPS from the container (Go reads every file in /etc/ssl/certs).
+      # Both values are required: an empty name would mount the whole folder
+      # over /etc/ssl/certs and hide the system CAs.
+      - ${MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR:?Set MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR}/${CA_CERT_NAME:?Set CA_CERT_NAME}:/etc/ssl/certs/${CA_CERT_NAME:?Set CA_CERT_NAME}:ro
     networks:
       - traefik_gateway
     labels:
@@ -93,7 +98,10 @@ services:
       traefik.http.routers.portainer.tls.certresolver: "stepca"
 
       traefik.http.middlewares.portainer-stripprefix.stripprefix.prefixes: "/portainer"
-      traefik.http.routers.portainer.middlewares: "portainer-stripprefix@docker"
+      # Behind Authentik (group portainer-users), API included: no bypass, the
+      # UI uses /api with the session. Unreachable while Authentik is down:
+      # fall back to docker compose over SSH.
+      traefik.http.routers.portainer.middlewares: "authentik@docker,portainer-stripprefix@docker"
 
 #  mirror:
 #    image: nginx:stable-alpine-slim
@@ -177,6 +185,17 @@ services:
       traefik.http.routers.uptime.entrypoints: "websecure"
       traefik.http.routers.uptime.tls: "true"
       traefik.http.routers.uptime.tls.certresolver: "stepca"
+      # Login through Authentik (provider and access group: see
+      # authentik/blueprints/20-forward-auth-apps.yaml).
+      traefik.http.routers.uptime.middlewares: "authentik@docker"
+
+      # Push monitors call /api/push/<token> from scripts that cannot log in.
+      # They stay outside forward auth; the token in the URL is their secret.
+      traefik.http.routers.uptime_push.rule: "Host(`${UPTIME_HOST_LOCAL}`) && PathPrefix(`/api/push/`)"
+      traefik.http.routers.uptime_push.entrypoints: "websecure"
+      traefik.http.routers.uptime_push.tls: "true"
+      traefik.http.routers.uptime_push.tls.certresolver: "stepca"
+      traefik.http.routers.uptime_push.service: "uptime"
 
   # --- Authentik (SSO / identity provider) -------------------------------
   # Based on the official compose file (https://goauthentik.io/compose.yml).
@@ -225,6 +244,9 @@ services:
     volumes:
       - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/data:/data
       - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/custom-templates:/templates
+      # Branding files (logo, background, app icons) of the blueprints, served
+      # by the server as "homelab/..." (authentik/blueprints/30-branding.yaml).
+      - ./authentik/media:/data/media/public/homelab:ro
       - *localtime-volume
     networks:
       - authentik
@@ -287,13 +309,37 @@ services:
     depends_on:
       authentik_postgresql:
         condition: service_healthy
-    environment: *authentik-env
+    environment:
+      <<: *authentik-env
+      # Host names read by the blueprints (!Env). Kept out of the YAML files
+      # so the repository holds no private name. The outpost sends browsers
+      # to the public name when there is one (see the README), otherwise to
+      # the internal name.
+      BLUEPRINT_AUTHENTIK_HOST: ${AUTHENTIK_HOST_PUBLIC:-${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}}
+      BLUEPRINT_UPTIME_HOST: ${UPTIME_HOST_LOCAL:?Set UPTIME_HOST_LOCAL in .env}
+      # Must equal TRAEFIK_FQDN of the ng stack (host of the *arr paths).
+      BLUEPRINT_NG_HOST: ${NG_HOST_LOCAL:?Set NG_HOST_LOCAL in .env}
+      BLUEPRINT_PORTAINER_HOST: ${PORTAINER_HOST_LOCAL:?Set PORTAINER_HOST_LOCAL in .env}
+      # Must equal OPENOBSERVE_DOMAIN of the openobserve stack.
+      BLUEPRINT_OPENOBSERVE_HOST: ${OPENOBSERVE_HOST_LOCAL:?Set OPENOBSERVE_HOST_LOCAL in .env}
+      # Must equal FORGEJO_DOMAIN of the forgejo stack (OIDC redirect URI).
+      BLUEPRINT_FORGEJO_HOST: ${FORGEJO_HOST_LOCAL:?Set FORGEJO_HOST_LOCAL in .env}
+      # Must equal GRAMPSWEB_DOMAIN of the grampsweb stack (OIDC redirect URI).
+      BLUEPRINT_GRAMPSWEB_HOST: ${GRAMPSWEB_HOST_LOCAL:?Set GRAMPSWEB_HOST_LOCAL in .env}
+      # Must equal TRAEFIK_HOST_LOCAL of the immich stack (OIDC redirect URIs).
+      BLUEPRINT_IMMICH_HOST: ${IMMICH_HOST_LOCAL:?Set IMMICH_HOST_LOCAL in .env}
+      # Library bookmarks of the network devices (host name or IP address).
+      BLUEPRINT_UNIFI_HOST: ${UNIFI_HOST_LOCAL:?Set UNIFI_HOST_LOCAL in .env}
+      BLUEPRINT_NAS_HOST: ${NAS_HOST_LOCAL:?Set NAS_HOST_LOCAL in .env}
+      BLUEPRINT_SWITCH_HOST: ${SWITCH_HOST_LOCAL:?Set SWITCH_HOST_LOCAL in .env}
     # Unlike the official file, no "user: root" and no docker.sock: they are
     # only used to deploy extra outposts automatically. The embedded outpost
     # (inside authentik_server) is enough for Traefik forward auth.
     volumes:
       - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/data:/data
       - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/certs:/certs
+      # Versioned blueprints, applied by the worker (see the README).
+      - ./authentik/blueprints:/blueprints/custom:ro
       - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/custom-templates:/templates
       - *localtime-volume
     networks:

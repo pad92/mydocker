@@ -16,7 +16,7 @@ Define these environment variables which are unique to this service:
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
-| `TRAEFIK_HOST_LOCAL` | Internal domain routing host rule (e.g. local.home.lan). | *None (empty)* |
+| `TRAEFIK_HOST_LOCAL` | Internal domain routing host rule (e.g. local.example.lan). | *None (empty)* |
 
 ---
 

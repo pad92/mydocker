@@ -22,7 +22,7 @@ Define these environment variables which are unique to this service:
 | `NETDATA_ETC_PASSWD_DATA_DIR` | Persistent host directory path for volume mount: NETDATA_ETC_PASSWD_DATA_DIR. | *None (empty)* |
 | `NETDATA_RUN_DBUS_DATA_DIR` | Persistent host directory path for volume mount: NETDATA_RUN_DBUS_DATA_DIR. | *None (empty)* |
 | `NETDATA_VAR_LOG_DATA_DIR` | Persistent host directory path for volume mount: NETDATA_VAR_LOG_DATA_DIR. | *None (empty)* |
-| `TRAEFIK_FQDN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `TRAEFIK_FQDN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 
 ---
 

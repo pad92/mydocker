@@ -35,13 +35,46 @@ These environment variables are shared and used by multiple services in this sta
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
 | `DOCKER_CONFIG_PATH` | Persistent host directory path for volume mount: DOCKER_CONFIG_PATH. | *None (empty)* |
-| `LOCAL_CA_CERT_PATH` | Persistent host directory path for volume mount: LOCAL_CA_CERT_PATH. | `/usr/local/share/ca-certificates/home-lan-root-ca.crt` |
+| `LOCAL_CA_CERT_PATH` | Persistent host directory path for volume mount: LOCAL_CA_CERT_PATH. | `/usr/local/share/ca-certificates/example-root-ca.crt` |
 | `PGID` | Group ID matching host permissions to run the container. | *None (empty)* |
 | `PUID` | User ID matching host permissions to run the container. | *None (empty)* |
 | `SERIES_LOCAL_PATH` | Persistent host directory path for volume mount: SERIES_LOCAL_PATH. | *None (empty)* |
 | `TORRENTS_PATH` | Persistent host directory path for volume mount: TORRENTS_PATH. | *None (empty)* |
-| `TRAEFIK_FQDN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `TRAEFIK_FQDN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `TZ` | Timezone configuration for container operations and logs (e.g. Europe/Paris). | *None (empty)* |
+
+---
+
+## Access control (Authentik forward auth)
+
+Radarr, Sonarr, Bazarr, Lidarr, SABnzbd, and Prowlarr sit behind the `authentik@docker` middleware of the `management` stack. A browser that opens one of them is sent to the Authentik login first; only members of the `media-users` group get through. Add users to that group in Authentik (*Directory > Groups*).
+
+Each app also has its own application in Authentik (slugs `radarr`, `sonarr`, `bazarr`, `lidarr`, `sabnzbd`, `prowlarr`, library group *NG media*). These are bookmarks: they put a tile in the user portal and nothing else. Access is decided by the hidden *NG media* application, the same for all six apps. A forward-auth provider is tied to a host, and the apps share one, so per-app rights would need one subdomain per app. Do not bind another group to a bookmark expecting it to grant or restrict access: it only changes who sees the tile.
+
+Requirements:
+- The `management` stack runs Authentik, and `NG_HOST_LOCAL` in `management/.env` has the same value as `TRAEFIK_FQDN` here. The provider is created by the blueprint `management/authentik/blueprints/20-forward-auth-apps.yaml`. If the two values differ, Authentik does not recognise the host and refuses the request.
+- If Authentik is down, Traefik disables the protected routers: these apps answer 404 until it is back.
+
+Not protected:
+- **h5ai** (root of `TRAEFIK_FQDN`) stays public.
+- **Seerr** keeps its own login (Plex accounts) on `SEERR_DOMAIN`.
+- **API paths.** A second router per app (`<app>_api`) serves the paths below without the middleware. Each call still needs the app API key. Its rule is longer, so Traefik gives it a higher priority than the protected router. The rule matches whole path segments only: `/radarr/api/v3/movie` is served without forward auth, `/radarr/apix` stays protected.
+
+| App | Paths without forward auth |
+| :--- | :--- |
+| Radarr, Sonarr, Lidarr | `/<app>/api`, `/<app>/feed` (iCal feeds) |
+| Bazarr, SABnzbd | `/<app>/api` |
+| Prowlarr | `/prowlarr/api`, `/prowlarr/<id>/api` and `/prowlarr/<id>/download` (Torznab/Newznab endpoints) |
+
+Notes:
+- The apps should reach each other by container name on the `ng` network (for example `http://radarr:7878/radarr`), not through Traefik. Calls through Traefik only work on the API paths above.
+- Uptime Kuma monitors that probe the UI through Traefik get a 302 to the login page. Probe the `/<app>/api` path with the API key, or the container on the internal network.
+
+Native app login:
+- **Radarr, Sonarr, Lidarr, Prowlarr** have their own login switched off: `<APP>__AUTH__METHOD: External` in the compose file tells the app that the proxy handles it. The variable takes precedence over `AuthenticationMethod` in `config.xml`, so editing it in the UI has no effect. Remove the variable to get the login back.
+- **Bazarr and SABnzbd** have no such variable. Switch their login off by hand if you want it: Bazarr in *Settings > General > Security* (Authentication: None), SABnzbd in *Config > General > Security* (empty username and password).
+- The API key is still required on every API call, so the `<app>_api` routers and the links between apps keep working.
+- With the login off, the app trusts any client that reaches it directly, and its UI hands out the API key. Only Traefik must reach the UI: never publish a port of these apps, and keep in mind that any container on `traefik_gateway` or `ng` can open them without a login. `tests/test_stack.sh` checks the ports and the routers of the apps that set the variable.
 
 ---
 
@@ -178,7 +211,7 @@ Define these environment variables which are unique to this service:
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
-| `SEERR_DOMAIN` | Dedicated FQDN routed to Seerr (e.g. `requests.home.lan`). | *None (empty)* |
+| `SEERR_DOMAIN` | Dedicated FQDN routed to Seerr (e.g. `requests.example.lan`). | *None (empty)* |
 | `SEERR_PORT` | Configuration settings value for Seerr port. | `5055` |
 
 ### Notes

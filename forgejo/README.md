@@ -45,7 +45,7 @@ Settings that differ from Forgejo's defaults:
   an invalid certificate, with no way to click through: renew the step-ca
   certificate before it expires.
 - Forgejo and the runner mount the host CA bundle, so they trust the step-ca
-  certificates of `*.home.lan`.
+  certificates of `*.example.lan`.
 
 ## First start
 
@@ -64,6 +64,51 @@ docker compose up -d forgejo db
 docker exec -u git forgejo forgejo admin user create --admin \
   --username <name> --email <email> --random-password
 ```
+
+## Login with Authentik (OIDC)
+
+Forgejo is not behind the Traefik forward-auth middleware: Git over HTTPS,
+the API, `fj` and the runner cannot follow a browser login. Forgejo instead
+uses Authentik as an OpenID Connect login source, next to its local accounts.
+
+The management stack creates the Authentik side with the
+`20-forward-auth-apps.yaml` blueprint: a confidential OAuth2 provider with
+client ID `forgejo`, the application `forgejo` and the group `forgejo-users`.
+Its only redirect URI is
+`https://<FORGEJO_DOMAIN>/user/oauth2/authentik/callback`, built from
+`FORGEJO_HOST_LOCAL` in `management/.env`, which must equal `FORGEJO_DOMAIN`.
+The source must therefore be named `authentik` in Forgejo.
+
+1. In Authentik, *Applications > Providers > Forgejo*, copy the client
+   secret. Authentik generates it once and keeps it across blueprint applies.
+2. Add the source. `read -rs` keeps the secret out of the shell history.
+   `<auth host>` is the Authentik host browsers use (`AUTHENTIK_HOST_PUBLIC`
+   if set, else `AUTHENTIK_HOST_LOCAL`); the Forgejo container must resolve
+   it and trust its certificate (the host CA bundle is mounted):
+
+   ```sh
+   read -rs secret
+   docker exec -u git forgejo forgejo admin auth add-oauth \
+     --name authentik --provider openidConnect \
+     --key forgejo --secret "$secret" \
+     --auto-discover-url https://<auth host>/application/o/forgejo/.well-known/openid-configuration
+   unset secret
+   ```
+
+3. Add the users to `forgejo-users` in Authentik. Authentik refuses the
+   login of anyone else.
+4. Link the existing accounts: with `DISABLE_REGISTRATION=true`, a first
+   *Sign in with authentik* leads to a page where the user logs in with the
+   local Forgejo password once; the Authentik identity is then linked to that
+   account. No account is created through Authentik.
+
+Limits:
+
+- The `forgejo-users` binding only filters logins through Authentik. Local
+  passwords, SSH keys and access tokens keep working as before.
+- `docker exec -u git forgejo forgejo admin auth list` shows the source;
+  `update-oauth --id <id> --secret ...` changes the secret after a rotation
+  in Authentik.
 
 ## Actions runner
 
@@ -145,7 +190,7 @@ Gitea's data in `/rpool/docker/gitea` is never modified.
 ### Procedure
 
 1. Run Forgejo next to Gitea under a temporary DNS name that points at
-   Traefik, with `FORGEJO_DOMAIN=forgejo.home.lan`, `FORGEJO_SSH_PORT=2223`
+   Traefik, with `FORGEJO_DOMAIN=forgejo.example.lan`, `FORGEJO_SSH_PORT=2223`
    and `FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS=true`. Before the first start,
    copy Gitea's SSH host keys, so that clients get no "host key changed"
    warning after the switch:
@@ -167,12 +212,12 @@ Gitea's data in `/rpool/docker/gitea` is never modified.
 4. Check: browse a few repositories, clone over HTTPS and over SSH (port
    2223), run a trusted workflow, and push a test image to the registry.
 5. Switch: stop the `gitea` stack. In `forgejo/.env`, set
-   `FORGEJO_DOMAIN=git.home.lan`, `FORGEJO_SSH_PORT=2222` and
+   `FORGEJO_DOMAIN=git.example.lan`, `FORGEJO_SSH_PORT=2222` and
    `FORGEJO_MIGRATIONS_ALLOW_LOCALNETWORKS=false`, run `docker compose up -d`,
    and remove the temporary DNS name. Clone URLs do not change. Registry
    users log in again with a Forgejo token. If the SSH host keys were not
    copied, clients remove the old key with
-   `ssh-keygen -R '[git.home.lan]:2222'`.
+   `ssh-keygen -R '[git.example.lan]:2222'`.
 
 To roll back, stop the `forgejo` stack and restart the `gitea` stack.
 Anything pushed to Forgejo in the meantime has to be pushed again to Gitea.
@@ -194,8 +239,8 @@ create:
 
 ```sh
 read -rs GITEA_TOKEN && read -rs FORGEJO_TOKEN && export GITEA_TOKEN FORGEJO_TOKEN
-python3 migrate_repos.py --source https://git.home.lan \
-  --target https://forgejo.home.lan
+python3 migrate_repos.py --source https://git.example.lan \
+  --target https://forgejo.example.lan
 ```
 
 Add `--apply` to run it, and `--only owner/repo` to restrict it to one
@@ -237,7 +282,7 @@ the time of the import.
 ### Not copied
 
 Push container images again, for example with
-`skopeo copy --all docker://git.home.lan/<owner>/<image>:<tag> docker://forgejo.home.lan/<owner>/<image>:<tag>`
+`skopeo copy --all docker://git.example.lan/<owner>/<image>:<tag> docker://forgejo.example.lan/<owner>/<image>:<tag>`
 after logging in to both registries.
 
 Forgejo's migration does not copy the SSH and GPG keys of users, two-factor

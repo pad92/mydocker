@@ -350,7 +350,7 @@ def list_packages(gitea: Api, owners: Sequence[str]) -> list[str]:
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument(
-        "--source", required=True, help="Gitea URL, e.g. https://git.home.lan"
+        "--source", required=True, help="Gitea URL, e.g. https://git.example.lan"
     )
     parser.add_argument("--target", required=True, help="Forgejo URL")
     parser.add_argument(

@@ -18,7 +18,7 @@ The web server listens on port `80` and is published through Traefik only, over 
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
-| `LIBRESPEED_DOMAIN` | Hostname routed by Traefik. Required. | `speed.home.lan` |
+| `LIBRESPEED_DOMAIN` | Hostname routed by Traefik. Required. | `speed.example.lan` |
 | `LIBRESPEED_DATA_DIR` | Host directory mounted on `/config` (nginx and PHP config, web files, SQLite results). Required. | `/srv/librespeed/config` |
 | `LIBRESPEED_STATS_PASSWORD` | Password of `/results/stats.php`, passed to the image as `PASSWORD`. Required: with an empty value the image accepts an empty password and the results, client IPs included, are open to anyone. Letters and digits only, because the image writes it into a `sed` command without escaping. Generate one with `openssl rand -hex 24`. | `CHANGEME` |
 | `CUSTOM_RESULTS` | `true` moves the results page to `/config/www/results/index.php` so it can be edited. | `false` |

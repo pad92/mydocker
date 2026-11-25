@@ -22,7 +22,7 @@ Define these environment variables which are unique to this service:
 | `DATABASE_PASSWORD` | Secret authentication credentials, token, or key value. | `CHANGEME` |
 | `DATABASE_PORT` | Configuration settings value for Database port. | *None (empty)* |
 | `DATABASE_USER` | Configuration settings value for Database user. | *None (empty)* |
-| `MANYFOLD_DOMAIN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `MANYFOLD_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `MANYFOLD_MODELS_DATA_DIR` | Persistent host directory path for volume mount: MANYFOLD_MODELS_DATA_DIR. | *None (empty)* |
 | `PGID` | Group ID matching host permissions to run the container. | *None (empty)* |
 | `PUID` | User ID matching host permissions to run the container. | *None (empty)* |

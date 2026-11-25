@@ -41,7 +41,7 @@ Define these environment variables which are unique to this service:
 | `PHOTOPRISM_DISABLE_TLS` | Configuration settings value for Photoprism disable tls. | *None (empty)* |
 | `PHOTOPRISM_DISABLE_VECTORS` | Configuration settings value for Photoprism disable vectors. | *None (empty)* |
 | `PHOTOPRISM_DISABLE_WEBDAV` | Configuration settings value for Photoprism disable webdav. | *None (empty)* |
-| `PHOTOPRISM_DOMAIN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `PHOTOPRISM_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `PHOTOPRISM_EXPERIMENTAL` | Configuration settings value for Photoprism experimental. | *None (empty)* |
 | `PHOTOPRISM_HTTP_COMPRESSION` | Configuration settings value for Photoprism http compression. | *None (empty)* |
 | `PHOTOPRISM_LOG_LEVEL` | Configuration settings value for Photoprism log level. | *None (empty)* |

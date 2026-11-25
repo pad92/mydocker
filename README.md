@@ -182,7 +182,7 @@ For each stack to migrate, the script will:
 ./migrate_to_git.py \
   --url "https://portainer.local:9443" \
   --token "ptr_xxx" \
-  --repo-url "https://gitea.local/pascal/mydocker.git" \
+  --repo-url "https://gitea.local/example-user/mydocker.git" \
   --only plex immich grafana \
   --insecure
 ```
@@ -193,7 +193,7 @@ For each stack to migrate, the script will:
 ./migrate_to_git.py \
   --url "https://portainer.local:9443" \
   --token "ptr_xxx" \
-  --repo-url "https://gitea.local/pascal/mydocker.git" \
+  --repo-url "https://gitea.local/example-user/mydocker.git" \
   --exclude management cloudflared \
   --insecure
 ```
@@ -297,14 +297,14 @@ Use `migrate_to_git.py` to migrate all eligible stacks in one command:
 ./migrate_to_git.py \
   --url "https://portainer.local:9443" \
   --token "ptr_xxx" \
-  --repo-url "https://gitea.home.lan/pascal/stacks.git" \
+  --repo-url "https://git.example.lan/example-user/stacks.git" \
   --insecure --dry-run
 
 # Then migrate
 ./migrate_to_git.py \
   --url "https://portainer.local:9443" \
   --token "ptr_xxx" \
-  --repo-url "https://gitea.home.lan/pascal/stacks.git" \
+  --repo-url "https://git.example.lan/example-user/stacks.git" \
   --insecure
 ```
 
@@ -326,7 +326,7 @@ To convert a single stack from "Web Editor" mode to "Git Repository" mode manual
    - Configure the following fields:
      - **Name**: Enter the **exact same name** as the old stack (e.g., `plex`).
      - **Build method**: Select **Repository**.
-     - **Repository URL**: Enter the HTTP/SSH URL of your Git repository (e.g., `https://gitea.home.lan/pascal/stacks.git`).
+     - **Repository URL**: Enter the HTTP/SSH URL of your Git repository (e.g., `https://git.example.lan/example-user/stacks.git`).
      - **Repository reference**: Enter your branch (e.g., `refs/heads/main`).
      - **Compose path**: Specify the exact path to the compose file (e.g., `plex/docker-compose.yml`).
    - In the **Environment variables** section:

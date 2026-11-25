@@ -18,7 +18,7 @@ Define these environment variables which are unique to this service:
 | :--- | :--- | :--- |
 | `NODE_TLS_REJECT_UNAUTHORIZED` | Boolean (0 or 1) to ignore self-signed certificate warnings. | *None (empty)* |
 | `TRILIUM_DATA_DIR` | Persistent host directory path for volume mount: TRILIUM_DATA_DIR. | `~/trilium-data` |
-| `TRILIUM_DOMAIN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `TRILIUM_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 
 ---
 

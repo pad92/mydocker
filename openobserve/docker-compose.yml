@@ -71,6 +71,18 @@ services:
       traefik.http.routers.openobserve.entrypoints: "websecure"
       traefik.http.routers.openobserve.tls: "true"
       traefik.http.routers.openobserve.tls.certresolver: "stepca"
+      # Web UI and query API behind Authentik forward auth (management stack).
+      # authentik@docker comes first: it fails closed when Authentik is down.
+      traefik.http.routers.openobserve.middlewares: "authentik@docker"
+      # Ingestion bypass: POST to the ingestion endpoints only (JSON, multi,
+      # bulk, OTLP/HTTP, Prometheus remote write). They keep OpenObserve
+      # Basic auth; senders cannot follow a browser login. Searches, the UI
+      # and every GET stay behind forward auth. $$ is a literal $ in Compose.
+      traefik.http.routers.openobserve_ingest.rule: "Host(`${OPENOBSERVE_DOMAIN:?Set OPENOBSERVE_DOMAIN}`) && Method(`POST`) && PathRegexp(`^/api/[^/]+/([^/]+/_(json|multi)|_bulk|v1/(logs|metrics|traces)|prometheus/api/v1/write)$$`)"
+      traefik.http.routers.openobserve_ingest.entrypoints: "websecure"
+      traefik.http.routers.openobserve_ingest.tls: "true"
+      traefik.http.routers.openobserve_ingest.tls.certresolver: "stepca"
+      traefik.http.routers.openobserve_ingest.service: "openobserve"
 
     logging: *default-logging
   # Online copy of the SQLite metadata (users, alerts, dashboards, functions,

@@ -52,6 +52,30 @@ curl -fsS "https://$OPENOBSERVE_DOMAIN/healthz"
 - OTLP over gRPC (port `5081`) is not published. Add a Traefik TCP/h2c route or a host port if a client needs it; OTLP over HTTP works through the existing route at `https://<OPENOBSERVE_DOMAIN>/api/<org>/v1/{logs,metrics,traces}`.
 - Ingestion clients authenticate with HTTP Basic auth. The ready-to-use credentials are shown in the UI under *Data Sources*.
 
+### Access Control (Authentik)
+
+The `openobserve` router goes through the `authentik@docker` forward-auth middleware of the management stack: a browser must first log in to Authentik (with MFA) as a member of the `openobserve-users` group. The provider, application and group are created by the `20-forward-auth-apps.yaml` blueprint of the management stack, which reads this host name from `OPENOBSERVE_HOST_LOCAL` in `management/.env`. That value must equal `OPENOBSERVE_DOMAIN`.
+
+Log shippers cannot follow a browser login, so a second router, `openobserve_ingest`, skips the middleware for the ingestion endpoints only:
+
+- method `POST` only;
+- path `/api/<org>/<stream>/_json`, `/api/<org>/<stream>/_multi`, `/api/<org>/_bulk`, `/api/<org>/v1/{logs,metrics,traces}` or `/api/<org>/prometheus/api/v1/write`, nothing else (the regex is anchored at both ends).
+
+These requests still need the OpenObserve Basic auth credentials. The UI, the search API (`_search`) and the management API stay behind Authentik.
+
+Limits:
+
+- OpenObserve keeps its own login page behind Authentik: users log in twice (Authentik, then OpenObserve).
+- While `authentik_server` is down, the UI is unreachable (the middleware fails closed). Ingestion keeps working.
+- An Uptime Kuma HTTP monitor on `https://<OPENOBSERVE_DOMAIN>/healthz` now gets a `302` to Authentik. Accept `302` as up, or monitor the container instead.
+- The `openobserve-syslog` Vector container sends to `http://openobserve:5080` on the Docker network and does not go through Traefik, so it is not affected. OTLP over gRPC is not published either.
+
+[`tests/test_stack.sh`](./tests/test_stack.sh) checks these routers without starting anything: forward auth on the UI router, the ingest router limited to `POST` on the host, no middleware on it, its regex tested against allowed and denied paths, and no other router on the host without the middleware.
+
+```bash
+./tests/test_stack.sh
+```
+
 ---
 
 ## 2. Metadata Backup (`openobserve-backup`)
