@@ -926,25 +926,31 @@ configs:
                 summary: "Composant victoria {{ $$labels.job }} injoignable depuis 5 minutes"
                 description: "victoriametrics ne scrape plus ce composant de la stack : conteneur arrete ou en echec"
             # A failing query (datasource down, LogsQL or MetricsQL error)
-            # leaves its rule silent: no alert, whatever happens.
+            # leaves its rule silent: no alert, whatever happens. Two failed
+            # evaluations of the same rule in 2 hours: a restart of
+            # victorialogs or victoriametrics fails one evaluation per rule,
+            # and the 60m group (proxmox_backup) still fits twice.
             - alert: vmalert_rule_errors
               expr: >-
                 sum by (job, group, alertname) (
-                  increase(vmalert_alerting_rules_errors_total[15m])
-                ) > 0
+                  increase(vmalert_alerting_rules_errors_total[2h])
+                ) >= 2
               keep_firing_for: 120m
               labels:
                 severity: warning
               annotations:
-                summary: "Regle {{ $$labels.alertname }} ({{ $$labels.job }}) en erreur depuis 15 minutes"
+                summary: "Regle {{ $$labels.alertname }} ({{ $$labels.job }}) en erreur a plusieurs evaluations"
                 description: "vmalert n'arrive plus a evaluer une regle d'alerte : la regle ne peut plus se declencher"
             # The watchdog receiver failing (Uptime Kuma unreachable) comes
             # by SMS; the sms receiver failing stops the watchdog instead.
+            # Failures in every 5 minute window for 10 minutes: the watchdog
+            # pushes every minute, so a restart of Uptime Kuma stays out.
             - alert: alertmanager_notifications_failed
               expr: >-
                 sum by (integration, receiver_name) (
-                  increase(alertmanager_notifications_failed_total[15m])
+                  increase(alertmanager_notifications_failed_total[5m])
                 ) > 0
+              for: 10m
               keep_firing_for: 60m
               labels:
                 severity: warning

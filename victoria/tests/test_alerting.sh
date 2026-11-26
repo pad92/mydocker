@@ -137,6 +137,18 @@ for rules in ("logs_rules.yml", "metrics_rules.yml"):
                 continue
             if name in alerts:
                 errors.append(f"alert {name} defined twice")
+            # A restart of a datasource or of Uptime Kuma must not send an SMS.
+            if name == "vmalert_rule_errors":
+                # One failed evaluation per rule is a restart: two needed.
+                if not re.search(r"\)\s*>=\s*([2-9]|[1-9][0-9]+)\s*$", rule["expr"]):
+                    errors.append(f"alert {name}: a single failed evaluation would fire")
+            if name == "alertmanager_notifications_failed":
+                # A for of 10m or more, longer than the increase window, so a
+                # single failure never holds the rule for the whole for.
+                hold = seconds(rule.get("for", "0s"))
+                windows = [seconds(w) for w in re.findall(r"increase\([^\[]*\[([0-9]+[smh])\]", rule["expr"])]
+                if hold < 600 or not windows or any(w >= hold for w in windows):
+                    errors.append(f"alert {name}: for {hold}s, increase windows {windows}: a transient failure would fire")
             if name == "watchdog":
                 # Must stop as soon as its expression is empty.
                 if "keep_firing_for" in rule or "for" in rule:
