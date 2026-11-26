@@ -8,17 +8,24 @@
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
 # - with the header a new user is created with the Viewer role and sees the
-#   four provisioned dashboards (Authentik, Proxmox, UniFi, Synology);
+#   nine provisioned dashboards (Authentik, Proxmox, UniFi, Synology, hosts,
+#   logs, Docker, DNS, firewall);
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
 # - every VictoriaLogs target of the dashboards, sent as the viewer to
-#   /api/ds/query, answers 200 without error and returns data from parsed
-#   Proxmox and Authentik records ingested before;
-# - every VictoriaMetrics target answers 200 without error (the expression
-#   parses; there is no Proxmox, UniFi or Synology metric in the test, so no
-#   data is expected), and every dashboard contributes at least one target.
-# Template variables are replaced by one value present in the test data, as
-# Grafana does before sending a query; the "All" choice is not tested.
+#   /api/ds/query, answers 200 without error and returns data from records
+#   ingested before (Proxmox, Authentik, Docker, AdGuard Home, UniFi firewall
+#   and CEF, with the fields Vector produces);
+# - every VictoriaMetrics target answers 200 without error; the targets of
+#   the hosts dashboard also return data from host metrics imported before
+#   (one silent host, one degraded ZFS pool), except "silent hosts" for a host
+#   that still reports, which must return none. There is no Proxmox, UniFi or
+#   Synology metric in the test, so their targets only have to parse;
+# - every dashboard contributes at least one target.
+# Each target using a variable is sent twice, as Grafana sends it: once with
+# one value present in the test data, once with the default "All" choice
+# (in(*) for VictoriaLogs, .* for the hosts dashboard). The search box keeps
+# its default, *.
 #
 # One change in the test only: Grafana cannot download the plugin on an
 # internal network, so GF_PLUGINS_PREINSTALL_DISABLED=true and the plugin
@@ -86,7 +93,7 @@ while IFS=$'\t' read -r source target; do
     "$work_dir/compose.json" > "$work_dir/configs/$source"
   mounts+=(-v "$work_dir/configs/$source:$target:ro")
 done < <(jq -r '.services.grafana.configs[] | [.source, .target] | @tsv' "$work_dir/compose.json")
-[[ ${#mounts[@]} -eq 12 ]] || fail "expected 6 Grafana configs, got $((${#mounts[@]} / 2))"
+[[ ${#mounts[@]} -eq 22 ]] || fail "expected 11 Grafana configs, got $((${#mounts[@]} / 2))"
 
 pinned="$(jq -r '.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC' "$work_dir/compose.json")"
 [[ "$pinned" == "$plugin_id@"* ]] || fail "GF_PLUGINS_PREINSTALL_SYNC is '$pinned', expected $plugin_id@<version>"
@@ -99,7 +106,7 @@ local_version="$(jq -r '.info.version' "$plugin_dir/$plugin_id/plugin.json" 2>/d
 # --- Test data and query bodies.
 mkdir -p "$work_dir/out" "$work_dir/bodies"
 python3 -I - "$work_dir" <<'PY'
-import datetime, json, os, sys
+import datetime, json, os, re, sys
 
 work = sys.argv[1]
 now = datetime.datetime.now(datetime.timezone.utc)
@@ -107,8 +114,8 @@ now = datetime.datetime.now(datetime.timezone.utc)
 def at(minutes):
     return (now - datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-# Records as Vector stores them after parsing (fields from proxmox_test.yaml
-# and authentik_test.yaml), a few minutes old.
+# Records as Vector stores them after parsing (fields from the *_test.yaml
+# files and from live records), a few minutes old unless "_age" says otherwise.
 proxmox = [
     {"pve_kind": "task", "pve_task_event": "start", "pve_task_type": "vzdump",
      "pve_level": "info", "pve_component": "pvedaemon"},
@@ -131,35 +138,170 @@ authentik = [
     {"ak_kind": "event", "ak_action": "login_failed", "ak_user": "bob",
      "ak_client_ip": "10.0.0.3", "ak_level": "warning", "ak_component": "events"},
 ]
-records = [{"log_stream": "proxmox", "_msg": "pve", **r} for r in proxmox]
-records += [{"log_stream": "authentik", "_msg": "ak", **r} for r in authentik]
+# demo-old logged 3 h ago only: it feeds "Conteneurs sans log depuis 1 h".
+docker = [
+    {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "app",
+     "container_name": "demo-app", "log_iostream": "stderr", "severity": "Error",
+     "_msg": "request 42 failed"},
+    {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "old",
+     "container_name": "demo-old", "log_iostream": "stderr", "severity": "error",
+     "_msg": "worker 7 crashed", "_age": 180},
+    {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "old",
+     "container_name": "demo-old", "log_iostream": "stdout", "severity": "info",
+     "_msg": "worker started", "_age": 181},
+]
+# AdGuard Home query log: reason 3 blocked, 9 rewrite, 1 allowlist; cached
+# answers keep the upstream of the first one, as live records do.
+def dns(host, ip, qh, qt="A", cached=False, upstream="192.168.69.2:5335",
+        elapsed="25000000", filtered=False, reason=None):
+    r = {"host_name": host, "body_ip": ip, "body_qh": qh, "body_qt": qt,
+         "body_cached": "true" if cached else "false", "body_upstream": upstream,
+         "body_elapsed": elapsed, "body_qc": "IN"}
+    if filtered:
+        r["body_result_isfiltered"] = "true"
+    if reason:
+        r["body_result_reason"] = reason
+    return r
+dns_queries = [
+    dns("ns01.home.lan", "192.168.0.10", "slow.example.com", elapsed="80000000"),
+    dns("ns01.home.lan", "192.168.0.10", "slow.example.com", elapsed="90000000"),
+    dns("ns01.home.lan", "192.168.0.10", "slow.example.com", elapsed="95000000"),
+    dns("ns01.home.lan", "192.168.0.10", "slow.example.com", qt="AAAA", cached=True, elapsed="40000"),
+    dns("ns01.home.lan", "192.168.0.10", "ads.example.net", upstream="", elapsed="30000",
+        filtered=True, reason="3.0"),
+    dns("ns01.home.lan", "192.168.0.10", "nas.home.lan", upstream="", elapsed="20000",
+        reason="9.0"),
+    dns("ns01.home.lan", "192.168.0.10", "allowed.example.org", elapsed="15000000",
+        reason="1.0"),
+    dns("ns02.home.lan", "192.168.0.20", "www.example.com", elapsed="12000000"),
+]
+# UniFi gateway firewall (fields of parse_firewall); WAN_LOCAL is a drop from
+# the Internet, LAN_WAN a reject from a LAN client.
+def fw(action, ruleset, rule_id, descr, src, dst, iface_in, iface_out, proto, dpt):
+    return {"host_name": "gw", "appname": "gw", "fw_action": action,
+            "fw_ruleset": ruleset, "fw_rule": f"{ruleset}-{action[0].upper()}-{rule_id}",
+            "fw_rule_id": rule_id, "fw_descr": descr, "fw_src": src, "fw_dst": dst,
+            "fw_in": iface_in, "fw_out": iface_out, "fw_proto": proto, "fw_dpt": dpt,
+            "_msg": f"[{ruleset}] DESCR={descr}"}
+firewall = [
+    fw("drop", "WAN_LOCAL", "3000", "drop-wan", "203.0.113.7", "192.168.69.254",
+       "eth6", "", "TCP", "22"),
+    fw("drop", "WAN_LOCAL", "3000", "drop-wan", "203.0.113.8", "192.168.69.254",
+       "eth6", "", "TCP", "3389"),
+    fw("reject", "LAN_WAN", "40001", "block-dns", "192.168.0.57", "8.8.8.8",
+       "br0", "eth6", "UDP", "53"),
+]
+# UniFi CEF events: an IPS threat, and a firewall block (signature 203).
+cef = [
+    {"host_name": "gw", "appname": "CEF", "UNIFIcategory": "Security",
+     "cef_signature_id": "300", "cef_name": "Threat Detected and Blocked",
+     "UNIFIrisk": "high", "src": "203.0.113.9", "dst": "192.168.0.10", "dpt": "445",
+     "msg": "ET SCAN suspicious inbound", "_msg": "0|Ubiquiti|UniFi Network|300"},
+    {"host_name": "gw", "appname": "CEF", "UNIFIcategory": "Security",
+     "cef_signature_id": "203", "cef_name": "Blocked by Firewall",
+     "UNIFIfirewallPolicy": "Block IoT", "UNIFIsrcClientAlias": "camera",
+     "UNIFIsrcClientIp": "192.168.0.30", "UNIFIdstZone": "External",
+     "_msg": "0|Ubiquiti|UniFi Network|203"},
+]
+records = [{"log_stream": "proxmox", "host_name": "pve.home.lan", "_msg": "pve", **r} for r in proxmox]
+records += [{"log_stream": "authentik", "host_name": "sso.home.lan", "_msg": "ak", **r} for r in authentik]
+records += [{"log_stream": "docker", **r} for r in docker]
+records += [{"log_stream": "dns_queries", "_msg": "dns", **r} for r in dns_queries]
+records += [{"log_stream": "firewall", "severity": "notice", **r} for r in firewall]
+records += [{"log_stream": "syslog", "facility": "user", **r} for r in cef]
 with open(f"{work}/records.jsonl", "w") as f:
     for i, r in enumerate(records):
-        f.write(json.dumps({"_time": at(i % 5 + 1), **r}) + "\n")
+        age = r.pop("_age", i % 5 + 1)
+        f.write(json.dumps({"_time": at(age), **r}) + "\n")
 with open(f"{work}/records.count", "w") as f:
     f.write(str(len(records)))
 
-# One /api/ds/query body per target, variables replaced by a value present in
-# the records above.
-values = {"application": "app.home.lan", "composant": "worker"}
+# Host metrics as the OpenTelemetry collector exports them, one sample a minute
+# over 20 min for test.home.lan; old.home.lan stops 30 min ago (silent host);
+# one degraded ZFS pool.
+lines = []
+def series(name, labels, values):
+    lab = ",".join(f'{k}="{v}"' for k, v in labels.items())
+    for minutes, value in values:
+        ts = int((now - datetime.timedelta(minutes=minutes)).timestamp() * 1000)
+        lines.append(f"{name}{{{lab}}} {value} {ts}")
+recent = range(20, -1, -1)
+for state, step in (("idle", 50), ("user", 10)):
+    series("system_cpu_time_seconds_total", {"host_name": "test.home.lan", "state": state},
+           [(m, (20 - m) * step) for m in recent])
+series("system_cpu_time_seconds_total", {"host_name": "old.home.lan", "state": "idle"},
+       [(m, (60 - m) * 50) for m in range(60, 29, -1)])
+series("system_memory_utilization_ratio", {"host_name": "test.home.lan", "state": "used"},
+       [(m, 0.4) for m in recent])
+series("system_cpu_load_average_5m", {"host_name": "test.home.lan"}, [(m, 0.7) for m in recent])
+series("system_filesystem_utilization_ratio",
+       {"host_name": "test.home.lan", "mountpoint": "/", "type": "ext4"}, [(m, 0.55) for m in recent])
+for direction in ("receive", "transmit"):
+    series("system_network_io_bytes_total",
+           {"host_name": "test.home.lan", "device": "eth0", "direction": direction},
+           [(m, (20 - m) * 6000) for m in recent])
+    series("system_disk_io_bytes_total",
+           {"host_name": "test.home.lan", "device": "sda", "direction": direction},
+           [(m, (20 - m) * 9000) for m in recent])
+series("zfs_pool_health", {"host_name": "pve.home.lan", "pool": "rpool"}, [(m, 1) for m in recent])
+series("zfs_pool_capacity_ratio", {"host_name": "pve.home.lan", "pool": "rpool"}, [(m, 0.6) for m in recent])
+with open(f"{work}/metrics.txt", "w") as f:
+    f.write("\n".join(lines) + "\n")
+
+# One /api/ds/query body per target and variant, variables replaced as the
+# plugins do before sending a query:
+# - "value": one value per variable, present in the records above;
+#   VictoriaLogs turns in($v) into in("value"), Prometheus inserts the value;
+# - "all": the default "All" choice; VictoriaLogs turns in($v) into in(*),
+#   Prometheus inserts the allValue the variable declares (required, as
+#   without it Grafana would send every value as an alternation).
+# $search is a text box whose default is *.
+values = {
+    "victoria-authentik": {"application": "app.home.lan", "composant": "worker"},
+    "victoria-dns": {"host_name": "ns01.home.lan", "client": "192.168.0.10"},
+    "victoria-docker": {"host_name": "test.home.lan", "compose_project": "demo",
+                        "container_name": "demo-old"},
+    "victoria-firewall": {"host_name": "gw", "action": "drop", "ruleset": "WAN_LOCAL"},
+    "victoria-logs": {"log_stream": "docker", "host_name": "test.home.lan"},
+    "victoria-hosts": {"host_name": "test.home.lan"},
+}
+
+def substitute(expr, datasource, variables, variant, all_values):
+    for var, value in variables.items():
+        if datasource == "victorialogs":
+            expr = expr.replace(f"in(${var})", "in(*)" if variant == "all"
+                                else f"in({json.dumps(value)})")
+        else:
+            expr = expr.replace(f"${var}", all_values[var] if variant == "all"
+                                else value.replace(".", "\\\\."))
+    return expr.replace("$search", "*")
+
 index = []
-for name in ("grafana_dashboard_authentik", "grafana_dashboard_proxmox",
-             "grafana_dashboard_unifi", "grafana_dashboard_synology"):
-    dash = json.load(open(f"{work}/configs/{name}"))
+for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
+             "docker", "dns", "firewall"):
+    dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
+    declared = {v["name"] for v in dash.get("templating", {}).get("list", [])}
+    all_values = {v["name"]: v.get("allValue") for v in dash.get("templating", {}).get("list", [])
+                  if v.get("includeAll") and v.get("datasource", {}).get("type") == "prometheus"}
+    assert all(all_values.values()), f'{dash["uid"]}: Prometheus variable without allValue'
+    variables = values.get(dash["uid"], {})
+    missing = declared - set(variables) - {"search"}
+    assert not missing, f'{dash["uid"]}: no test value for {sorted(missing)}'
     for panel in dash["panels"]:
         for target in panel.get("targets", []):
-            query = dict(target)
-            expr = query["expr"]
-            for var, value in values.items():
-                expr = expr.replace(f"${var}", json.dumps(value))
-            assert "$" not in expr, f'{dash["uid"]} / {panel["title"]}: {expr}'
-            query["expr"] = expr
-            n = len(index) + 1
-            json.dump({"from": "now-24h", "to": "now", "queries": [query]},
-                      open(f"{work}/bodies/q{n:03d}.json", "w"))
-            index.append({"file": f"q{n:03d}", "dashboard": dash["uid"],
-                          "panel": panel["title"], "refId": query.get("refId", "A"),
-                          "datasource": query["datasource"]["uid"]})
+            datasource = target["datasource"]["uid"]
+            for variant in ("value", "all"):
+                if variant == "all" and "$" not in target["expr"]:
+                    continue
+                query = dict(target)
+                query["expr"] = substitute(target["expr"], datasource, variables, variant, all_values)
+                assert "$" not in query["expr"], f'{dash["uid"]} / {panel["title"]}: {query["expr"]}'
+                n = len(index) + 1
+                json.dump({"from": "now-24h", "to": "now", "queries": [query]},
+                          open(f"{work}/bodies/q{n:03d}.json", "w"))
+                index.append({"file": f"q{n:03d}", "dashboard": dash["uid"],
+                              "panel": panel["title"], "refId": query.get("refId", "A"),
+                              "datasource": datasource, "variant": variant})
 json.dump(index, open(f"{work}/bodies/index.json", "w"))
 PY
 chmod -R a+rX "$work_dir"
@@ -204,6 +346,24 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 [[ "$stored" == "$expected" ]] || fail "$stored records stored, expected $expected"
+
+client wget -q -O /dev/null --post-file /w/metrics.txt 'http://victoriametrics:8428/api/v1/import/prometheus' \
+  || fail "metric import refused"
+client wget -q -O /dev/null 'http://victoriametrics:8428/internal/force_flush' || fail "force_flush refused"
+expected_series="$(awk '{print $1}' "$work_dir/metrics.txt" | sort -u | wc -l)"
+(( expected_series > 0 )) || fail "no metric series generated"
+# /api/v1/series/count may count a series once per day index, so count the
+# distinct series that /api/v1/series returns instead.
+series_url="http://victoriametrics:8428/api/v1/series?match%5B%5D=%7B__name__%21%3D%22%22%7D&start=$(( $(date +%s) - 7200 ))"
+series=""
+for _ in $(seq 1 30); do
+  series="$(client wget -q -O - "$series_url" 2>/dev/null \
+    | python3 -c 'import json,sys; print(len({json.dumps(m, sort_keys=True) for m in json.load(sys.stdin)["data"]}))' 2>/dev/null || true)"
+  [[ "$series" == "$expected_series" ]] && break
+  sleep 1
+done
+[[ "$series" == "$expected_series" ]] \
+  || fail "VictoriaMetrics holds ${series:-no} distinct series, expected $expected_series"
 
 # --- Requests, all from the client container; responses checked below.
 cat > "$work_dir/requests.sh" <<'SH'
@@ -258,7 +418,11 @@ orgs = load("orgs.json")
 if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
     errors.append(f"new user roles {orgs}, expected one org with Viewer")
 
-expected_uids = ["victoria-authentik", "victoria-proxmox", "victoria-synology", "victoria-unifi"]
+expected_uids = ["victoria-authentik", "victoria-dns", "victoria-docker", "victoria-firewall",
+                 "victoria-hosts", "victoria-logs", "victoria-proxmox", "victoria-synology",
+                 "victoria-unifi"]
+# Targets that must return nothing: test.home.lan is not silent.
+expected_empty = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "value")}
 search = load("search.json")
 if search is not None:
     uids = sorted(d.get("uid") for d in search)
@@ -269,10 +433,24 @@ plugin = load("plugin.json")
 if plugin is not None and plugin.get("info", {}).get("version") != pinned:
     errors.append(f"{plugin_id} loaded at {plugin.get('info', {}).get('version')!r}, pinned {pinned}")
 
+def has_data(frame):
+    """A frame holds data when it has rows and, if it has numeric fields, at
+    least one non-zero value: `stats count()` without `by` answers one row
+    with 0 when the filter matches nothing."""
+    values = frame.get("data", {}).get("values") or []
+    if not values or not any(len(v) for v in values):
+        return False
+    fields = frame.get("schema", {}).get("fields", [])
+    numeric = [i for i, f in enumerate(fields)
+               if f.get("type") == "number" and i < len(values)]
+    if not numeric:
+        return True
+    return any(x not in (None, 0) for i in numeric for x in values[i])
+
 index = json.load(open(f"{work}/bodies/index.json"))
 counts = {}
 for q in index:
-    label = f'{q["dashboard"]} / {q["panel"]} ({q["datasource"]})'
+    label = f'{q["dashboard"]} / {q["panel"]} ({q["datasource"]}, {q["variant"]})'
     counts[q["datasource"]] = counts.get(q["datasource"], 0) + 1
     body = load(f'{q["file"]}.json')
     if body is None:
@@ -282,10 +460,12 @@ for q in index:
     if result.get("status") != 200 or result.get("error"):
         errors.append(f"{label}: status {result.get('status')}, error {result.get('error')!r}")
         continue
-    if q["datasource"] == "victorialogs":
-        rows = [len(f["data"]["values"][0]) for f in result.get("frames", [])
-                if f.get("data", {}).get("values")]
-        if not any(rows):
+    if q["datasource"] == "victorialogs" or q["dashboard"] == "victoria-hosts":
+        found = any(has_data(f) for f in result.get("frames", []))
+        if (q["dashboard"], q["panel"], q["variant"]) in expected_empty:
+            if found:
+                errors.append(f"{label}: data returned, expected none")
+        elif not found:
             errors.append(f"{label}: no data returned")
 
 seen = sorted({q["dashboard"] for q in index})
@@ -298,7 +478,7 @@ for e in errors:
     print(f"  {e}", file=sys.stderr)
 if errors:
     sys.exit(1)
-print(f"{len(index)} targets queried: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
+print(f"{len(index)} queries sent: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
 PY
 
 echo "OK: Grafana refuses requests without the Authentik header, signs users up as Viewer, loads the pinned plugin and answers every dashboard target"
