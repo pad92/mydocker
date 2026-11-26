@@ -12,8 +12,12 @@
 #   auth middleware, except the HTTP to HTTPS redirects;
 # - Grafana trusts only the X-authentik-username header (auth proxy) and has
 #   no other way in: login form, basic auth and anonymous access are off;
-# - vmalert-logs, vmalert-metrics and alertmanager have no Traefik label, no
-#   port and only the victoria network, which is internal;
+# - vmalert-logs, vmalert-metrics and alertmanager have no Traefik label and
+#   no port; the two vmalert join only the victoria network, which is
+#   internal; alertmanager joins victoria and the alertmanager network (its
+#   route out to the Uptime Kuma push URL, which only it joins) and gets the
+#   host CA bundle read-only; the watchdog URL has no value in .env.example
+#   beyond the CHANGE_ME placeholder;
 # - unpoller has no Traefik label and no port, runs as 65534, verifies TLS
 #   with the host CA bundle, has InfluxDB and DPI off and no password in
 #   .env.example; it alone joins the unpoller network (the route out);
@@ -22,8 +26,9 @@
 #   polls the NAS with SNMPv3 authPriv (SHA, AES); its passwords are empty in
 #   .env.example and reach the auth file as ${...} references that the
 #   exporter expands, never as values written into the compose file;
-# - victoriametrics loads the scrape config that targets unpoller:9130, and
-#   sends the synology job to snmp-exporter:9116;
+# - victoriametrics loads the scrape config that targets unpoller:9130,
+#   sends the synology job to snmp-exporter:9116, and scrapes every component
+#   of the stack (vector on its prometheus_exporter sink, 9598);
 # - no service publishes a host port except vector, which publishes only the
 #   UDP syslog port: 9428, 8428 and 4318 have no authentication of their own;
 # - the victoria-ingest-auth middleware exists in the Traefik file provider
@@ -131,7 +136,7 @@ for k in GF_AUTH_BASIC_ENABLED GF_AUTH_ANONYMOUS_ENABLED GF_AUTH_PROXY_ENABLE_LO
 done
 
 # Alerting services: reachable from the victoria network only.
-for s in vmalert-logs vmalert-metrics alertmanager; do
+for s in vmalert-logs vmalert-metrics; do
   jq -e --arg s "$s" '.services[$s] | ((.labels // {}) | length) == 0
     and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
     and (.networks | keys) == ["victoria"]' <<<"$config" >/dev/null \
@@ -139,6 +144,24 @@ for s in vmalert-logs vmalert-metrics alertmanager; do
 done
 jq -e '.networks.victoria.internal == true' <<<"$config" >/dev/null \
   || fail "the victoria network is not internal"
+# alertmanager: same, plus the alertmanager network, which only it joins, as
+# the route out to the Uptime Kuma push URL (watchdog receiver).
+jq -e '.services.alertmanager | ((.labels // {}) | length) == 0
+  and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
+  and (.networks | keys) == ["alertmanager", "victoria"]' <<<"$config" >/dev/null \
+  || fail "alertmanager has labels, ports or unexpected networks"
+on_am_net="$(jq -c '[.services | to_entries[]
+  | select((.value.networks // {}) | has("alertmanager")) | .key]' <<<"$config")"
+[ "$on_am_net" = '["alertmanager"]' ] || fail "services on the alertmanager network: $on_am_net"
+jq -e '.networks.alertmanager["internal"] != true' <<<"$config" >/dev/null \
+  || fail "the alertmanager network is internal: the watchdog cannot reach Uptime Kuma"
+jq -e '.services.alertmanager.volumes | any(.type == "bind"
+  and .source == "/etc/ssl/certs/ca-certificates.crt"
+  and .target == "/etc/ssl/certs/ca-certificates.crt" and .read_only == true)' \
+  <<<"$config" >/dev/null || fail "alertmanager does not get the host CA bundle read-only"
+# The push token belongs in the environment of the stack only.
+grep -qx 'ALERTMANAGER_WATCHDOG_URL=https://uptime.example.com/api/push/CHANGE_ME?status=up&msg=OK' \
+  "$stack_dir/.env.example" || fail "ALERTMANAGER_WATCHDOG_URL in .env.example is not the placeholder"
 
 # unpoller: no Traefik label, no port, the victoria network for the scrape and
 # the unpoller network, which only it joins, for the route to the gateway.
@@ -204,6 +227,17 @@ jq -e '.configs.victoriametrics_scrape.content | test("targets: \\[\"unpoller:91
 jq -e '.configs.victoriametrics_scrape.content
   | test("- job_name: synology\n(.*\n)*? *metrics_path: /snmp\n(.*\n)*? *replacement: snmp-exporter:9116\n")' \
   <<<"$config" >/dev/null || fail "the synology job does not go to snmp-exporter:9116/snmp"
+# Self-scrape: one job per component, as the victoria_stack rules expect.
+for target in victoriametrics:8428 victorialogs:9428 vmalert-logs:8880 vmalert-metrics:8880 \
+  alertmanager:9093 vector:9598; do
+  job="${target%%:*}"
+  jq -e --arg j "$job" --arg t "$target" '.configs.victoriametrics_scrape.content
+    | test("- job_name: \($j)\n(.*\n)*? *- targets: \\[\"\($t)\"\\]\n")' \
+    <<<"$config" >/dev/null || fail "victoriametrics_scrape has no job $job on $target"
+done
+jq -e '.configs.vector_config.content
+  | test("prometheus:\n *type: prometheus_exporter\n *inputs:\n *- vector_metrics\n *address: 0.0.0.0:9598\n")' \
+  <<<"$config" >/dev/null || fail "vector does not export its internal metrics on 9598"
 
 python3 -I - "$stack_dir/../management/traefik_dynamic.toml.example" <<'EOF' \
   || fail "victoria-ingest-auth is missing or not a header-removing Basic auth in traefik_dynamic.toml.example"

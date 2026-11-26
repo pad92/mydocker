@@ -314,10 +314,14 @@ services:
       - no-new-privileges:true
     logging: *default-logging
 
-  # Groups the alerts and sends them to the SMS bridge in vector. The
-  # notification log and the silences persist in ALERTMANAGER_DATA_DIR, so a
-  # restart does not send the SMS of a firing alert again. Single instance:
-  # clustering (gossip) is off. Internal network only.
+  # Groups the alerts and sends them to the SMS bridge in vector, and the
+  # watchdog to Uptime Kuma. The notification log and the silences persist in
+  # ALERTMANAGER_DATA_DIR, so a restart does not send the SMS of a firing
+  # alert again. Single instance: clustering (gossip) is off. The victoria
+  # network, and the alertmanager network (which only it joins) as its route
+  # out to Uptime Kuma; it is not on traefik_gateway, where any container
+  # could reach its API on 9093. The host CA bundle verifies the step-ca
+  # certificate of Uptime Kuma.
   alertmanager:
     image: prom/alertmanager:${ALERTMANAGER_VERSION:-v0.35.1}
     container_name: alertmanager
@@ -331,12 +335,17 @@ services:
       - --storage.path=/alertmanager
       - --cluster.listen-address=
       - --web.listen-address=:9093
+      # receiver_name on alertmanager_notifications_failed_total, read by
+      # the alertmanager_notifications_failed rule.
+      - --enable-feature=receiver-name-in-metrics
     configs:
       - source: alertmanager_config
         target: /etc/alertmanager/alertmanager.yml
     volumes:
       - ${ALERTMANAGER_DATA_DIR:?Set ALERTMANAGER_DATA_DIR}:/alertmanager
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
     networks:
+      - alertmanager
       - victoria
     security_opt:
       - no-new-privileges:true
@@ -446,14 +455,43 @@ networks:
   unpoller: {}
   # Route out for snmp-exporter only, to reach the NAS on 161/udp.
   snmp: {}
+  # Route out for alertmanager only, to reach the Uptime Kuma push URL.
+  alertmanager: {}
 configs:
   # Pull targets of victoriametrics. unpoller refreshes its cache every
   # minute, a shorter interval only returns the same values. For synology,
   # the NAS goes in the target parameter and stays the instance label;
-  # the request itself goes to snmp-exporter.
+  # the request itself goes to snmp-exporter. The stack itself: one job per
+  # component, its up series feeds the victoria_stack alert group and the
+  # watchdog (vmalert_metrics_rules).
   victoriametrics_scrape:
     content: |
       scrape_configs:
+        - job_name: victoriametrics
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["victoriametrics:8428"]
+        - job_name: victorialogs
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["victorialogs:9428"]
+        - job_name: vmalert-logs
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["vmalert-logs:8880"]
+        - job_name: vmalert-metrics
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["vmalert-metrics:8880"]
+        - job_name: alertmanager
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["alertmanager:9093"]
+        # The prometheus_exporter sink of vector_config.
+        - job_name: vector
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["vector:9598"]
         - job_name: unpoller
           scrape_interval: 60s
           static_configs:
@@ -849,6 +887,70 @@ configs:
               annotations:
                 summary: "Le NAS Synology ne repond plus en SNMP depuis 10 minutes"
                 description: "snmp_exporter n'interroge plus le NAS : NAS arrete, reseau ou identifiants SNMPv3"
+        # Health of the stack itself (job per component in
+        # victoriametrics_scrape).
+        - name: victoria_stack
+          interval: 1m
+          rules:
+            # Dead man's switch: always firing while the SMS path works.
+            # Alertmanager sends it every minute to an Uptime Kuma push
+            # monitor (receiver watchdog), outside Vector and the Free Mobile
+            # sink. Kuma alerts on its own when the pushes stop: host,
+            # victoriametrics, vmalert-metrics or alertmanager down (nothing
+            # evaluates or sends), or the expression below empty: vector,
+            # victorialogs or vmalert-logs down or never scraped, or the
+            # free_mobile sink failing. No keep_firing_for: the pushes must
+            # stop as soon as the SMS path breaks.
+            - alert: watchdog
+              expr: >-
+                vector(1) unless on() (
+                  max(up{job=~"vector|victorialogs|vmalert-logs"} == 0)
+                  or absent(up{job="vector"})
+                  or absent(up{job="victorialogs"})
+                  or absent(up{job="vmalert-logs"})
+                  or sum(increase(vector_component_errors_total{component_id="free_mobile"}[30m])) > 0
+                )
+              labels:
+                severity: none
+              annotations:
+                summary: "Chaine d'alerte victoria operationnelle"
+                description: "Toujours active tant que la chaine SMS fonctionne ; Uptime Kuma alerte quand elle se tait"
+            - alert: victoria_component_down
+              expr: >-
+                up{job=~"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector"} == 0
+              for: 5m
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Composant victoria {{ $$labels.job }} injoignable depuis 5 minutes"
+                description: "victoriametrics ne scrape plus ce composant de la stack : conteneur arrete ou en echec"
+            # A failing query (datasource down, LogsQL or MetricsQL error)
+            # leaves its rule silent: no alert, whatever happens.
+            - alert: vmalert_rule_errors
+              expr: >-
+                sum by (job, group, alertname) (
+                  increase(vmalert_alerting_rules_errors_total[15m])
+                ) > 0
+              keep_firing_for: 120m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Regle {{ $$labels.alertname }} ({{ $$labels.job }}) en erreur depuis 15 minutes"
+                description: "vmalert n'arrive plus a evaluer une regle d'alerte : la regle ne peut plus se declencher"
+            # The watchdog receiver failing (Uptime Kuma unreachable) comes
+            # by SMS; the sms receiver failing stops the watchdog instead.
+            - alert: alertmanager_notifications_failed
+              expr: >-
+                sum by (integration, receiver_name) (
+                  increase(alertmanager_notifications_failed_total[15m])
+                ) > 0
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Alertmanager n'arrive plus a notifier {{ $$labels.receiver_name }} ({{ $$labels.integration }})"
+                description: "Des notifications d'Alertmanager echouent : webhook injoignable ou en erreur"
 
   # One route per alert, its repeat_interval the old OpenObserve silence:
   # while an alert stays firing, its SMS comes again once per interval.
@@ -863,6 +965,13 @@ configs:
         group_interval: 5m
         repeat_interval: 60m
         routes:
+          # Heartbeat to Uptime Kuma: first, and on its own receiver. A push
+          # every minute while the watchdog fires (see vmalert_metrics_rules).
+          - matchers: [alertname="watchdog"]
+            receiver: watchdog
+            group_wait: 0s
+            group_interval: 1m
+            repeat_interval: 1m
           - matchers: [alertname="authentik_login_failed_burst"]
             repeat_interval: 60m
           - matchers: [alertname="authentik_sensitive_event"]
@@ -921,6 +1030,12 @@ configs:
             repeat_interval: 120m
           - matchers: [alertname="synology_scrape_down"]
             repeat_interval: 60m
+          - matchers: [alertname="victoria_component_down"]
+            repeat_interval: 60m
+          - matchers: [alertname="vmalert_rule_errors"]
+            repeat_interval: 120m
+          - matchers: [alertname="alertmanager_notifications_failed"]
+            repeat_interval: 60m
       receivers:
         - name: sms
           webhook_configs:
@@ -928,6 +1043,14 @@ configs:
             - url: http://vector:8080/alertmanager
               send_resolved: false
               max_alerts: 10
+        # Push URL of an Uptime Kuma push monitor (see the README). The token
+        # in the URL is secret and goes in the environment of the stack only.
+        # send_resolved false: a resolved watchdog must not count as a push.
+        - name: watchdog
+          webhook_configs:
+            - url: "${ALERTMANAGER_WATCHDOG_URL:?Set ALERTMANAGER_WATCHDOG_URL}"
+              send_resolved: false
+              max_alerts: 1
 
   # Vector pipeline. Compose interpolates $ here: write $$ for a literal $.
   vector_config:
@@ -975,6 +1098,11 @@ configs:
           method: POST
           decoding:
             codec: json
+
+        # Vector's own metrics (events, errors per component), scraped by
+        # victoriametrics through the prometheus sink below.
+        vector_metrics:
+          type: internal_metrics
 
       transforms:
         # One SMS per webhook. Alertmanager groups by alertname, so a webhook
@@ -1541,6 +1669,14 @@ configs:
           # A GET without parameters answers 400; the first SMS shows errors.
           healthcheck:
             enabled: false
+
+        # Scraped by victoriametrics (job vector). Reachable on the victoria
+        # and traefik_gateway networks, never routed by Traefik.
+        prometheus:
+          type: prometheus_exporter
+          inputs:
+            - vector_metrics
+          address: 0.0.0.0:9598
   # Grafana provisioning. The dashboards are generated JSON (one LogsQL or
   # MetricsQL query per panel, see the README); $$ is a literal $ for Compose.
   grafana_datasources:
