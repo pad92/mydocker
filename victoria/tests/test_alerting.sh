@@ -7,22 +7,33 @@
 # - amtool check-config on the Alertmanager config;
 # - consistency: one Alertmanager route per alert, its repeat_interval equal to
 #   the keep_firing_for of the alert, no route without an alert, and the
-#   receiver URL matches the alertmanager_webhook source of Vector.
+#   receiver URL matches the alertmanager_webhook source of Vector. The
+#   watchdog is the exception: no keep_firing_for, first route, its own
+#   receiver (one webhook, send_resolved false) and a repeat_interval of at
+#   most 5m, under the heartbeat interval of the Uptime Kuma monitor.
 #
 # End-to-end part, on a throwaway internal network: VictoriaLogs,
-# VictoriaMetrics, vmalert-logs, Alertmanager and Vector with their rendered
-# commands and configs. Two changes in the test copy only, both checked:
-# - group intervals of the log rules set to 5s (5m and 60m in production);
+# VictoriaMetrics, vmalert-logs, vmalert-metrics, Alertmanager and Vector
+# with their rendered commands and configs. Changes in the test copy only,
+# all checked:
+# - group intervals of the rules set to 5s (1m to 60m in production);
 # - the free_mobile sink posts to VictoriaLogs instead of the Free Mobile API,
-#   so the SMS body can be read back.
+#   so the SMS body can be read back;
+# - the watchdog receiver posts to VictoriaLogs instead of Uptime Kuma;
+# - the scrape config keeps only the jobs of the stack, every 5s (the
+#   unpoller and synology targets do not exist here).
 # Proxmox records already parsed (pve_* fields, as the Vector unit tests
 # produce them) go straight into VictoriaLogs: a failed vzdump job, a failed
 # acmerenew task and a failed qmstart task. The test expects
 # proxmox_backup_failed, and proxmox_task_failed for qmstart only, in
 # Alertmanager, then one SMS body per alert with the test credentials.
+# Then the watchdog: every component scraped (up == 1), the watchdog
+# reaches its receiver, the metric names its rules use exist, and stopping
+# Vector stops the watchdog.
 # Not covered: the Proxmox parsing (proxmox_test.yaml), the metric rules on
 # real data (metric names to check after deployment, see the README), the
-# Free Mobile API itself.
+# Free Mobile API and Uptime Kuma themselves, the free_mobile error branch of
+# the watchdog (vector_component_errors_total only exists after an error).
 #
 # Needs Docker, Docker Compose 2.23+, jq and python3 with PyYAML; no published
 # port, no Internet. Usage: ./tests/test_alerting.sh
@@ -44,12 +55,14 @@ network="victoria-alerting-test-$suffix"
 logs_name="victorialogs-test-$suffix"
 metrics_name="victoriametrics-test-$suffix"
 vmalert_name="vmalert-logs-test-$suffix"
+vmalert_metrics_name="vmalert-metrics-test-$suffix"
 am_name="alertmanager-test-$suffix"
 vector_name="vector-test-$suffix"
 work_dir="$(mktemp -d)"
 
 cleanup() {
-  docker rm -f "$vector_name" "$vmalert_name" "$am_name" "$metrics_name" "$logs_name" >/dev/null 2>&1 || true
+  docker rm -f "$vector_name" "$vmalert_name" "$vmalert_metrics_name" "$am_name" "$metrics_name" "$logs_name" \
+    >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   rm -rf "$work_dir"
 }
@@ -58,7 +71,7 @@ trap cleanup EXIT
 fail() {
   echo "FAIL: $*" >&2
   local name
-  for name in "$vmalert_name" "$am_name" "$vector_name"; do
+  for name in "$vmalert_name" "$vmalert_metrics_name" "$am_name" "$vector_name"; do
     if docker inspect "$name" >/dev/null 2>&1; then
       echo "--- $name logs" >&2
       docker logs "$name" 2>&1 | tail -n 20 >&2 || true
@@ -78,9 +91,11 @@ config vmalert_logs_rules logs_rules.yml
 config vmalert_metrics_rules metrics_rules.yml
 config alertmanager_config alertmanager.yml
 config vector_config vector.yaml
+config victoriametrics_scrape scrape.yml
 mapfile -t vmalert_logs_cmd < <(jq -er '.services["vmalert-logs"].command[]' "$work_dir/compose.json")
 mapfile -t vmalert_metrics_cmd < <(jq -er '.services["vmalert-metrics"].command[]' "$work_dir/compose.json")
 mapfile -t am_cmd < <(jq -er '.services.alertmanager.command[]' "$work_dir/compose.json")
+mapfile -t metrics_cmd < <(jq -er '.services.victoriametrics.command[]' "$work_dir/compose.json")
 chmod -R a+rX "$work_dir"
 
 # --- Static: expressions parse with the flags of each vmalert (LogsQL needs
@@ -122,6 +137,24 @@ for rules in ("logs_rules.yml", "metrics_rules.yml"):
                 continue
             if name in alerts:
                 errors.append(f"alert {name} defined twice")
+            # A restart of a datasource or of Uptime Kuma must not send an SMS.
+            if name == "vmalert_rule_errors":
+                # One failed evaluation per rule is a restart: two needed.
+                if not re.search(r"\)\s*>=\s*([2-9]|[1-9][0-9]+)\s*$", rule["expr"]):
+                    errors.append(f"alert {name}: a single failed evaluation would fire")
+            if name == "alertmanager_notifications_failed":
+                # A for of 10m or more, longer than the increase window, so a
+                # single failure never holds the rule for the whole for.
+                hold = seconds(rule.get("for", "0s"))
+                windows = [seconds(w) for w in re.findall(r"increase\([^\[]*\[([0-9]+[smh])\]", rule["expr"])]
+                if hold < 600 or not windows or any(w >= hold for w in windows):
+                    errors.append(f"alert {name}: for {hold}s, increase windows {windows}: a transient failure would fire")
+            if name == "watchdog":
+                # Must stop as soon as its expression is empty.
+                if "keep_firing_for" in rule or "for" in rule:
+                    errors.append("watchdog has a for or keep_firing_for")
+                alerts[name] = None
+                continue
             if "keep_firing_for" not in rule:
                 errors.append(f"alert {name} has no keep_firing_for")
                 continue
@@ -129,7 +162,7 @@ for rules in ("logs_rules.yml", "metrics_rules.yml"):
 
 am = load("alertmanager.yml")
 routes = {}
-for route in am["route"].get("routes", []):
+for i, route in enumerate(am["route"].get("routes", [])):
     matchers = route.get("matchers", [])
     m = re.fullmatch(r'alertname="([a-z0-9_]+)"', matchers[0]) if len(matchers) == 1 else None
     if m is None:
@@ -138,9 +171,19 @@ for route in am["route"].get("routes", []):
     name = m.group(1)
     if name in routes:
         errors.append(f"two routes for {name}")
-    if route.get("receiver", "sms") != "sms" or route.get("continue"):
-        errors.append(f"route {name}: other receiver or continue")
-    routes[name] = seconds(route.get("repeat_interval", am["route"]["repeat_interval"]))
+    if route.get("continue"):
+        errors.append(f"route {name}: continue")
+    repeat = seconds(route.get("repeat_interval", am["route"]["repeat_interval"]))
+    if name == "watchdog":
+        if i != 0 or route.get("receiver") != "watchdog":
+            errors.append("watchdog route: not first or not on the watchdog receiver")
+        if repeat > 300:
+            errors.append(f"watchdog repeat_interval {repeat}s: over the 5m Kuma heartbeat")
+        routes[name] = None
+        continue
+    if route.get("receiver", "sms") != "sms":
+        errors.append(f"route {name}: receiver other than sms")
+    routes[name] = repeat
 
 for name in sorted(set(alerts) - set(routes)):
     errors.append(f"alert {name} has no route")
@@ -159,6 +202,11 @@ if [h.get("url") for h in hooks] != [expected]:
     errors.append(f"receiver webhooks {hooks}: expected one to {expected}")
 elif hooks[0].get("send_resolved", True):
     errors.append("send_resolved is not false: a resolved alert would send an SMS")
+watchdog_hooks = receivers.get("watchdog", {}).get("webhook_configs", [])
+if len(watchdog_hooks) != 1 or "/api/push/" not in watchdog_hooks[0].get("url", ""):
+    errors.append(f"watchdog receiver {watchdog_hooks}: expected one Uptime Kuma push URL")
+elif watchdog_hooks[0].get("send_resolved", True):
+    errors.append("watchdog send_resolved is not false: a resolved watchdog would count as a push")
 
 if errors:
     sys.exit("\n".join(errors))
@@ -171,13 +219,36 @@ python3 -I - "$work_dir" <<'PY_EOF' || fail "patching the test copy"
 import sys, yaml
 
 work = sys.argv[1]
-path = f"{work}/logs_rules.yml"
-with open(path) as f:
-    rules = yaml.safe_load(f)
-for group in rules["groups"]:
-    group["interval"] = "5s"
-with open(path, "w") as f:
-    yaml.safe_dump(rules, f, sort_keys=False, allow_unicode=True)
+def load(name):
+    with open(f"{work}/{name}") as f:
+        return yaml.safe_load(f)
+def dump(name, data):
+    with open(f"{work}/{name}", "w") as f:
+        yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+
+for name in ("logs_rules.yml", "metrics_rules.yml"):
+    rules = load(name)
+    for group in rules["groups"]:
+        group["interval"] = "5s"
+    dump(name, rules)
+
+# Only the jobs of the stack: every other target is missing on this network.
+stack_jobs = {"victoriametrics", "victorialogs", "vmalert-logs", "vmalert-metrics", "alertmanager", "vector"}
+scrape = load("scrape.yml")
+scrape["scrape_configs"] = [j for j in scrape["scrape_configs"] if j["job_name"] in stack_jobs]
+if {j["job_name"] for j in scrape["scrape_configs"]} != stack_jobs:
+    sys.exit(f"stack jobs in the scrape config: {[j['job_name'] for j in scrape['scrape_configs']]}")
+for job in scrape["scrape_configs"]:
+    job["scrape_interval"] = "5s"
+dump("scrape.yml", scrape)
+
+# The watchdog body as one record: status is the message, receiver the stream.
+am = load("alertmanager.yml")
+hooks = [r for r in am["receivers"] if r["name"] == "watchdog"][0]["webhook_configs"]
+if "/api/push/" not in hooks[0]["url"]:
+    sys.exit(f"watchdog url is {hooks[0]['url']}")
+hooks[0]["url"] = "http://victorialogs:9428/insert/jsonline?_msg_field=status&_stream_fields=receiver"
+dump("alertmanager.yml", am)
 
 path = f"{work}/vector.yaml"
 with open(path) as f:
@@ -192,8 +263,11 @@ with open(path, "w") as f:
     yaml.safe_dump(vector, f, sort_keys=False, allow_unicode=True)
 PY_EOF
 grep -q 'smsapi.free-mobile.fr' "$work_dir/vector.yaml" && fail "the SMS sink still points to Free Mobile"
-[[ "$(grep -c 'interval: 5s' "$work_dir/logs_rules.yml")" -eq "$(grep -c '^- name:\|^  - name:' "$work_dir/logs_rules.yml")" ]] \
-  || fail "group intervals not patched"
+for rules in logs_rules.yml metrics_rules.yml; do
+  [[ "$(grep -c 'interval: 5s' "$work_dir/$rules")" -eq "$(grep -c '^- name:\|^  - name:' "$work_dir/$rules")" ]] \
+    || fail "group intervals not patched in $rules"
+done
+grep -q '/api/push/' "$work_dir/alertmanager.yml" && fail "the watchdog still points to Uptime Kuma"
 chmod -R a+rX "$work_dir"
 
 # --- End to end.
@@ -201,7 +275,8 @@ docker network create --internal "$network" >/dev/null
 docker run -d --name "$logs_name" --network "$network" --network-alias victorialogs \
   --tmpfs /data "$logs_image" -storageDataPath=/data -httpListenAddr=:9428 >/dev/null
 docker run -d --name "$metrics_name" --network "$network" --network-alias victoriametrics \
-  --tmpfs /data "$metrics_image" -storageDataPath=/data -httpListenAddr=:8428 >/dev/null
+  --tmpfs /data -v "$work_dir/scrape.yml:/etc/victoria/scrape.yml:ro" \
+  "$metrics_image" "${metrics_cmd[@]}" >/dev/null
 docker run -d --name "$am_name" --network "$network" --network-alias alertmanager \
   --tmpfs /alertmanager -v "$work_dir/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
   "$alertmanager_image" "${am_cmd[@]}" >/dev/null
@@ -218,7 +293,8 @@ for _ in $(seq 1 30); do
   if client wget -q -O /dev/null http://victorialogs:9428/health 2>/dev/null \
     && client wget -q -O /dev/null http://victoriametrics:8428/health 2>/dev/null \
     && client wget -q -O /dev/null http://alertmanager:9093/-/ready 2>/dev/null \
-    && client nc -z vector 8080 2>/dev/null; then
+    && client nc -z vector 8080 2>/dev/null \
+    && client nc -z vector 9598 2>/dev/null; then
     ready=1
     break
   fi
@@ -251,7 +327,7 @@ done
 [[ "$stored" -eq 3 ]] || fail "expected 3 Proxmox records in VictoriaLogs, got $stored"
 
 # vmalert last: its first evaluation finds the records.
-docker run -d --name "$vmalert_name" --network "$network" \
+docker run -d --name "$vmalert_name" --network "$network" --network-alias vmalert-logs \
   -v "$work_dir/logs_rules.yml:/etc/vmalert/rules.yml:ro" \
   "$vmalert_image" "${vmalert_logs_cmd[@]}" >/dev/null
 
@@ -283,4 +359,64 @@ messages="$(jq -c -s '[.[]._msg] | sort' <<<"$sms")"
 expected='["1 sauvegardes vzdump Proxmox en echec en 15 minutes","Tache Proxmox qmstart en erreur (1 en 15 minutes)"]'
 [[ "$messages" == "$expected" ]] || fail "SMS texts: expected $expected, got $messages"
 
-echo "OK: rules parse, routes match the alerts, a Proxmox failure reaches the SMS sink"
+# --- Watchdog. vmalert-metrics starts now, so the SMS above came from the
+# log rules alone.
+docker run -d --name "$vmalert_metrics_name" --network "$network" --network-alias vmalert-metrics \
+  -v "$work_dir/metrics_rules.yml:/etc/vmalert/rules.yml:ro" \
+  "$vmalert_image" "${vmalert_metrics_cmd[@]}" >/dev/null
+
+promql() {
+  client wget -q -O - "http://victoriametrics:8428/api/v1/query?query=$(jq -rn --arg q "$1" '$q | @uri')"
+}
+deadline=$((SECONDS + timeout_s))
+jobs=""
+until [[ $SECONDS -ge $deadline ]]; do
+  jobs="$(promql 'up == 1' 2>/dev/null | jq -c '[.data.result[].metric.job] | sort' 2>/dev/null || true)"
+  [[ "$jobs" == '["alertmanager","vector","victorialogs","victoriametrics","vmalert-logs","vmalert-metrics"]' ]] && break
+  sleep 2
+done
+[[ "$jobs" == '["alertmanager","vector","victorialogs","victoriametrics","vmalert-logs","vmalert-metrics"]' ]] \
+  || fail "jobs up: $jobs, expected the six components of the stack"
+
+# The metric names and labels the victoria_stack rules use. The error
+# counters are created at zero for every receiver and rule.
+for q in 'alertmanager_notifications_failed_total{integration="webhook",receiver_name="watchdog"}' \
+  'vmalert_alerting_rules_errors_total{job="vmalert-metrics",group="victoria_stack",alertname="watchdog"}' \
+  'vmalert_alerting_rules_errors_total{job="vmalert-logs",alertname="proxmox_backup_failed"}' \
+  'vector_component_sent_events_total{component_id="free_mobile"}'; do
+  found=""
+  until [[ $SECONDS -ge $deadline ]]; do
+    found="$(promql "$q" 2>/dev/null | jq '.data.result | length' 2>/dev/null || true)"
+    [[ "${found:-0}" -ge 1 ]] && break
+    sleep 2
+  done
+  [[ "${found:-0}" -ge 1 ]] || fail "no series for $q"
+done
+
+pushes=""
+until [[ $SECONDS -ge $deadline ]]; do
+  pushes="$(logsql '{receiver="watchdog"}' 2>/dev/null || true)"
+  [[ -n "$pushes" ]] && break
+  sleep 2
+done
+[[ -n "$pushes" ]] || fail "the watchdog did not reach its receiver"
+jq -e -s 'all(.[]; ._msg == "firing")' <<<"$pushes" >/dev/null || fail "watchdog pushes not firing: $pushes"
+
+# Vector down: up{job="vector"} drops to 0 and the watchdog resolves.
+docker stop "$vector_name" >/dev/null
+deadline=$((SECONDS + timeout_s))
+active=1
+until [[ $SECONDS -ge $deadline ]]; do
+  alerts="$(client wget -q -O - http://alertmanager:9093/api/v2/alerts 2>/dev/null || true)"
+  if jq -e '[.[].labels.alertname] | index("watchdog") == null' <<<"${alerts:-[]}" >/dev/null 2>&1; then
+    active=""
+    break
+  fi
+  sleep 2
+done
+[[ -z "$active" ]] || fail "the watchdog still fires with Vector stopped"
+pushes_after="$(logsql '{receiver="watchdog"}' 2>/dev/null || true)"
+jq -e -s 'all(.[]; ._msg == "firing")' <<<"$pushes_after" >/dev/null \
+  || fail "a resolved watchdog reached the receiver: $pushes_after"
+
+echo "OK: rules parse, routes match the alerts, a Proxmox failure reaches the SMS sink, the watchdog stops with Vector"

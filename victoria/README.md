@@ -6,7 +6,7 @@ This stack replaces OpenObserve. It deploys the following services:
 - `victoriametrics`: metric database, UI on `metrics.<domain>`.
 - `vector`: the only writer of `victorialogs`. It receives OTLP logs from the collectors and UDP syslog from network devices, parses them and sends them on.
 - `vmalert-logs` and `vmalert-metrics`: alert rules on the logs (LogsQL) and on the metrics (MetricsQL).
-- `alertmanager`: groups the alerts and sends them as SMS through Vector and the Free Mobile API.
+- `alertmanager`: groups the alerts and sends them as SMS through Vector and the Free Mobile API. It also pushes a heartbeat to an Uptime Kuma push monitor (see [Watchdog](#watchdog)).
 - `grafana` (container `victoria-grafana`): dashboards for hosts, logs, Docker services, DNS, firewall, Authentik, Proxmox, UniFi and Synology, UI on `grafana.<domain>`.
 - `unpoller`: polls the UniFi gateway and exposes its metrics to VictoriaMetrics, which scrapes them.
 - `snmp-exporter`: polls the Synology NAS over SNMPv3 when VictoriaMetrics scrapes it.
@@ -42,6 +42,7 @@ This stack replaces OpenObserve. It deploys the following services:
 | `GRAFANA_DEFAULT_ROLE` | Grafana role of the other Authentik users: `Viewer`, `Editor` or `Admin`. | `Viewer` |
 | `FREE_MOBILE_USER` | Free Mobile account ID for the SMS API. Secret: set it only in the environment of the stack. Empty means no SMS. | *None (empty)* |
 | `FREE_MOBILE_PASS` | Free Mobile SMS API key. Secret: set it only in the environment of the stack. Empty means no SMS. | *None (empty)* |
+| `ALERTMANAGER_WATCHDOG_URL` | Push URL of the Uptime Kuma monitor that receives the watchdog, with `?status=up&msg=OK`. Required: Compose refuses to render the stack while it is unset. The token in the URL is a secret: set the real URL only in the environment of the stack. | `https://uptime.example.com/api/push/CHANGE_ME?status=up&msg=OK` |
 | `UNIFI_URL` | URL of the UniFi gateway that unpoller polls. Its certificate must chain to a CA of the host bundle. | `https://unifi.home.lan` |
 | `UNPOLLER_USER` | Local UniFi account of unpoller, View Only on Network. Empty means unpoller gets `403` and no UniFi metric arrives. | *None (empty)* |
 | `UNPOLLER_PASS` | Password of that account. Secret: set it only in the environment of the stack. | *None (empty)* |
@@ -56,7 +57,8 @@ This stack replaces OpenObserve. It deploys the following services:
 2. Generate the ingestion password hash with `htpasswd -nB collector` and replace `REPLACE_WITH_HTPASSWD_BCRYPT_HASH` in the `victoria-ingest-auth` middleware of `management/traefik_dynamic.toml`. Store the same password in the myansible vault. Until the hash is replaced, the middleware refuses every ingestion request.
 3. Set `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL` and `VICTORIA_GRAFANA_HOST_LOCAL` in `management/.env` and redeploy the management stack, so that the Authentik blueprint creates the three forward-auth applications.
 4. In the Free Mobile customer area, turn on *Mon compte > Mes options > Notifications par SMS*. Put the account ID in `FREE_MOBILE_USER` and the API key shown there in `FREE_MOBILE_PASS`, in the environment of the stack only. Without them the alerts still fire, but no SMS leaves.
-5. Start the stack, check both databases, then open `https://<VICTORIA_GRAFANA_DOMAIN>/` and log in through Authentik:
+5. In Uptime Kuma, add a monitor of type *Push* with a heartbeat interval of 300 seconds and attach a notification that does not go through this stack (the Free Mobile notification of Kuma, for example). Put its push URL, followed by `?status=up&msg=OK`, in `ALERTMANAGER_WATCHDOG_URL`. Until Alertmanager pushes to it, the monitor stays down.
+6. Start the stack, check both databases, then open `https://<VICTORIA_GRAFANA_DOMAIN>/` and log in through Authentik:
 
 ```bash
 docker compose up -d
@@ -132,7 +134,7 @@ Do not point the entry at `metrics.<domain>` directly: VictoriaMetrics answers `
 The host pushes node, guest and storage metrics every 10 seconds: `proxmox_node_*` (CPU, memory, ZFS ARC, load, network, uptime), `proxmox_vm_*` (labels `name` and `vmid`) and `proxmox_storage_*` (label `storage`). Their names carry unit suffixes; [`tests/check_metric_names.sh`](./tests/check_metric_names.sh) checks the names used by the rules and the dashboard (see [Post-Deployment Check of the Metric Names](#post-deployment-check-of-the-metric-names)).
 
 ### UniFi Metrics (`unpoller`)
-VictoriaMetrics pulls the UniFi metrics instead of receiving them. The `victoriametrics_scrape` config, loaded with `-promscrape.config`, has one job, `unpoller`, that scrapes `unpoller:9130` every 60 seconds. unpoller refreshes its own data once a minute, so a shorter interval adds no point.
+VictoriaMetrics pulls the UniFi metrics instead of receiving them. The `victoriametrics_scrape` config, loaded with `-promscrape.config`, has a job `unpoller` that scrapes `unpoller:9130` every 60 seconds (the other jobs are the NAS, see [Synology Metrics](#synology-metrics-snmp-exporter), and the stack itself, see [Watchdog](#watchdog)). unpoller refreshes its own data once a minute, so a shorter interval adds no point.
 
 unpoller runs as `65534:65534` with no published port and no Traefik route. It is on the internal `victoria` network, where VictoriaMetrics reaches it, and on the `unpoller` network, its only route to the gateway. It verifies the gateway certificate against the host CA bundle (`/etc/ssl/certs/ca-certificates.crt`, mounted read-only), so the internal CA that signs `unifi.home.lan` must be in that bundle. The InfluxDB output and the DPI collection are off.
 
@@ -187,6 +189,8 @@ Single entry point of the logs. It receives:
 
 - OTLP/HTTP logs on port `4318`, from the OpenTelemetry collectors deployed by myansible, through `https://<VICTORIA_LOGS_DOMAIN>/v1/logs`. The collector names the stream in the `stream-name` header (`otel_collector_streams` in myansible).
 - UDP syslog on container port `5514`, published on the host as `VECTOR_SYSLOG_PORT`. This is the only port the stack publishes.
+
+It also exposes its own metrics (`internal_metrics` source, `prometheus` sink) on port `9598`, which VictoriaMetrics scrapes. Traefik has no route to that port.
 
 It then parses the records and writes them to `http://victorialogs:9428/insert/jsonline` on the Docker network.
 
@@ -380,6 +384,28 @@ The file system alerts group by `device` and `type`, without `host_name`: severa
 
 `acmerenew` is left out of `proxmox_task_failed` because the daily ACME renewal of the Proxmox host fails until its certificate setup is fixed, and it would send an SMS every day. Remove the `-pve_task_type:=acmerenew` filter once the renewal works.
 
+### Watchdog
+
+The alerts above only reach a phone if VictoriaLogs, vmalert, Alertmanager, Vector and Free Mobile all work. The `victoria_stack` group of `vmalert-metrics` and an Uptime Kuma push monitor watch that chain.
+
+VictoriaMetrics scrapes every component of the stack every 30 seconds: `victoriametrics:8428`, `victorialogs:9428`, `vmalert-logs:8880`, `vmalert-metrics:8880`, `alertmanager:9093` and `vector:9598` (jobs of the same names). Three more alerts use these series:
+
+| Alert | Fires when | Repeat |
+| :--- | :--- | :--- |
+| `victoria_component_down` | a component scrape failing for 5 minutes | 60m |
+| `vmalert_rule_errors` | two or more failed evaluations of the same rule in 2 hours (a restart of a datasource fails only one) | 120m |
+| `alertmanager_notifications_failed` | failed Alertmanager notifications in every 5 minute window for 10 minutes, by receiver (`--enable-feature=receiver-name-in-metrics`) | 60m |
+
+These alerts go out by SMS, so they cannot report the failure of the SMS path itself. The `watchdog` alert covers it the other way round: it fires while the path works, and Alertmanager sends it every minute to the `watchdog` receiver, a webhook to `ALERTMANAGER_WATCHDOG_URL` that bypasses Vector. Uptime Kuma marks the monitor down when no push arrives within its interval, and notifies through its own channel. The watchdog stops when:
+
+- `vector`, `victorialogs` or `vmalert-logs` fails its scrape or has no `up` series;
+- the `free_mobile` sink of Vector logged an error in the last 30 minutes (`vector_component_errors_total`);
+- VictoriaMetrics, `vmalert-metrics`, Alertmanager or the host is down, since nothing evaluates or sends it any more.
+
+The watchdog has no `for` and no `keep_firing_for`, so it stops at the first evaluation that finds a fault. Its route comes first and sends no resolved notification. Alertmanager reaches Kuma through the `alertmanager` network, the only one of the stack that is not internal, with the CA bundle of the host for TLS. When the push itself fails, `alertmanager_notifications_failed` sends an SMS naming the `watchdog` receiver.
+
+Limits: Uptime Kuma runs on the same host. A host outage silences both the stack and Kuma; only an external check of Kuma would catch it. The `free_mobile` error branch is not tested: the counter only appears after a first error. A Free Mobile answer of `403` or `400` is an error for Vector, so wrong credentials stop the watchdog.
+
 ### SMS Bridge
 
 Alertmanager posts its webhook to the `alertmanager_webhook` source of Vector (`http://vector:8080/alertmanager`, at most 10 alerts per call). The `sms_message` transform writes one line per firing alert, from its `summary` annotation, adds `(+N autres alertes)` when Alertmanager truncated the list, and cuts the text at 900 characters. The `free_mobile` sink posts `{user, pass, msg}` as JSON to `https://smsapi.free-mobile.fr/sendmsg`, one SMS per request, with TLS verification on. It retries 3 times on a `5xx` and gives up on the other errors:
@@ -455,7 +481,8 @@ Limits:
 - Ports `9428`, `8428` and `4318` have no authentication of their own. Every container on the `traefik_gateway` network can query and write the databases and send logs to Vector. Only the UDP syslog port is published on the host.
 - Grafana port `3000` is not published, but a container on `traefik_gateway` that reaches it directly can send its own `X-authentik-username` header and log in as any user, the admin included. Through Traefik, the forward auth replaces that header.
 - The SMS webhook of Vector (port `8080`) has no authentication. Vector sits on `traefik_gateway` too, so any container there can make it send an SMS.
-- vmalert-logs, vmalert-metrics and Alertmanager have no route and no published port, and sit only on the internal `victoria` network. Their UIs are reachable only from the containers of this stack.
+- vmalert-logs, vmalert-metrics and Alertmanager have no route and no published port. The vmalert instances sit only on the internal `victoria` network. Alertmanager also sits alone on the `alertmanager` network, which is not internal, to reach Uptime Kuma; no other container is on it. Their UIs are reachable only from the containers of this stack.
+- The Vector metrics port `9598` has no authentication and no route. Any container on `traefik_gateway` can read it.
 - While Authentik is down, the UIs are unreachable. Ingestion keeps working.
 - UDP syslog is unauthenticated, like any syslog: any host that reaches the port can send messages. `host_name` and `device_vendor` only come from the sender table for listed IPs.
 
@@ -478,13 +505,13 @@ Switch-over order:
 
 ## 6. Tests
 
-[`tests/test_stack.sh`](./tests/test_stack.sh) renders the compose file with `.env.example` and checks the exposure without starting anything: forward auth first on the three UI routers, the ingestion and health routers limited to their method, path, middleware and service, forward auth on every other router of the three hosts, no published port except the UDP syslog port, the Grafana auth proxy settings (no login form, Basic auth, anonymous access or `GF_AUTH_DISABLE_LOGIN`), vmalert and Alertmanager on the internal `victoria` network only, unpoller without route or port, as `65534:65534`, with TLS verification, InfluxDB and DPI off, no password in `.env.example` and alone on the `unpoller` network, the scrape config that targets `unpoller:9130`, snmp-exporter without route or port, as `65534:65534`, alone on the `snmp` network, with SNMPv3 authPriv (SHA, AES), no password in `.env.example` and the `${...}` references that the exporter expands, the `synology` job sent to `snmp-exporter:9116`, and the `victoria-ingest-auth` middleware in `management/traefik_dynamic.toml.example`. It needs Docker Compose 2.23 or later, `jq` and Python 3.11 or later.
+[`tests/test_stack.sh`](./tests/test_stack.sh) renders the compose file with `.env.example` and checks the exposure without starting anything: forward auth first on the three UI routers, the ingestion and health routers limited to their method, path, middleware and service, forward auth on every other router of the three hosts, no published port except the UDP syslog port, the Grafana auth proxy settings (no login form, Basic auth, anonymous access or `GF_AUTH_DISABLE_LOGIN`), vmalert on the internal `victoria` network only, Alertmanager on `victoria` and alone on the non-internal `alertmanager` network with the host CA bundle read-only, the `ALERTMANAGER_WATCHDOG_URL` placeholder in `.env.example`, the self-scrape jobs of the six components and the Vector metrics sink on port `9598` (a wrong target makes the check fail), unpoller without route or port, as `65534:65534`, with TLS verification, InfluxDB and DPI off, no password in `.env.example` and alone on the `unpoller` network, the scrape config that targets `unpoller:9130`, snmp-exporter without route or port, as `65534:65534`, alone on the `snmp` network, with SNMPv3 authPriv (SHA, AES), no password in `.env.example` and the `${...}` references that the exporter expands, the `synology` job sent to `snmp-exporter:9116`, and the `victoria-ingest-auth` middleware in `management/traefik_dynamic.toml.example`. It needs Docker Compose 2.23 or later, `jq` and Python 3.11 or later.
 
 [`tests/test_vector.sh`](./tests/test_vector.sh) renders the compose file with `.env.example`, runs `vector validate` on the pipeline, then the Vector unit tests of [`otlp_test.yaml`](./tests/otlp_test.yaml) (normalization, routing, secret masking, HAProxy), [`authentik_test.yaml`](./tests/authentik_test.yaml), [`proxmox_test.yaml`](./tests/proxmox_test.yaml), [`syslog_test.yaml`](./tests/syslog_test.yaml) (syslog, CEF, firewall, Synology byte order mark) and [`sms_test.yaml`](./tests/sms_test.yaml) (SMS text, truncation, missing credentials). It needs Docker, Docker Compose 2.23 or later and `jq`, and makes no network call.
 
 [`tests/test_ingest.sh`](./tests/test_ingest.sh) starts VictoriaLogs and Vector on a throwaway internal network, sends one OTLP/HTTP protobuf record to Vector with a `stream-name` header, then queries VictoriaLogs. It checks what the unit tests cannot: the OTLP source, the sink query string (`_stream_fields`, `_msg_field`, `_time_field`), the stored fields and stream, and the masking of a URL secret. It also expects the answer within 3.5 seconds, which fails if the batch timeout goes back to 5 seconds. It needs Docker, Docker Compose 2.23 or later, `jq` and Python 3, uses the local images (`CLIENT_IMAGE` overrides the busybox client, `busybox:1.37` by default), and takes about 20 seconds. The Vector OTLP/HTTP source only accepts protobuf: an OTLP JSON request gets an HTTP 500.
 
-[`tests/test_alerting.sh`](./tests/test_alerting.sh) first checks the rules and the routing without starting anything: `vmalert -dryRun` on both rule sets, `amtool check-config`, one Alertmanager route per alert with a `repeat_interval` equal to the `keep_firing_for` of the rule, no route without a rule, and a receiver that targets the Vector webhook. It then starts VictoriaLogs, VictoriaMetrics, vmalert-logs, Alertmanager and Vector on a throwaway internal network, with 5 second rule intervals and the `free_mobile` sink pointed at VictoriaLogs. It sends a failed vzdump, a failed `acmerenew` task and a failed `qmstart` task, and expects one SMS body for `proxmox_backup_failed` and one for `proxmox_task_failed` that names `qmstart` only. It does not cover the Proxmox parsing (see `proxmox_test.yaml`), the metric rules on real data or the Free Mobile API. It needs Docker, Docker Compose 2.23 or later, `jq` and Python 3 with PyYAML, makes no Internet call, and waits at most `ALERTING_TIMEOUT` seconds (120 by default).
+[`tests/test_alerting.sh`](./tests/test_alerting.sh) first checks the rules and the routing without starting anything: `vmalert -dryRun` on both rule sets, `amtool check-config`, one Alertmanager route per alert with a `repeat_interval` equal to the `keep_firing_for` of the rule, no route without a rule, a receiver that targets the Vector webhook, and no SMS on a single failure: `vmalert_rule_errors` needs two failed evaluations, `alertmanager_notifications_failed` a `for` of at least 10 minutes longer than its `increase` window, the watchdog: no `for` or `keep_firing_for`, its route first with a `repeat_interval` of at most 5 minutes, a `watchdog` receiver with one `/api/push/` webhook and no resolved notification, every other route on `sms` without `continue`. It then starts VictoriaLogs, VictoriaMetrics, vmalert-logs, Alertmanager and Vector on a throwaway internal network, with 5 second rule intervals and the `free_mobile` sink pointed at VictoriaLogs. It sends a failed vzdump, a failed `acmerenew` task and a failed `qmstart` task, and expects one SMS body for `proxmox_backup_failed` and one for `proxmox_task_failed` that names `qmstart` only. It then starts vmalert-metrics with the self-scrape jobs at 5 seconds and the watchdog URL pointed at VictoriaLogs: the six jobs must be up, the series that the `victoria_stack` rules read (`alertmanager_notifications_failed_total` with `receiver_name`, `vmalert_alerting_rules_errors_total`, `vector_component_sent_events_total`) must exist, watchdog pushes must arrive as `firing`, and once Vector is stopped the watchdog must leave Alertmanager with no resolved push. It does not cover Uptime Kuma, the `free_mobile` error branch, the Proxmox parsing (see `proxmox_test.yaml`), the metric rules on real data or the Free Mobile API. It needs Docker, Docker Compose 2.23 or later, `jq` and Python 3 with PyYAML, makes no Internet call, and waits at most `ALERTING_TIMEOUT` seconds (120 by default).
 
 [`tests/test_unpoller.sh`](./tests/test_unpoller.sh) starts VictoriaMetrics with its rendered command and scrape config on a throwaway internal network, next to a busybox HTTP server that answers as `unpoller` on port 9130 with a fixed metric. It expects `up{job="unpoller",instance="unpoller:9130"}` at `1` and the fixed value in VictoriaMetrics, which proves that VictoriaMetrics accepts the scrape config and that the job, host and port match. It checks that the rendered interval is 60 seconds and lowers it to 5 seconds in its copy only. It then starts vmalert with the rendered command and metric rules, the `unifi_metrics` group lowered from 1 minute to 5 seconds in its copy. While the server answers with `unpoller_device_info`, `unpoller_no_unifi_data` must stay inactive for 3 evaluations, with a `for` of 10 minutes. Once the server answers with Go metrics only, the alert must turn pending with `job="unpoller"` and severity `warning`, while `up` stays at `1`. Alertmanager is not started. It does not cover unpoller itself or the UniFi API; use the post-deployment check of [UniFi Metrics](#unifi-metrics-unpoller). It needs Docker, Docker Compose 2.23 or later and `jq`, makes no Internet call, and waits at most `UNPOLLER_TIMEOUT` seconds (60 by default).
 
