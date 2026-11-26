@@ -91,6 +91,15 @@ services:
       traefik.http.routers.openobserve_health.tls: "true"
       traefik.http.routers.openobserve_health.tls.certresolver: "stepca"
       traefik.http.routers.openobserve_health.service: "openobserve"
+      # MCP bypass: the OpenObserve MCP server (Streamable HTTP: POST, GET for
+      # the event stream, DELETE to end a session) on /api/<org>/mcp only.
+      # MCP clients send a static Basic auth header and cannot follow a
+      # browser login; OpenObserve checks that header itself. $$ is a literal $.
+      traefik.http.routers.openobserve_mcp.rule: "Host(`${OPENOBSERVE_DOMAIN:?Set OPENOBSERVE_DOMAIN}`) && (Method(`POST`) || Method(`GET`) || Method(`DELETE`)) && PathRegexp(`^/api/[^/]+/mcp$$`)"
+      traefik.http.routers.openobserve_mcp.entrypoints: "websecure"
+      traefik.http.routers.openobserve_mcp.tls: "true"
+      traefik.http.routers.openobserve_mcp.tls.certresolver: "stepca"
+      traefik.http.routers.openobserve_mcp.service: "openobserve"
 
     logging: *default-logging
   # Online copy of the SQLite metadata (users, alerts, dashboards, functions,

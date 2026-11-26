@@ -65,13 +65,15 @@ These requests still need the OpenObserve Basic auth credentials. The UI, the se
 
 A third router, `openobserve_health`, skips the middleware for `GET` and `HEAD` on the exact path `/healthz`, so that the Uptime Kuma HTTP monitor on `https://<OPENOBSERVE_DOMAIN>/healthz` reaches OpenObserve and expects `200`. That endpoint needs no OpenObserve login and only returns `{"status":"ok"}`.
 
+A fourth router, `openobserve_mcp`, skips the middleware for `POST`, `GET` and `DELETE` on `/api/<org>/mcp` only: the OpenObserve MCP server (Streamable HTTP). MCP clients such as Claude Code send a static `Authorization: Basic` header and cannot follow a browser login; behind Authentik they got the login page (`text/html`) and failed to connect. OpenObserve still checks the Basic auth credentials on that endpoint.
+
 Limits:
 
 - OpenObserve keeps its own login page behind Authentik: users log in twice (Authentik, then OpenObserve).
 - While `authentik_server` is down, the UI is unreachable (the middleware fails closed). Ingestion keeps working.
 - The `openobserve-syslog` Vector container sends to `http://openobserve:5080` on the Docker network and does not go through Traefik, so it is not affected. OTLP over gRPC is not published either.
 
-[`tests/test_stack.sh`](./tests/test_stack.sh) checks these routers without starting anything: forward auth on the UI router, the ingest router limited to `POST` on the host, no middleware on it, its regex tested against allowed and denied paths, the health router limited to `GET`/`HEAD` `/healthz` without middleware, and no other router on the host without the middleware.
+[`tests/test_stack.sh`](./tests/test_stack.sh) checks these routers without starting anything: forward auth on the UI router, the ingest router limited to `POST` on the host, no middleware on it, its regex tested against allowed and denied paths, the health router limited to `GET`/`HEAD` `/healthz` without middleware, the MCP router limited to `POST`/`GET`/`DELETE` `/api/<org>/mcp` without middleware, and no other router on the host without the middleware.
 
 ```bash
 ./tests/test_stack.sh

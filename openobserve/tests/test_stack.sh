@@ -10,6 +10,9 @@
 # - the health check bypass router matches only GET/HEAD on /healthz of the
 #   OpenObserve host, has no middleware and targets OpenObserve (Uptime Kuma
 #   cannot follow a browser login);
+# - the MCP bypass router matches only POST/GET/DELETE on /api/<org>/mcp of
+#   the OpenObserve host, has no middleware and targets OpenObserve (MCP
+#   clients send Basic auth and cannot follow a browser login);
 # - every other router on the host carries the middleware, except the HTTP
 #   to HTTPS redirect.
 # Needs Docker Compose 2.23+, jq and python3. Usage: ./tests/test_stack.sh
@@ -92,13 +95,34 @@ health='traefik.http.routers.openobserve_health'
 [ "$(label "$health.entrypoints")" = websecure ] \
   || fail "health router is not on the HTTPS entry point"
 
-# Every router on the host other than the HTTP redirect and the ingest and
-# health check bypasses must carry the middleware.
+mcp='traefik.http.routers.openobserve_mcp'
+[ "$(label "$mcp.rule")" = "Host(\`$host\`) && (Method(\`POST\`) || Method(\`GET\`) || Method(\`DELETE\`)) && PathRegexp(\`^/api/[^/]+/mcp\$\$\`)" ] \
+  || fail "MCP router is not limited to POST/GET/DELETE /api/<org>/mcp on the OpenObserve host: $(label "$mcp.rule")"
+[ -z "$(label "$mcp.middlewares")" ] \
+  || fail "MCP router has a middleware: MCP clients would get a 302 to Authentik"
+[ "$(label "$mcp.service")" = openobserve ] \
+  || fail "MCP router does not target the OpenObserve service"
+[ "$(label "$mcp.entrypoints")" = websecure ] \
+  || fail "MCP router is not on the HTTPS entry point"
+python3 -I - '^/api/[^/]+/mcp$' <<'EOF' || fail "MCP path regex is too wide or too narrow"
+import re, sys
+r = re.compile(sys.argv[1])
+allowed = ["/api/default/mcp", "/api/other_org/mcp"]
+denied = ["/", "/web/", "/api/default/mcp/x", "/api/default/mcpx",
+          "/api/default/_search", "/api//mcp", "/api/a/b/mcp", "/x/api/default/mcp"]
+bad = [p for p in allowed if not r.search(p)] + [p for p in denied if r.search(p)]
+for p in bad:
+    print("misclassified:", p, file=sys.stderr)
+sys.exit(1 if bad else 0)
+EOF
+
+# Every router on the host other than the HTTP redirect and the ingest,
+# health check and MCP bypasses must carry the middleware.
 routers="$(jq -r "$labels | to_entries[] | select(.key | test(\"^traefik.http.routers.[^.]+.rule$\"))
   | select(.value | contains(\"$host\")) | .key | split(\".\")[3]" <<<"$config")"
 [ -n "$routers" ] || fail "no router found on the OpenObserve host"
 for router in $routers; do
-  case "$router" in openobserve_http|openobserve_ingest|openobserve_health) continue ;; esac
+  case "$router" in openobserve_http|openobserve_ingest|openobserve_health|openobserve_mcp) continue ;; esac
   label "traefik.http.routers.$router.middlewares" | grep -q '^authentik@docker' \
     || fail "OpenObserve router $router bypasses forward auth"
 done
