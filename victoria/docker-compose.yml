@@ -574,6 +574,21 @@ configs:
               annotations:
                 summary: "Invite Proxmox {{ $$labels.name }} ({{ $$labels.vmid }}) redemarre il y a {{ $$value }} s"
                 description: "Une VM ou un conteneur Proxmox a redemarre (uptime sous 10 minutes, les invites arretes sont ignores)"
+        # unpoller answers its scrape with up = 1 even when it cannot log in
+        # to UniFi: it then exports only its go_* metrics. absent() also fires
+        # when unpoller is down. for: 10m covers its first poll after a start.
+        - name: unifi_metrics
+          interval: 1m
+          rules:
+            - alert: unpoller_no_unifi_data
+              expr: absent(unpoller_device_info{job="unpoller"})
+              for: 10m
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Aucune donnee UniFi collectee par unpoller depuis 10 minutes"
+                description: "unpoller ne remonte aucun equipement UniFi : URL, compte ou controleur injoignable, ou unpoller arrete"
 
   # One route per alert, its repeat_interval the old OpenObserve silence:
   # while an alert stays firing, its SMS comes again once per interval.
@@ -613,6 +628,8 @@ configs:
           - matchers: [alertname="proxmox_task_failed"]
             repeat_interval: 1440m
           - matchers: [alertname="proxmox_auth_failed_burst"]
+            repeat_interval: 60m
+          - matchers: [alertname="unpoller_no_unifi_data"]
             repeat_interval: 60m
       receivers:
         - name: sms
