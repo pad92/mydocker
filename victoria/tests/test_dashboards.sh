@@ -16,6 +16,11 @@
 #   /api/ds/query, answers 200 without error and returns data from records
 #   ingested before (Proxmox, Authentik, Docker, AdGuard Home, UniFi firewall
 #   and CEF, Traefik access logs, with the fields Vector produces);
+# - the HTTP dashboard returns the exact request count, 4xx and 5xx rates and
+#   p95 latency of the Traefik sample, which holds WebSocket sessions
+#   (status 0) and SSE requests (/user/events) lasting minutes: they count as
+#   requests, and no number of the dashboard, table cells included, may
+#   reach their duration;
 # - every VictoriaMetrics target answers 200 without error; the targets of
 #   the hosts dashboard also return data from host metrics imported before
 #   (one silent host, one degraded ZFS pool), except "silent hosts" for a host
@@ -242,6 +247,16 @@ traefik = [
          120000000, 110000000, 2048, proto="HTTP/1.1", tls="1.2"),
     http("", "", "GET", "203.0.113.5", "/", "404.0", 1000000, 0, 19),
 ]
+# Long-lived streams, outside the value variant: Traefik logs a WebSocket
+# session with status 0 and the Forgejo SSE stream with 200, each lasting as
+# long as the browser tab. Three of each, so that "Chemins les plus lents"
+# (at least 3 requests) would list them if the latency filter missed them.
+traefik += [http("grafana.home.lan", "grafana@docker", "GET", "192.168.0.10", "/api/live/ws",
+                 status, 3600000000000, 3599000000000, 0)
+            for status in ("0.0", 0, "0.0")]
+traefik += [http("git.home.lan", "forgejo@docker", "GET", "192.168.0.10", "/user/events",
+                 status, 600000000000, 599000000000, 4096)
+            for status in ("200.0", 200, "200.0")]
 records = [{"log_stream": "proxmox", "host_name": "pve.home.lan", "_msg": "pve", **r} for r in proxmox]
 records += [{"log_stream": "authentik", "host_name": "sso.home.lan", "_msg": "ak", **r} for r in authentik]
 records += [{"log_stream": "docker", **r} for r in docker]
@@ -446,7 +461,7 @@ SH
 client sh /w/requests.sh "$viewer" "$plugin_id" || true
 
 python3 -I - "$work_dir" "$viewer" "$plugin_id" "$pinned_version" <<'PY' || fail "see above"
-import json, re, sys
+import json, math, re, sys
 
 work, viewer, plugin_id, pinned = sys.argv[1:]
 out = f"{work}/out"
@@ -483,13 +498,21 @@ expected_uids = ["victoria-authentik", "victoria-dns", "victoria-docker", "victo
 # Targets that must return nothing: test.home.lan is not silent.
 expected_empty = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "value")}
 # Exact values from the Traefik records: 4 lines match the four values (one
-# 404, one 503), 5 lines have a host (the hostless 404 probe must not count).
+# 404, one 503), 11 lines have a host (the hostless 404 probe must not count,
+# the 6 long-lived streams do). The p95 latency leaves out the streams: 900 ms
+# is the slowest short request, in both variants.
 expected_values = {("victoria-http", "Requêtes", "value"): 4,
-                   ("victoria-http", "Requêtes", "all"): 5,
+                   ("victoria-http", "Requêtes", "all"): 11,
                    ("victoria-http", "Taux de 4xx", "value"): 25,
-                   ("victoria-http", "Taux de 4xx", "all"): 20,
+                   ("victoria-http", "Taux de 4xx", "all"): 100 / 11,
                    ("victoria-http", "Taux de 5xx", "value"): 25,
-                   ("victoria-http", "Taux de 5xx", "all"): 20}
+                   ("victoria-http", "Taux de 5xx", "all"): 100 / 11,
+                   ("victoria-http", "Latence p95", "value"): 900000000,
+                   ("victoria-http", "Latence p95", "all"): 900000000}
+# No number returned by the HTTP dashboard may come from a stream: the
+# shortest one lasts 599 s, 5.99e11 in ns and 5.99e5 in ms, while the largest
+# legitimate number is the 900 ms p95 in ns.
+stream_floor = 1e11
 search = load("search.json")
 if search is not None:
     uids = sorted(d.get("uid") for d in search)
@@ -499,6 +522,12 @@ if search is not None:
 plugin = load("plugin.json")
 if plugin is not None and plugin.get("info", {}).get("version") != pinned:
     errors.append(f"{plugin_id} loaded at {plugin.get('info', {}).get('version')!r}, pinned {pinned}")
+
+def isnumber(v):
+    try:
+        return math.isfinite(float(v))
+    except (TypeError, ValueError):
+        return False
 
 def has_data(frame):
     """A frame holds data when it has rows and, if it has numeric fields, at
@@ -607,11 +636,19 @@ for q in index:
         elif not found:
             errors.append(f"{label}: no data returned")
         key = (q["dashboard"], q["panel"], q["variant"])
+        got = [float(x) for f in result.get("frames", [])
+               for i, field in enumerate(f.get("schema", {}).get("fields", []))
+               if field.get("type") == "number"
+               for x in f.get("data", {}).get("values", [])[i] if x is not None]
+        # Table panels get their stats as strings in each row's labels.
+        stats = got + [float(v) for f in result.get("frames", [])
+                       for i, field in enumerate(f.get("schema", {}).get("fields", []))
+                       if field.get("name") == "labels"
+                       for row in f.get("data", {}).get("values", [])[i] if isinstance(row, dict)
+                       for v in row.values() if isnumber(v)]
+        if q["dashboard"] == "victoria-http" and any(x >= stream_floor for x in stats):
+            errors.append(f"{label}: {max(stats)} counts a long-lived stream")
         if key in expected_values:
-            got = [float(x) for f in result.get("frames", [])
-                   for i, field in enumerate(f.get("schema", {}).get("fields", []))
-                   if field.get("type") == "number"
-                   for x in f.get("data", {}).get("values", [])[i] if x is not None]
             if len(got) != 1 or abs(got[0] - expected_values[key]) > 0.01:
                 errors.append(f"{label}: {got}, expected {expected_values[key]}")
 
