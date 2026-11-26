@@ -8,6 +8,7 @@ This stack replaces OpenObserve. It deploys the following services:
 - `vmalert-logs` and `vmalert-metrics`: alert rules on the logs (LogsQL) and on the metrics (MetricsQL).
 - `alertmanager`: groups the alerts and sends them as SMS through Vector and the Free Mobile API.
 - `grafana` (container `victoria-grafana`): Authentik and Proxmox dashboards, UI on `grafana.<domain>`.
+- `unpoller`: polls the UniFi gateway and exposes its metrics to VictoriaMetrics, which scrapes them.
 - `victoria-init`: one-shot container that fixes the ownership of the data directories.
 
 ## Service-Specific Configuration Variables
@@ -20,6 +21,7 @@ This stack replaces OpenObserve. It deploys the following services:
 | `VMALERT_VERSION` | vmalert image tag, for both instances. | `v1.156.0` |
 | `ALERTMANAGER_VERSION` | Alertmanager image tag. | `v0.35.1` |
 | `GRAFANA_VERSION` | Grafana image tag. | `13.2.7` |
+| `UNPOLLER_VERSION` | unpoller image tag (`ghcr.io/unpoller/unpoller`). | `v5.9.6` |
 | `GRAFANA_LOGS_PLUGIN_VERSION` | Version of the `victoriametrics-logs-datasource` Grafana plugin. | `0.34.0` |
 | `VICTORIA_LOGS_DOMAIN` | Host name of the logs UI and of the OTLP logs endpoint. Must equal `VICTORIA_LOGS_HOST_LOCAL` in `management/.env`. | `logs.example.com` |
 | `VICTORIA_METRICS_DOMAIN` | Host name of the metrics UI and of the OTLP metrics endpoint. Must equal `VICTORIA_METRICS_HOST_LOCAL` in `management/.env`. | `metrics.example.com` |
@@ -38,6 +40,9 @@ This stack replaces OpenObserve. It deploys the following services:
 | `GRAFANA_DEFAULT_ROLE` | Grafana role of the other Authentik users: `Viewer`, `Editor` or `Admin`. | `Viewer` |
 | `FREE_MOBILE_USER` | Free Mobile account ID for the SMS API. Secret: set it only in the `.env` of the host. Empty means no SMS. | *None (empty)* |
 | `FREE_MOBILE_PASS` | Free Mobile SMS API key. Secret: set it only in the `.env` of the host. Empty means no SMS. | *None (empty)* |
+| `UNIFI_URL` | URL of the UniFi gateway that unpoller polls. Its certificate must chain to a CA of the host bundle. | `https://unifi.home.lan` |
+| `UNPOLLER_USER` | Local UniFi account of unpoller, View Only on Network. Empty means unpoller gets `403` and no UniFi metric arrives. | *None (empty)* |
+| `UNPOLLER_PASS` | Password of that account. Secret: set it only in the `.env` of the host. | *None (empty)* |
 
 ## First Deployment
 
@@ -119,6 +124,27 @@ In the Proxmox UI, *Datacenter > Metric Server*, edit the OpenTelemetry entry:
 Do not point the entry at `metrics.<domain>` directly: VictoriaMetrics answers `400` to every push.
 
 The host pushes node, guest and storage metrics every 10 seconds: `proxmox_node_*` (CPU, memory, ZFS ARC, load, network, uptime), `proxmox_vm_*` (labels `name` and `vmid`) and `proxmox_storage_*` (label `storage`). Their names carry unit suffixes; [`tests/check_metric_names.sh`](./tests/check_metric_names.sh) checks the names used by the rules and the dashboard (see [Post-Deployment Check of the Metric Names](#post-deployment-check-of-the-metric-names)).
+
+### UniFi Metrics (`unpoller`)
+VictoriaMetrics pulls the UniFi metrics instead of receiving them. The `victoriametrics_scrape` config, loaded with `-promscrape.config`, has one job, `unpoller`, that scrapes `unpoller:9130` every 60 seconds. unpoller refreshes its own data once a minute, so a shorter interval adds no point.
+
+unpoller runs as `65534:65534` with no published port and no Traefik route. It is on the internal `victoria` network, where VictoriaMetrics reaches it, and on the `unpoller` network, its only route to the gateway. It verifies the gateway certificate against the host CA bundle (`/etc/ssl/certs/ca-certificates.crt`, mounted read-only), so the internal CA that signs `unifi.home.lan` must be in that bundle. The InfluxDB output and the DPI collection are off.
+
+Setup:
+
+1. In UniFi OS, *Admins & Users*, create a local admin restricted to local access, with the *View Only* role on Network and no access to the other applications.
+2. Put its username and password in `UNPOLLER_USER` and `UNPOLLER_PASS`, in the `.env` of the host only.
+3. Run `docker compose up -d`. Empty or wrong credentials stop unpoller only: it logs a `403` and the rest of the stack runs.
+
+After deployment, check the log and the scrape:
+
+```bash
+docker logs --tail 20 unpoller
+ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- 'http://victoriametrics:8428/api/v1/query?query=up%7Bjob%3D%22unpoller%22%7D'"
+ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- 'http://victoriametrics:8428/api/v1/query?query=count(%7B__name__%3D~%22unpoller_.*%22%7D)'"
+```
+
+`up` must be `1` and the count above zero. The metric names start with `unpoller_` (`unpoller_device_*`, `unpoller_client_*`, `unpoller_site_*`).
 
 ## 3. Vector (`vector`)
 
@@ -380,13 +406,15 @@ Switch-over order:
 
 ## 6. Tests
 
-[`tests/test_stack.sh`](./tests/test_stack.sh) renders the compose file with `.env.example` and checks the exposure without starting anything: forward auth first on the three UI routers, the ingestion and health routers limited to their method, path, middleware and service, forward auth on every other router of the three hosts, no published port except the UDP syslog port, the Grafana auth proxy settings (no login form, Basic auth, anonymous access or `GF_AUTH_DISABLE_LOGIN`), vmalert and Alertmanager on the internal `victoria` network only, and the `victoria-ingest-auth` middleware in `management/traefik_dynamic.toml.example`. It needs Docker Compose 2.23 or later, `jq` and Python 3.11 or later.
+[`tests/test_stack.sh`](./tests/test_stack.sh) renders the compose file with `.env.example` and checks the exposure without starting anything: forward auth first on the three UI routers, the ingestion and health routers limited to their method, path, middleware and service, forward auth on every other router of the three hosts, no published port except the UDP syslog port, the Grafana auth proxy settings (no login form, Basic auth, anonymous access or `GF_AUTH_DISABLE_LOGIN`), vmalert and Alertmanager on the internal `victoria` network only, unpoller without route or port, as `65534:65534`, with TLS verification, InfluxDB and DPI off, no password in `.env.example` and alone on the `unpoller` network, the scrape config that targets `unpoller:9130`, and the `victoria-ingest-auth` middleware in `management/traefik_dynamic.toml.example`. It needs Docker Compose 2.23 or later, `jq` and Python 3.11 or later.
 
 [`tests/test_vector.sh`](./tests/test_vector.sh) renders the compose file with `.env.example`, runs `vector validate` on the pipeline, then the Vector unit tests of [`otlp_test.yaml`](./tests/otlp_test.yaml) (normalization, routing, secret masking, HAProxy), [`authentik_test.yaml`](./tests/authentik_test.yaml), [`proxmox_test.yaml`](./tests/proxmox_test.yaml), [`syslog_test.yaml`](./tests/syslog_test.yaml) (syslog, CEF, firewall) and [`sms_test.yaml`](./tests/sms_test.yaml) (SMS text, truncation, missing credentials). It needs Docker, Docker Compose 2.23 or later and `jq`, and makes no network call.
 
 [`tests/test_ingest.sh`](./tests/test_ingest.sh) starts VictoriaLogs and Vector on a throwaway internal network, sends one OTLP/HTTP protobuf record to Vector with a `stream-name` header, then queries VictoriaLogs. It checks what the unit tests cannot: the OTLP source, the sink query string (`_stream_fields`, `_msg_field`, `_time_field`), the stored fields and stream, and the masking of a URL secret. It needs Docker, Docker Compose 2.23 or later, `jq` and Python 3, uses the local images (`CLIENT_IMAGE` overrides the busybox client, `busybox:1.37` by default), and takes about 20 seconds. The Vector OTLP/HTTP source only accepts protobuf: an OTLP JSON request gets an HTTP 500.
 
 [`tests/test_alerting.sh`](./tests/test_alerting.sh) first checks the rules and the routing without starting anything: `vmalert -dryRun` on both rule sets, `amtool check-config`, one Alertmanager route per alert with a `repeat_interval` equal to the `keep_firing_for` of the rule, no route without a rule, and a receiver that targets the Vector webhook. It then starts VictoriaLogs, VictoriaMetrics, vmalert-logs, Alertmanager and Vector on a throwaway internal network, with 5 second rule intervals and the `free_mobile` sink pointed at VictoriaLogs. It sends a failed vzdump, a failed `acmerenew` task and a failed `qmstart` task, and expects one SMS body for `proxmox_backup_failed` and one for `proxmox_task_failed` that names `qmstart` only. It does not cover the Proxmox parsing (see `proxmox_test.yaml`), the metric rules on real data or the Free Mobile API. It needs Docker, Docker Compose 2.23 or later, `jq` and Python 3 with PyYAML, makes no Internet call, and waits at most `ALERTING_TIMEOUT` seconds (120 by default).
+
+[`tests/test_unpoller.sh`](./tests/test_unpoller.sh) starts VictoriaMetrics with its rendered command and scrape config on a throwaway internal network, next to a busybox HTTP server that answers as `unpoller` on port 9130 with a fixed metric. It expects `up{job="unpoller",instance="unpoller:9130"}` at `1` and the fixed value in VictoriaMetrics, which proves that VictoriaMetrics accepts the scrape config and that the job, host and port match. It checks that the rendered interval is 60 seconds and lowers it to 5 seconds in its copy only. It does not cover unpoller itself or the UniFi API; use the post-deployment check of [UniFi Metrics](#unifi-metrics-unpoller). It needs Docker, Docker Compose 2.23 or later and `jq`, makes no Internet call, and waits at most `UNPOLLER_TIMEOUT` seconds (60 by default).
 
 [`tests/test_dashboards.sh`](./tests/test_dashboards.sh) starts VictoriaLogs, VictoriaMetrics and Grafana with sample data. It checks that the Grafana API answers `401` without the `X-authentik-username` header, refuses Basic auth and the `admin/admin` login form, and gives a new user the Viewer role and both dashboards. Every query of the two dashboards then goes through the Grafana datasource API, template variables replaced by a test value: each VictoriaLogs query must return data and each VictoriaMetrics query must answer `200`. It also checks the version of the loaded plugin. The plugin is read from `GRAFANA_PLUGIN_DIR` (a `plugins` directory that holds `victoriametrics-logs-datasource`, for example the one of a Grafana that ran this stack) and the test makes no Internet call. It does not cover the browser rendering, the Authentik outpost or the real Proxmox metric names, which [`tests/check_metric_names.sh`](./tests/check_metric_names.sh) checks against a running VictoriaMetrics (see [Post-Deployment Check of the Metric Names](#post-deployment-check-of-the-metric-names)).
 
@@ -396,4 +424,5 @@ Switch-over order:
 ./tests/test_ingest.sh
 ./tests/test_alerting.sh
 GRAFANA_PLUGIN_DIR=/path/to/plugins ./tests/test_dashboards.sh
+./tests/test_unpoller.sh
 ```

@@ -14,6 +14,10 @@
 #   no other way in: login form, basic auth and anonymous access are off;
 # - vmalert-logs, vmalert-metrics and alertmanager have no Traefik label, no
 #   port and only the victoria network, which is internal;
+# - unpoller has no Traefik label and no port, runs as 65534, verifies TLS
+#   with the host CA bundle, has InfluxDB and DPI off and no password in
+#   .env.example; it alone joins the unpoller network (the route out);
+# - victoriametrics loads the scrape config that targets unpoller:9130;
 # - no service publishes a host port except vector, which publishes only the
 #   UDP syslog port: 9428, 8428 and 4318 have no authentication of their own;
 # - the victoria-ingest-auth middleware exists in the Traefik file provider
@@ -129,6 +133,43 @@ for s in vmalert-logs vmalert-metrics alertmanager; do
 done
 jq -e '.networks.victoria.internal == true' <<<"$config" >/dev/null \
   || fail "the victoria network is not internal"
+
+# unpoller: no Traefik label, no port, the victoria network for the scrape and
+# the unpoller network, which only it joins, for the route to the gateway.
+jq -e '.services.unpoller | ((.labels // {}) | length) == 0
+  and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
+  and (.networks | keys) == ["unpoller", "victoria"]' <<<"$config" >/dev/null \
+  || fail "unpoller has labels, ports or unexpected networks"
+on_unpoller_net="$(jq -c '[.services | to_entries[]
+  | select((.value.networks // {}) | has("unpoller")) | .key]' <<<"$config")"
+[ "$on_unpoller_net" = '["unpoller"]' ] \
+  || fail "services on the unpoller network: $on_unpoller_net"
+jq -e '.networks.unpoller.internal != true' <<<"$config" >/dev/null \
+  || fail "the unpoller network is internal: unpoller cannot reach the gateway"
+[ "$(jq -r '.services.unpoller.user' <<<"$config")" = "65534:65534" ] \
+  || fail "unpoller does not run as 65534:65534"
+# The image config has verify_ssl = false and InfluxDB on.
+unpoller_env() { jq -r --arg k "$1" '.services.unpoller.environment[$k] // "unset"' <<<"$config"; }
+[ "$(unpoller_env UP_UNIFI_DEFAULT_VERIFY_SSL)" = true ] || fail "unpoller does not verify TLS"
+[ "$(unpoller_env UP_INFLUXDB_DISABLE)" = true ] || fail "unpoller InfluxDB output is on"
+[ "$(unpoller_env UP_UNIFI_DEFAULT_SAVE_DPI)" = false ] || fail "unpoller DPI collection is on"
+[ "$(unpoller_env UP_PROMETHEUS_HTTP_LISTEN)" = "0.0.0.0:9130" ] \
+  || fail "unpoller does not listen on 9130"
+# The password belongs in the host .env only.
+[ "$(unpoller_env UP_UNIFI_DEFAULT_PASS)" = "" ] \
+  || fail "UNPOLLER_PASS has a value in .env.example or the compose file"
+jq -e '.services.unpoller.volumes | any(.type == "bind"
+  and .source == "/etc/ssl/certs/ca-certificates.crt"
+  and .target == "/etc/ssl/certs/ca-certificates.crt" and .read_only == true)' \
+  <<<"$config" >/dev/null || fail "unpoller does not get the host CA bundle read-only"
+
+# victoriametrics scrapes unpoller with the victoriametrics_scrape config
+# (test_unpoller.sh checks that VictoriaMetrics accepts it and scrapes).
+jq -e '.services.victoriametrics | (.command | index("-promscrape.config=/etc/victoria/scrape.yml"))
+  and (.configs | any(.source == "victoriametrics_scrape" and .target == "/etc/victoria/scrape.yml"))' \
+  <<<"$config" >/dev/null || fail "victoriametrics does not load victoriametrics_scrape"
+jq -e '.configs.victoriametrics_scrape.content | test("targets: \\[\"unpoller:9130\"\\]")' \
+  <<<"$config" >/dev/null || fail "victoriametrics_scrape does not target unpoller:9130"
 
 python3 -I - "$stack_dir/../management/traefik_dynamic.toml.example" <<'EOF' \
   || fail "victoria-ingest-auth is missing or not a header-removing Basic auth in traefik_dynamic.toml.example"

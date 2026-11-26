@@ -105,8 +105,14 @@ services:
       # system.cpu.time becomes system_cpu_time_seconds_total, as the
       # Prometheus exporters name it, so that usual queries work.
       - -opentelemetry.usePrometheusNaming
+      # Pull targets (unpoller), in the victoriametrics_scrape entry under
+      # configs: at the end of this file.
+      - -promscrape.config=/etc/victoria/scrape.yml
     volumes:
       - ${VICTORIA_METRICS_DATA_DIR:?Set VICTORIA_METRICS_DATA_DIR}:/data
+    configs:
+      - source: victoriametrics_scrape
+        target: /etc/victoria/scrape.yml
     networks:
       - traefik_gateway
       - victoria
@@ -144,6 +150,36 @@ services:
       traefik.http.routers.victoriametrics_health.tls: "true"
       traefik.http.routers.victoriametrics_health.tls.certresolver: "stepca"
       traefik.http.routers.victoriametrics_health.service: "victoriametrics"
+    logging: *default-logging
+
+  # UniFi metrics. Polls the UniFi gateway API with a local read-only
+  # account and exposes Prometheus metrics on 9130, scraped by victoriametrics.
+  # The unpoller network gives it a route to the gateway; it is not on
+  # traefik_gateway, so the other stacks cannot read 9130. The gateway
+  # certificate comes from the internal CA: the host bundle is mounted and
+  # TLS is verified (the image default is verify_ssl = false). InfluxDB is
+  # on in the image config and has to be turned off. Empty credentials stop
+  # unpoller only (403 in its log), not the whole stack.
+  unpoller:
+    image: ghcr.io/unpoller/unpoller:${UNPOLLER_VERSION:-v5.9.6}
+    container_name: unpoller
+    restart: unless-stopped
+    user: "65534:65534"
+    environment:
+      UP_UNIFI_DEFAULT_URL: "${UNIFI_URL:?Set UNIFI_URL}"
+      UP_UNIFI_DEFAULT_USER: "${UNPOLLER_USER:-}"
+      UP_UNIFI_DEFAULT_PASS: "${UNPOLLER_PASS:-}"
+      UP_UNIFI_DEFAULT_VERIFY_SSL: "true"
+      UP_UNIFI_DEFAULT_SAVE_DPI: "false"
+      UP_INFLUXDB_DISABLE: "true"
+      UP_PROMETHEUS_HTTP_LISTEN: "0.0.0.0:9130"
+    volumes:
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+    networks:
+      - unpoller
+      - victoria
+    security_opt:
+      - no-new-privileges:true
     logging: *default-logging
 
   # Log ingestion: OTLP/HTTP logs of the collectors and UDP syslog of the
@@ -358,7 +394,18 @@ networks:
   # reachable from traefik_gateway too (see the README).
   victoria:
     internal: true
+  # Route out for unpoller only, to reach the UniFi gateway.
+  unpoller: {}
 configs:
+  # Pull targets of victoriametrics. unpoller refreshes its cache every
+  # minute, a shorter interval only returns the same values.
+  victoriametrics_scrape:
+    content: |
+      scrape_configs:
+        - job_name: unpoller
+          scrape_interval: 60s
+          static_configs:
+            - targets: ["unpoller:9130"]
   # Alert rules on VictoriaLogs (LogsQL), evaluated by vmalert-logs. Every
   # query sets its own _time window. A rule returns one series per alert:
   # its labels are the "by" fields, its value the single stats result.
