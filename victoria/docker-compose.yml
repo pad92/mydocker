@@ -105,7 +105,7 @@ services:
       # system.cpu.time becomes system_cpu_time_seconds_total, as the
       # Prometheus exporters name it, so that usual queries work.
       - -opentelemetry.usePrometheusNaming
-      # Pull targets (unpoller), in the victoriametrics_scrape entry under
+      # Pull targets (unpoller, snmp-exporter), in the victoriametrics_scrape entry under
       # configs: at the end of this file.
       - -promscrape.config=/etc/victoria/scrape.yml
     volumes:
@@ -177,6 +177,38 @@ services:
       - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
     networks:
       - unpoller
+      - victoria
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  # Synology NAS metrics over SNMPv3 (authPriv, SHA and AES). victoriametrics
+  # asks /snmp?target=<NAS>&module=...&auth=synology_v3, snmp-exporter walks
+  # the NAS and answers in Prometheus format. Modules come from the snmp.yml
+  # of the image; the auth comes from snmp_exporter_auth below, which holds
+  # ${...} references only: the exporter fills them from its environment
+  # (--config.expand-environment-variables), so no secret is written to the
+  # config file. Empty passwords fail the scrape only (up = 0). The snmp
+  # network gives it a route to the NAS; it is not on traefik_gateway.
+  snmp-exporter:
+    image: prom/snmp-exporter:${SNMP_EXPORTER_VERSION:-v0.31.0}-distroless
+    container_name: snmp-exporter
+    restart: unless-stopped
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/snmp_exporter/snmp.yml
+      - --config.file=/etc/snmp_exporter/auth.yml
+      - --config.expand-environment-variables
+      - --web.listen-address=:9116
+    environment:
+      SNMP_USER: "${SYNOLOGY_SNMP_USER:-snmp-victoria}"
+      SNMP_AUTH_PASS: "${SYNOLOGY_SNMP_AUTH_PASS:-}"
+      SNMP_PRIV_PASS: "${SYNOLOGY_SNMP_PRIV_PASS:-}"
+    configs:
+      - source: snmp_exporter_auth
+        target: /etc/snmp_exporter/auth.yml
+    networks:
+      - snmp
       - victoria
     security_opt:
       - no-new-privileges:true
@@ -396,9 +428,13 @@ networks:
     internal: true
   # Route out for unpoller only, to reach the UniFi gateway.
   unpoller: {}
+  # Route out for snmp-exporter only, to reach the NAS on 161/udp.
+  snmp: {}
 configs:
   # Pull targets of victoriametrics. unpoller refreshes its cache every
-  # minute, a shorter interval only returns the same values.
+  # minute, a shorter interval only returns the same values. For synology,
+  # the NAS goes in the target parameter and stays the instance label;
+  # the request itself goes to snmp-exporter.
   victoriametrics_scrape:
     content: |
       scrape_configs:
@@ -406,6 +442,35 @@ configs:
           scrape_interval: 60s
           static_configs:
             - targets: ["unpoller:9130"]
+        - job_name: synology
+          scrape_interval: 60s
+          scrape_timeout: 30s
+          metrics_path: /snmp
+          params:
+            module: [system, if_mib, synology]
+            auth: [synology_v3]
+          static_configs:
+            - targets: ["${SYNOLOGY_SNMP_TARGET:?Set SYNOLOGY_SNMP_TARGET}"]
+          relabel_configs:
+            - source_labels: [__address__]
+              target_label: __param_target
+            - source_labels: [__param_target]
+              target_label: instance
+            - target_label: __address__
+              replacement: snmp-exporter:9116
+  # SNMPv3 auth of snmp-exporter. $$ keeps ${...} out of Compose
+  # interpolation: the exporter expands them from its own environment.
+  snmp_exporter_auth:
+    content: |
+      auths:
+        synology_v3:
+          version: 3
+          security_level: authPriv
+          username: $${SNMP_USER}
+          password: $${SNMP_AUTH_PASS}
+          auth_protocol: SHA
+          priv_protocol: AES
+          priv_password: $${SNMP_PRIV_PASS}
   # Alert rules on VictoriaLogs (LogsQL), evaluated by vmalert-logs. Every
   # query sets its own _time window. A rule returns one series per alert:
   # its labels are the "by" fields, its value the single stats result.
@@ -1092,6 +1157,12 @@ configs:
               # stays the record time, the device time is kept as syslog_timestamp.
               parsed.syslog_timestamp = del(parsed.timestamp)
               . = merge(., parsed)
+              # RFC 5424 lets a sender put a UTF-8 BOM before the message
+              # (Synology DSM does): it would end up as the first character
+              # of _msg and break prefix matches.
+              if is_string(.message) {
+                .message = replace(string!(.message), r'^\x{FEFF}', "")
+              }
             } else {
               .parse_error = err
             }

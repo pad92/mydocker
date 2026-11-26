@@ -9,6 +9,7 @@ This stack replaces OpenObserve. It deploys the following services:
 - `alertmanager`: groups the alerts and sends them as SMS through Vector and the Free Mobile API.
 - `grafana` (container `victoria-grafana`): Authentik and Proxmox dashboards, UI on `grafana.<domain>`.
 - `unpoller`: polls the UniFi gateway and exposes its metrics to VictoriaMetrics, which scrapes them.
+- `snmp-exporter`: polls the Synology NAS over SNMPv3 when VictoriaMetrics scrapes it.
 - `victoria-init`: one-shot container that fixes the ownership of the data directories.
 
 ## Service-Specific Configuration Variables
@@ -22,6 +23,7 @@ This stack replaces OpenObserve. It deploys the following services:
 | `ALERTMANAGER_VERSION` | Alertmanager image tag. | `v0.35.1` |
 | `GRAFANA_VERSION` | Grafana image tag. | `13.2.7` |
 | `UNPOLLER_VERSION` | unpoller image tag (`ghcr.io/unpoller/unpoller`). | `v5.9.6` |
+| `SNMP_EXPORTER_VERSION` | snmp_exporter image tag (`prom/snmp-exporter`, the compose file adds the `-distroless` suffix). | `v0.31.0` |
 | `GRAFANA_LOGS_PLUGIN_VERSION` | Version of the `victoriametrics-logs-datasource` Grafana plugin. | `0.34.0` |
 | `VICTORIA_LOGS_DOMAIN` | Host name of the logs UI and of the OTLP logs endpoint. Must equal `VICTORIA_LOGS_HOST_LOCAL` in `management/.env`. | `logs.example.com` |
 | `VICTORIA_METRICS_DOMAIN` | Host name of the metrics UI and of the OTLP metrics endpoint. Must equal `VICTORIA_METRICS_HOST_LOCAL` in `management/.env`. | `metrics.example.com` |
@@ -38,18 +40,22 @@ This stack replaces OpenObserve. It deploys the following services:
 | `VECTOR_SYSLOG_SENDERS` | Known syslog senders, one JSON line keyed by source IP: `name` (FQDN, the `host_name` field) and `vendor` (`device_vendor`). Empty or invalid JSON means no table. No single quote (`'`): the value goes into a VRL raw string. | `{"192.0.2.1":{"name":"gw.example.com","vendor":"unifi"}}` |
 | `GRAFANA_ADMIN_USER` | Authentik username that becomes the Grafana server admin. | `admin` |
 | `GRAFANA_DEFAULT_ROLE` | Grafana role of the other Authentik users: `Viewer`, `Editor` or `Admin`. | `Viewer` |
-| `FREE_MOBILE_USER` | Free Mobile account ID for the SMS API. Secret: set it only in the `.env` of the host. Empty means no SMS. | *None (empty)* |
-| `FREE_MOBILE_PASS` | Free Mobile SMS API key. Secret: set it only in the `.env` of the host. Empty means no SMS. | *None (empty)* |
+| `FREE_MOBILE_USER` | Free Mobile account ID for the SMS API. Secret: set it only in the environment of the stack. Empty means no SMS. | *None (empty)* |
+| `FREE_MOBILE_PASS` | Free Mobile SMS API key. Secret: set it only in the environment of the stack. Empty means no SMS. | *None (empty)* |
 | `UNIFI_URL` | URL of the UniFi gateway that unpoller polls. Its certificate must chain to a CA of the host bundle. | `https://unifi.home.lan` |
 | `UNPOLLER_USER` | Local UniFi account of unpoller, View Only on Network. Empty means unpoller gets `403` and no UniFi metric arrives. | *None (empty)* |
-| `UNPOLLER_PASS` | Password of that account. Secret: set it only in the `.env` of the host. | *None (empty)* |
+| `UNPOLLER_PASS` | Password of that account. Secret: set it only in the environment of the stack. | *None (empty)* |
+| `SYNOLOGY_SNMP_TARGET` | Host name or IP of the Synology NAS. Required: Compose refuses to render the stack while it is unset. | `nas.example.com` |
+| `SYNOLOGY_SNMP_USER` | SNMPv3 user set in DSM. | `snmp-victoria` |
+| `SYNOLOGY_SNMP_AUTH_PASS` | SNMPv3 authentication password (SHA). Secret: set it only in the environment of the stack. Empty means every scrape of the NAS fails. | *None (empty)* |
+| `SYNOLOGY_SNMP_PRIV_PASS` | SNMPv3 privacy password (AES). Secret: set it only in the environment of the stack. | *None (empty)* |
 
 ## First Deployment
 
-1. Fill `.env` from `.env.example`, including `PUID` and `PGID`.
+1. Fill the environment of the stack from `.env.example`, including `PUID` and `PGID`. Portainer deploys the stack, so the values go into the environment of the Portainer stack (or into `.env` for a manual `docker compose` run).
 2. Generate the ingestion password hash with `htpasswd -nB collector` and replace `REPLACE_WITH_HTPASSWD_BCRYPT_HASH` in the `victoria-ingest-auth` middleware of `management/traefik_dynamic.toml`. Store the same password in the myansible vault. Until the hash is replaced, the middleware refuses every ingestion request.
 3. Set `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL` and `VICTORIA_GRAFANA_HOST_LOCAL` in `management/.env` and redeploy the management stack, so that the Authentik blueprint creates the three forward-auth applications.
-4. In the Free Mobile customer area, turn on *Mon compte > Mes options > Notifications par SMS*. Put the account ID in `FREE_MOBILE_USER` and the API key shown there in `FREE_MOBILE_PASS`, in the `.env` of the host only. Without them the alerts still fire, but no SMS leaves.
+4. In the Free Mobile customer area, turn on *Mon compte > Mes options > Notifications par SMS*. Put the account ID in `FREE_MOBILE_USER` and the API key shown there in `FREE_MOBILE_PASS`, in the environment of the stack only. Without them the alerts still fire, but no SMS leaves.
 5. Start the stack, check both databases, then open `https://<VICTORIA_GRAFANA_DOMAIN>/` and log in through Authentik:
 
 ```bash
@@ -133,7 +139,7 @@ unpoller runs as `65534:65534` with no published port and no Traefik route. It i
 Setup:
 
 1. In UniFi OS, *Admins & Users*, create a local admin restricted to local access, with the *View Only* role on Network and no access to the other applications.
-2. Put its username and password in `UNPOLLER_USER` and `UNPOLLER_PASS`, in the `.env` of the host only.
+2. Put its username and password in `UNPOLLER_USER` and `UNPOLLER_PASS`, in the environment of the stack only.
 3. Run `docker compose up -d`. Empty or wrong credentials stop unpoller only: it logs a `403` and the rest of the stack runs.
 
 After deployment, check the log and the scrape:
@@ -147,6 +153,28 @@ ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- 'http://victoriametri
 `up` must be `1` and the count above zero. The metric names start with `unpoller_` (`unpoller_device_*`, `unpoller_client_*`, `unpoller_site_*`).
 
 `up` alone proves nothing: unpoller answers its scrape with `up` at `1` even when it cannot log in to UniFi, and then exports none of these series. The `unpoller_no_unifi_data` alert covers that case. It fires when no `unpoller_device_info` series has reached VictoriaMetrics for 10 minutes, whether the URL, the account or the controller is wrong, or unpoller is down.
+
+### Synology Metrics (`snmp-exporter`)
+The Synology NAS answers SNMP only, so VictoriaMetrics scrapes it through `snmp-exporter`. The `synology` job of `victoriametrics_scrape` asks `snmp-exporter:9116/snmp` every 60 seconds, with a 30 second timeout, to poll `SYNOLOGY_SNMP_TARGET` with the `system`, `if_mib` and `synology` modules of the default `snmp.yml` and the `synology_v3` auth. The `instance` label is the NAS name.
+
+The `synology_v3` auth uses SNMPv3 with authentication and encryption (authPriv, SHA and AES). The compose file holds no password: the auth file references `${SNMP_USER}`, `${SNMP_AUTH_PASS}` and `${SNMP_PRIV_PASS}`, which the exporter expands at start (`--config.expand-environment-variables`) from its environment, filled from the `SYNOLOGY_SNMP_*` variables. Its `/config` page shows the user name but masks the passwords.
+
+snmp-exporter runs as `65534:65534` with no published port and no Traefik route. It is on the internal `victoria` network, where VictoriaMetrics reaches it, and on the `snmp` network, its only route to the NAS (UDP 161).
+
+Setup:
+
+1. In DSM, *Control Panel > Terminal & SNMP > SNMP*: enable the SNMP service, turn SNMPv1/v2c off, and enable SNMPv3 with user `snmp-victoria`, protocol SHA, and privacy protocol AES, each with its own password.
+2. In the environment of the stack, set `SYNOLOGY_SNMP_TARGET` (for example `pads918.home.lan`), and put the two passwords in `SYNOLOGY_SNMP_AUTH_PASS` and `SYNOLOGY_SNMP_PRIV_PASS`.
+3. Redeploy the stack. Wrong passwords make the scrapes of the NAS fail (`up` at `0`); the rest of the stack runs.
+
+After deployment, check the scrape:
+
+```bash
+ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- 'http://victoriametrics:8428/api/v1/query?query=up%7Bjob%3D%22synology%22%7D'"
+ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- 'http://victoriametrics:8428/api/v1/query?query=systemStatus%7Bjob%3D%22synology%22%7D'"
+```
+
+`up` must be `1`. The metric names are the MIB names, without a prefix: `systemStatus` (`1` means normal), `temperature`, `diskStatus`, `diskTemperature`, `raidStatus`, `raidFreeSize`, plus the `ifHCInOctets` family of `if_mib` and `sysUpTime` of `system`. Filter them on `job="synology"`.
 
 ## 3. Vector (`vector`)
 
@@ -298,6 +326,9 @@ The pipeline splits them into fields with a `fw_` prefix, so they never mix with
 
 Every other `KEY=value` pair becomes `fw_<key>` as a string (`fw_mac`, `fw_mark`, `fw_tos`...). A flag without a value, such as `DF` or `SYN`, becomes `true` (`fw_df`, `fw_syn`). The original packet that an ICMP error quotes between brackets is left out of the fields.
 
+#### Synology Setup
+In DSM, *Control Panel > Log Center > Log Sending*: send to the host address, port `514`, UDP, in the IETF format (RFC 5424). Add the NAS to `VECTOR_SYSLOG_SENDERS` with the `synology` vendor, for example `"192.168.69.100":{"name":"pads918.home.lan","vendor":"synology"}`. DSM starts each RFC 5424 message with a byte order mark (U+FEFF); `parse_syslog` removes it from the start of `message` and leaves any other one in place.
+
 #### UniFi Setup
 In UniFi Network, *Settings > CyberSecure > Traffic Logging* (or *System > Remote Logging* depending on the version): enable *SIEM Server* or *Syslog*, then set the host address and port `514`.
 
@@ -401,7 +432,7 @@ Switch-over order:
 
 1. Stop OpenObserve before pulling this change, while its compose file is still there (`docker compose down` in `openobserve/`, data kept): both stacks serve `logs.<domain>`. From then until step 5, the collectors get a `401` from the new endpoint and drop what they send, and no alert runs.
 2. Replace the hash of the `victoria-ingest-auth` middleware in `management/traefik_dynamic.toml` (step 2 of First Deployment).
-3. Set the three `*_HOST_LOCAL` variables (logs, metrics, Grafana), redeploy the management stack (Authentik blueprint), set `FREE_MOBILE_USER` and `FREE_MOBILE_PASS` in `.env`, then start this stack.
+3. Set the three `*_HOST_LOCAL` variables (logs, metrics, Grafana), redeploy the management stack (Authentik blueprint), set `FREE_MOBILE_USER` and `FREE_MOBILE_PASS` in the environment of the stack, then start this stack.
 4. Check `/health` on both hosts, then log in to the two UIs and to Grafana through Authentik.
 5. Put the ingestion password in the myansible vault (`vault_victoria_ingest_auth`), redeploy the collectors (`make logs` in myansible) and check that every host shows up in VictoriaLogs.
 6. Run the metric name check of [Alerting](#post-deployment-check-of-the-metric-names) once Proxmox has sent metrics.
@@ -409,15 +440,17 @@ Switch-over order:
 
 ## 6. Tests
 
-[`tests/test_stack.sh`](./tests/test_stack.sh) renders the compose file with `.env.example` and checks the exposure without starting anything: forward auth first on the three UI routers, the ingestion and health routers limited to their method, path, middleware and service, forward auth on every other router of the three hosts, no published port except the UDP syslog port, the Grafana auth proxy settings (no login form, Basic auth, anonymous access or `GF_AUTH_DISABLE_LOGIN`), vmalert and Alertmanager on the internal `victoria` network only, unpoller without route or port, as `65534:65534`, with TLS verification, InfluxDB and DPI off, no password in `.env.example` and alone on the `unpoller` network, the scrape config that targets `unpoller:9130`, and the `victoria-ingest-auth` middleware in `management/traefik_dynamic.toml.example`. It needs Docker Compose 2.23 or later, `jq` and Python 3.11 or later.
+[`tests/test_stack.sh`](./tests/test_stack.sh) renders the compose file with `.env.example` and checks the exposure without starting anything: forward auth first on the three UI routers, the ingestion and health routers limited to their method, path, middleware and service, forward auth on every other router of the three hosts, no published port except the UDP syslog port, the Grafana auth proxy settings (no login form, Basic auth, anonymous access or `GF_AUTH_DISABLE_LOGIN`), vmalert and Alertmanager on the internal `victoria` network only, unpoller without route or port, as `65534:65534`, with TLS verification, InfluxDB and DPI off, no password in `.env.example` and alone on the `unpoller` network, the scrape config that targets `unpoller:9130`, snmp-exporter without route or port, as `65534:65534`, alone on the `snmp` network, with SNMPv3 authPriv (SHA, AES), no password in `.env.example` and the `${...}` references that the exporter expands, the `synology` job sent to `snmp-exporter:9116`, and the `victoria-ingest-auth` middleware in `management/traefik_dynamic.toml.example`. It needs Docker Compose 2.23 or later, `jq` and Python 3.11 or later.
 
-[`tests/test_vector.sh`](./tests/test_vector.sh) renders the compose file with `.env.example`, runs `vector validate` on the pipeline, then the Vector unit tests of [`otlp_test.yaml`](./tests/otlp_test.yaml) (normalization, routing, secret masking, HAProxy), [`authentik_test.yaml`](./tests/authentik_test.yaml), [`proxmox_test.yaml`](./tests/proxmox_test.yaml), [`syslog_test.yaml`](./tests/syslog_test.yaml) (syslog, CEF, firewall) and [`sms_test.yaml`](./tests/sms_test.yaml) (SMS text, truncation, missing credentials). It needs Docker, Docker Compose 2.23 or later and `jq`, and makes no network call.
+[`tests/test_vector.sh`](./tests/test_vector.sh) renders the compose file with `.env.example`, runs `vector validate` on the pipeline, then the Vector unit tests of [`otlp_test.yaml`](./tests/otlp_test.yaml) (normalization, routing, secret masking, HAProxy), [`authentik_test.yaml`](./tests/authentik_test.yaml), [`proxmox_test.yaml`](./tests/proxmox_test.yaml), [`syslog_test.yaml`](./tests/syslog_test.yaml) (syslog, CEF, firewall, Synology byte order mark) and [`sms_test.yaml`](./tests/sms_test.yaml) (SMS text, truncation, missing credentials). It needs Docker, Docker Compose 2.23 or later and `jq`, and makes no network call.
 
 [`tests/test_ingest.sh`](./tests/test_ingest.sh) starts VictoriaLogs and Vector on a throwaway internal network, sends one OTLP/HTTP protobuf record to Vector with a `stream-name` header, then queries VictoriaLogs. It checks what the unit tests cannot: the OTLP source, the sink query string (`_stream_fields`, `_msg_field`, `_time_field`), the stored fields and stream, and the masking of a URL secret. It needs Docker, Docker Compose 2.23 or later, `jq` and Python 3, uses the local images (`CLIENT_IMAGE` overrides the busybox client, `busybox:1.37` by default), and takes about 20 seconds. The Vector OTLP/HTTP source only accepts protobuf: an OTLP JSON request gets an HTTP 500.
 
 [`tests/test_alerting.sh`](./tests/test_alerting.sh) first checks the rules and the routing without starting anything: `vmalert -dryRun` on both rule sets, `amtool check-config`, one Alertmanager route per alert with a `repeat_interval` equal to the `keep_firing_for` of the rule, no route without a rule, and a receiver that targets the Vector webhook. It then starts VictoriaLogs, VictoriaMetrics, vmalert-logs, Alertmanager and Vector on a throwaway internal network, with 5 second rule intervals and the `free_mobile` sink pointed at VictoriaLogs. It sends a failed vzdump, a failed `acmerenew` task and a failed `qmstart` task, and expects one SMS body for `proxmox_backup_failed` and one for `proxmox_task_failed` that names `qmstart` only. It does not cover the Proxmox parsing (see `proxmox_test.yaml`), the metric rules on real data or the Free Mobile API. It needs Docker, Docker Compose 2.23 or later, `jq` and Python 3 with PyYAML, makes no Internet call, and waits at most `ALERTING_TIMEOUT` seconds (120 by default).
 
 [`tests/test_unpoller.sh`](./tests/test_unpoller.sh) starts VictoriaMetrics with its rendered command and scrape config on a throwaway internal network, next to a busybox HTTP server that answers as `unpoller` on port 9130 with a fixed metric. It expects `up{job="unpoller",instance="unpoller:9130"}` at `1` and the fixed value in VictoriaMetrics, which proves that VictoriaMetrics accepts the scrape config and that the job, host and port match. It checks that the rendered interval is 60 seconds and lowers it to 5 seconds in its copy only. It then starts vmalert with the rendered command and metric rules, the `unifi_metrics` group lowered from 1 minute to 5 seconds in its copy. While the server answers with `unpoller_device_info`, `unpoller_no_unifi_data` must stay inactive for 3 evaluations, with a `for` of 10 minutes. Once the server answers with Go metrics only, the alert must turn pending with `job="unpoller"` and severity `warning`, while `up` stays at `1`. Alertmanager is not started. It does not cover unpoller itself or the UniFi API; use the post-deployment check of [UniFi Metrics](#unifi-metrics-unpoller). It needs Docker, Docker Compose 2.23 or later and `jq`, makes no Internet call, and waits at most `UNPOLLER_TIMEOUT` seconds (60 by default).
+
+[`tests/test_synology.sh`](./tests/test_synology.sh) checks the SNMP path in two parts, on a throwaway internal network. It first runs the real snmp-exporter image with its rendered command and auth file and test values in its environment: `/config` must show the test user name and no test password, a probe with a wrong module or auth name must get `400`, and a probe with the modules and auth of the `synology` job must get `500` (names known, NAS unreachable). It then runs VictoriaMetrics with its rendered scrape config next to a busybox server that answers as `snmp-exporter:9116` with a fixed metric, and expects `up{job="synology"}` at `1` with the NAS as `instance`, the fixed value stored, and a request to `/snmp` with the NAS as target, the three modules and the `synology_v3` auth. It lowers the interval and timeout to 5 seconds in its copy only. It does not cover SNMPv3 against the NAS; use the post-deployment check of [Synology Metrics](#synology-metrics-snmp-exporter). It needs Docker, Docker Compose 2.23 or later and `jq`, makes no Internet call, and waits at most `SYNOLOGY_TIMEOUT` seconds (60 by default).
 
 [`tests/test_dashboards.sh`](./tests/test_dashboards.sh) starts VictoriaLogs, VictoriaMetrics and Grafana with sample data. It checks that the Grafana API answers `401` without the `X-authentik-username` header, refuses Basic auth and the `admin/admin` login form, and gives a new user the Viewer role and both dashboards. Every query of the two dashboards then goes through the Grafana datasource API, template variables replaced by a test value: each VictoriaLogs query must return data and each VictoriaMetrics query must answer `200`. It also checks the version of the loaded plugin. The plugin is read from `GRAFANA_PLUGIN_DIR` (a `plugins` directory that holds `victoriametrics-logs-datasource`, for example the one of a Grafana that ran this stack) and the test makes no Internet call. It does not cover the browser rendering, the Authentik outpost or the real Proxmox metric names, which [`tests/check_metric_names.sh`](./tests/check_metric_names.sh) checks against a running VictoriaMetrics (see [Post-Deployment Check of the Metric Names](#post-deployment-check-of-the-metric-names)).
 
@@ -428,4 +461,5 @@ Switch-over order:
 ./tests/test_alerting.sh
 GRAFANA_PLUGIN_DIR=/path/to/plugins ./tests/test_dashboards.sh
 ./tests/test_unpoller.sh
+./tests/test_synology.sh
 ```

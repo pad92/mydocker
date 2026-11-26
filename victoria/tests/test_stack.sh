@@ -17,7 +17,13 @@
 # - unpoller has no Traefik label and no port, runs as 65534, verifies TLS
 #   with the host CA bundle, has InfluxDB and DPI off and no password in
 #   .env.example; it alone joins the unpoller network (the route out);
-# - victoriametrics loads the scrape config that targets unpoller:9130;
+# - snmp-exporter has no Traefik label and no port, runs as 65534, joins only
+#   the snmp network (its route out, which only it joins) and victoria, and
+#   polls the NAS with SNMPv3 authPriv (SHA, AES); its passwords are empty in
+#   .env.example and reach the auth file as ${...} references that the
+#   exporter expands, never as values written into the compose file;
+# - victoriametrics loads the scrape config that targets unpoller:9130, and
+#   sends the synology job to snmp-exporter:9116;
 # - no service publishes a host port except vector, which publishes only the
 #   UDP syslog port: 9428, 8428 and 4318 have no authentication of their own;
 # - the victoria-ingest-auth middleware exists in the Traefik file provider
@@ -155,13 +161,38 @@ unpoller_env() { jq -r --arg k "$1" '.services.unpoller.environment[$k] // "unse
 [ "$(unpoller_env UP_UNIFI_DEFAULT_SAVE_DPI)" = false ] || fail "unpoller DPI collection is on"
 [ "$(unpoller_env UP_PROMETHEUS_HTTP_LISTEN)" = "0.0.0.0:9130" ] \
   || fail "unpoller does not listen on 9130"
-# The password belongs in the host .env only.
+# The password belongs in the environment of the stack only.
 [ "$(unpoller_env UP_UNIFI_DEFAULT_PASS)" = "" ] \
   || fail "UNPOLLER_PASS has a value in .env.example or the compose file"
 jq -e '.services.unpoller.volumes | any(.type == "bind"
   and .source == "/etc/ssl/certs/ca-certificates.crt"
   and .target == "/etc/ssl/certs/ca-certificates.crt" and .read_only == true)' \
   <<<"$config" >/dev/null || fail "unpoller does not get the host CA bundle read-only"
+
+# snmp-exporter: same isolation as unpoller, on the snmp network.
+jq -e '.services["snmp-exporter"] | ((.labels // {}) | length) == 0
+  and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
+  and (.networks | keys) == ["snmp", "victoria"]' <<<"$config" >/dev/null \
+  || fail "snmp-exporter has labels, ports or unexpected networks"
+on_snmp_net="$(jq -c '[.services | to_entries[]
+  | select((.value.networks // {}) | has("snmp")) | .key]' <<<"$config")"
+[ "$on_snmp_net" = '["snmp-exporter"]' ] || fail "services on the snmp network: $on_snmp_net"
+jq -e '.networks.snmp.internal != true' <<<"$config" >/dev/null \
+  || fail "the snmp network is internal: snmp-exporter cannot reach the NAS"
+[ "$(jq -r '.services["snmp-exporter"].user' <<<"$config")" = "65534:65534" ] \
+  || fail "snmp-exporter does not run as 65534:65534"
+snmp_env() { jq -r --arg k "$1" '.services["snmp-exporter"].environment[$k] // "unset"' <<<"$config"; }
+for k in SNMP_AUTH_PASS SNMP_PRIV_PASS; do
+  [ "$(snmp_env "$k")" = "" ] || fail "$k has a value in .env.example or the compose file"
+done
+jq -e '.services["snmp-exporter"].command | index("--config.expand-environment-variables")' \
+  <<<"$config" >/dev/null || fail "snmp-exporter does not expand the \${...} references"
+# "compose config" prints a literal $ as $$; gsub gives the mounted file.
+auth_yml="$(jq -r '.configs.snmp_exporter_auth.content | gsub("\\$\\$"; "$")' <<<"$config")"
+for line in 'version: 3' 'security_level: authPriv' 'auth_protocol: SHA' 'priv_protocol: AES' \
+  'username: ${SNMP_USER}' 'password: ${SNMP_AUTH_PASS}' 'priv_password: ${SNMP_PRIV_PASS}'; do
+  grep -qxF "    $line" <<<"$auth_yml" || fail "snmp_exporter_auth has no '$line'"
+done
 
 # victoriametrics scrapes unpoller with the victoriametrics_scrape config
 # (test_unpoller.sh checks that VictoriaMetrics accepts it and scrapes).
@@ -170,6 +201,9 @@ jq -e '.services.victoriametrics | (.command | index("-promscrape.config=/etc/vi
   <<<"$config" >/dev/null || fail "victoriametrics does not load victoriametrics_scrape"
 jq -e '.configs.victoriametrics_scrape.content | test("targets: \\[\"unpoller:9130\"\\]")' \
   <<<"$config" >/dev/null || fail "victoriametrics_scrape does not target unpoller:9130"
+jq -e '.configs.victoriametrics_scrape.content
+  | test("- job_name: synology\n(.*\n)*? *metrics_path: /snmp\n(.*\n)*? *replacement: snmp-exporter:9116\n")' \
+  <<<"$config" >/dev/null || fail "the synology job does not go to snmp-exporter:9116/snmp"
 
 python3 -I - "$stack_dir/../management/traefik_dynamic.toml.example" <<'EOF' \
   || fail "victoria-ingest-auth is missing or not a header-removing Basic auth in traefik_dynamic.toml.example"

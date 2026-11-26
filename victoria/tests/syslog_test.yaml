@@ -108,6 +108,40 @@ tests:
               assert!(!exists(.cef_parse_error))
               assert_eq!(.host_name, "nas.example.com")
 
+  # Synology DSM sends RFC 5424 with a UTF-8 BOM before the message.
+  - name: RFC 5424 message of the NAS loses its BOM
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.2
+          message: "<14>1 2026-11-26T10:00:00+01:00 nas Connection - - [meta sequenceId=\"7\"] ﻿User [admin] logged in from [192.0.2.50] via [DSM]."
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "User [admin] logged in from [192.0.2.50] via [DSM].")
+              assert_eq!(.appname, "Connection")
+              assert_eq!(.host_name, "nas.example.com")
+              assert_eq!(.device_vendor, "synology")
+              assert_eq!(.log_stream, "syslog")
+
+  # Only a leading BOM is removed: one inside the text stays.
+  - name: BOM inside the message is kept
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 192.0.2.2
+          message: "<14>1 2026-11-26T10:00:00+01:00 nas Connection - - - a﻿b"
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "a\u{FEFF}b")
+
   - name: IPv6 firewall log of the gateway is split into fw_ fields
     inputs:
       - insert_at: parse_syslog
