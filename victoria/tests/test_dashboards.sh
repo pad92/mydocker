@@ -8,8 +8,8 @@
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
 # - with the header a new user is created with the Viewer role and sees the
-#   eleven provisioned dashboards (Authentik, Proxmox, UniFi, Synology, hosts,
-#   logs, Docker, DNS, firewall, HTTP, alerts);
+#   twelve provisioned dashboards (Authentik, Proxmox, UniFi, Synology, hosts,
+#   logs, Docker, DNS, firewall, HTTP, alerts, disks);
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
 # - every VictoriaLogs target of the dashboards, sent as the viewer to
@@ -25,8 +25,10 @@
 # - every VictoriaMetrics target answers 200 without error; the targets of
 #   the hosts dashboard also return data from host metrics imported before
 #   (one silent host, one degraded ZFS pool), except "silent hosts" for a host
-#   that still reports, which must return none. There is no Proxmox, UniFi or
-#   Synology metric in the test, so their targets only have to parse;
+#   that still reports, which must return none. The host S.M.A.R.T. targets
+#   of the disks dashboard return data from smartctl_exporter series imported
+#   before. There is no Proxmox, UniFi or Synology metric in the test, so
+#   their targets only have to parse;
 # - the IP tables of the DNS and firewall dashboards (two per dashboard) and
 #   the client table of the HTTP dashboard join
 #   their IP with UnPoller client and device series imported before: each
@@ -109,7 +111,7 @@ while IFS=$'\t' read -r source target; do
     "$work_dir/compose.json" > "$work_dir/configs/$source"
   mounts+=(-v "$work_dir/configs/$source:$target:ro")
 done < <(jq -r '.services.grafana.configs[] | [.source, .target] | @tsv' "$work_dir/compose.json")
-[[ ${#mounts[@]} -eq 26 ]] || fail "expected 13 Grafana configs, got $((${#mounts[@]} / 2))"
+[[ ${#mounts[@]} -eq 28 ]] || fail "expected 14 Grafana configs, got $((${#mounts[@]} / 2))"
 
 pinned="$(jq -r '.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC' "$work_dir/compose.json")"
 [[ "$pinned" == "$plugin_id@"* ]] || fail "GF_PLUGINS_PREINSTALL_SYNC is '$pinned', expected $plugin_id@<version>"
@@ -316,6 +318,25 @@ for direction in ("receive", "transmit"):
            [(m, (20 - m) * 9000) for m in recent])
 series("zfs_pool_health", {"host_name": "pve.home.lan", "pool": "rpool"}, [(m, 1) for m in recent])
 series("zfs_pool_capacity_ratio", {"host_name": "pve.home.lan", "pool": "rpool"}, [(m, 0.6) for m in recent])
+# smartctl_exporter on smart-test.example: a hard disk with bad sectors, CRC and
+# logged errors, and an SSD that has used 8 % of its life.
+smart = {"host_name": "smart-test.example", "service_name": "smart"}
+for device, model, protocol in (("sda", "WDC WD40EFRX", "ATA"), ("sdb", "Samsung SSD 870", "ATA")):
+    disk = {**smart, "device": device}
+    series("smartctl_device", {**disk, "model_name": model, "protocol": protocol}, [(m, 1) for m in recent])
+    series("smartctl_device_capacity_bytes", disk, [(m, 4e12) for m in recent])
+    series("smartctl_device_smart_status", disk, [(m, 1) for m in recent])
+    series("smartctl_device_temperature", {**disk, "temperature_type": "current"}, [(m, 38) for m in recent])
+    series("smartctl_device_power_on_seconds", disk, [(m, 9e7 + m) for m in recent])
+    series("smartctl_device_power_cycle_count", disk, [(m, 120) for m in recent])
+for name, kind, value in (("Reallocated_Sector_Ct", "raw", 8), ("Current_Pending_Sector", "raw", 2),
+                          ("Offline_Uncorrectable", "raw", 1), ("UDMA_CRC_Error_Count", "raw", 3)):
+    series("smartctl_device_attribute", {**smart, "device": "sda", "attribute_name": name,
+                                         "attribute_value_type": kind}, [(m, value) for m in recent])
+series("smartctl_device_error_log_count", {**smart, "device": "sda", "error_log_type": "summary"},
+       [(m, 4) for m in recent])
+series("smartctl_device_attribute", {**smart, "device": "sdb", "attribute_name": "Wear_Leveling_Count",
+                                     "attribute_value_type": "value"}, [(m, 92) for m in recent])
 # UnPoller clients and devices, which name the IPs of the DNS and firewall
 # tables. DHCP gave 192.168.0.10 to "old-pc" until 3 h ago, then to "laptop":
 # the mapping keeps one row per IP, the MAC seen last, although old-pc has the
@@ -364,7 +385,7 @@ def substitute(expr, datasource, variables, variant, all_values):
 
 index = []
 for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
-             "docker", "dns", "firewall", "http", "alerts"):
+             "docker", "dns", "firewall", "http", "alerts", "disks"):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     declared = {v["name"] for v in dash.get("templating", {}).get("list", [])}
     all_values = {v["name"]: v.get("allValue") for v in dash.get("templating", {}).get("list", [])
@@ -515,9 +536,15 @@ orgs = load("orgs.json")
 if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
     errors.append(f"new user roles {orgs}, expected one org with Viewer")
 
-expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-dns", "victoria-docker", "victoria-firewall",
+expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-disks", "victoria-dns", "victoria-docker",
+                 "victoria-firewall",
                  "victoria-hosts", "victoria-http", "victoria-logs", "victoria-proxmox", "victoria-synology",
                  "victoria-unifi"]
+# Host S.M.A.R.T. panels of the disks dashboard, which must return the
+# smartctl_exporter series imported before (the NAS targets only parse).
+smart_panels = {("victoria-disks", title) for title in (
+    "Disques des hôtes", "Température des disques des hôtes",
+    "Secteurs défectueux des disques des hôtes", "Vie restante des SSD des hôtes")}
 # Targets that must return nothing: test.home.lan is not silent.
 expected_empty = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "value")}
 # Exact values from the Traefik records: 4 lines match the four values (one
@@ -651,7 +678,8 @@ for q in index:
         elif ips["192.168.0.10"][0] != ("aa:bb:cc:00:00:10", "laptop"):
             errors.append(f"{label}: 192.168.0.10 maps to {ips['192.168.0.10'][0]}, expected the MAC seen last")
         continue
-    if q["datasource"] == "victorialogs" or q["dashboard"] == "victoria-hosts":
+    if (q["datasource"] == "victorialogs" or q["dashboard"] == "victoria-hosts"
+            or (q["dashboard"], q["panel"]) in smart_panels):
         found = any(has_data(f) for f in result.get("frames", []))
         if (q["dashboard"], q["panel"], q["variant"]) in expected_empty:
             if found:

@@ -417,6 +417,8 @@ services:
         target: /etc/grafana/dashboards/http.json
       - source: grafana_dashboard_alerts
         target: /etc/grafana/dashboards/alerts.json
+      - source: grafana_dashboard_disks
+        target: /etc/grafana/dashboards/disks.json
     volumes:
       - ${GRAFANA_DATA_DIR:?Set GRAFANA_DATA_DIR}:/var/lib/grafana
     # traefik_gateway for Traefik and to download the plugin; victoria for
@@ -925,6 +927,73 @@ configs:
               annotations:
                 summary: "Pool ZFS {{ $$labels.pool }} rempli a {{ $$value | humanizePercentage }}"
                 description: "Un pool ZFS depasse 85% de remplissage, au-dela les performances chutent"
+        # smartctl_exporter on the hosts (myansible role smartctl_exporter).
+        # Raw counts are gauges: the rise above their 24h minimum, not delta,
+        # which counts the first value of a new series (an old CRC error
+        # after a deployment) as a rise. A normalized value at or under its
+        # non-zero threshold is the drive's own failure flag.
+        - name: smart
+          interval: 1m
+          rules:
+            - alert: smart_status_failed
+              expr: smartctl_device_smart_status == 0
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Disque {{ $$labels.device }} de {{ $$labels.host_name }} : bilan SMART en echec"
+                description: "Le disque annonce lui-meme une panne prochaine : sauvegarder et le remplacer"
+            - alert: smart_attribute_failing
+              expr: >-
+                max by (host_name, device, attribute_name) (smartctl_device_attribute{attribute_value_type="value"}
+                <= ignoring(attribute_value_type) (smartctl_device_attribute{attribute_value_type="thresh"} > 0))
+              keep_firing_for: 1440m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Disque {{ $$labels.device }} de {{ $$labels.host_name }} : {{ $$labels.attribute_name }} sous son seuil ({{ $$value }})"
+                description: "Un attribut SMART normalise est descendu a son seuil de panne"
+            - alert: smart_sectors_growing
+              expr: >-
+                max by (host_name, device, attribute_name) (smartctl_device_attribute{attribute_value_type="raw",
+                attribute_name=~"Reallocated_Sector_Ct|Current_Pending_Sector|Current_Pending_ECC_Cnt|Offline_Uncorrectable|Reported_Uncorrect"}
+                - min_over_time(smartctl_device_attribute{attribute_value_type="raw",
+                attribute_name=~"Reallocated_Sector_Ct|Current_Pending_Sector|Current_Pending_ECC_Cnt|Offline_Uncorrectable|Reported_Uncorrect"}[24h])) > 0
+              keep_firing_for: 1440m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Disque {{ $$labels.device }} de {{ $$labels.host_name }} : {{ $$labels.attribute_name }} +{{ $$value }} en 24h"
+                description: "Des secteurs realloues, en attente ou illisibles apparaissent : le disque se degrade"
+            - alert: smart_crc_errors_growing
+              expr: >-
+                max by (host_name, device) (smartctl_device_attribute{attribute_value_type="raw",
+                attribute_name=~"UDMA_CRC_Error_Count|CRC_Error_Count"}
+                - min_over_time(smartctl_device_attribute{attribute_value_type="raw",
+                attribute_name=~"UDMA_CRC_Error_Count|CRC_Error_Count"}[24h])) > 0
+              keep_firing_for: 1440m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Disque {{ $$labels.device }} de {{ $$labels.host_name }} : +{{ $$value }} erreurs CRC en 24h"
+                description: "Des erreurs de transfert apparaissent entre le disque et le controleur : cable ou connecteur"
+            - alert: smart_temperature_high
+              expr: max by (host_name, device) (smartctl_device_temperature{temperature_type="current"}) > 55
+              for: 10m
+              keep_firing_for: 120m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Disque {{ $$labels.device }} de {{ $$labels.host_name }} a {{ $$value }} degres"
+                description: "Un disque d'hote depasse 55 degres depuis 10 minutes"
+            - alert: smart_data_missing
+              expr: max by (host_name) (lag(smartctl_device_smart_status[24h])) > 1800
+              keep_firing_for: 120m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Plus de donnee SMART de {{ $$labels.host_name }} depuis 30 minutes"
+                description: "smartctl_exporter ou sa collecte par le collecteur OpenTelemetry est arrete"
         # Synology status OIDs are 1 when normal. diskBadSector is -1 on
         # cache devices, so only a positive count fires.
         - name: synology_metrics
@@ -1123,6 +1192,18 @@ configs:
             repeat_interval: 60m
           - matchers: [alertname="zfs_pool_capacity_high"]
             repeat_interval: 720m
+          - matchers: [alertname="smart_status_failed"]
+            repeat_interval: 60m
+          - matchers: [alertname="smart_attribute_failing"]
+            repeat_interval: 1440m
+          - matchers: [alertname="smart_sectors_growing"]
+            repeat_interval: 1440m
+          - matchers: [alertname="smart_crc_errors_growing"]
+            repeat_interval: 1440m
+          - matchers: [alertname="smart_temperature_high"]
+            repeat_interval: 120m
+          - matchers: [alertname="smart_data_missing"]
+            repeat_interval: 120m
           - matchers: [alertname="synology_system_failed"]
             repeat_interval: 60m
           - matchers: [alertname="synology_raid_degraded"]
@@ -13795,7 +13876,7 @@ configs:
           {
             "type": "table",
             "title": "Historique des alertes",
-            "description": "Règles passées par un état actif, en attente ou en erreur sur la période, une ligne par épisode : actif depuis (début réel de l'alerte, même avant la période), première et dernière fois vue dans cet état, et la dernière raison. Les erreurs d'évaluation n'ont pas de début d'alerte et restent regroupées.",
+            "description": "Règles passées par un état actif, en attente ou en erreur sur la période, une ligne par épisode : actif depuis (début réel de l'alerte, même avant la période), première et dernière fois vue dans cet état, et la dernière raison. Les erreurs d'évaluation n'ont pas de début d'alerte et restent regroupées. Une règle à plusieurs alertes dont la plus ancienne se termine change de début et ouvre une nouvelle ligne.",
             "datasource": {
               "type": "victoriametrics-logs-datasource",
               "uid": "victorialogs"
@@ -13964,6 +14045,18 @@ configs:
                 {
                   "matcher": {
                     "id": "byName",
+                    "options": "actif depuis"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 180
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
                     "options": "règle"
                   },
                   "properties": [
@@ -13985,6 +14078,3065 @@ configs:
               "y": 30,
               "w": 24,
               "h": 12
+            }
+          }
+        ]
+      }
+  grafana_dashboard_disks:
+    content: |
+      {
+        "uid": "victoria-disks",
+        "title": "Disques",
+        "tags": [
+          "disques",
+          "victoriametrics",
+          "victoria"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          }
+        ],
+        "templating": {
+          "list": []
+        },
+        "annotations": {
+          "list": []
+        },
+        "panels": [
+          {
+            "type": "row",
+            "title": "État",
+            "collapsed": false,
+            "panels": [],
+            "id": 1,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Disques en défaut",
+            "description": "Disques du NAS dont l'état ou la santé n'est pas normal, ou qui ont un secteur défectueux. Disques des hôtes dont le verdict SMART est en échec, ou qui ont un secteur en attente ou illisible.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "(sum(clamp_max(sum by (diskID) (diskStatus != bool 1) + sum by (diskID) (diskHealthStatus != bool 1) + sum by (diskID) (diskBadSector > bool 0), 1)) or vector(0)) + (count(max by (host_name, device) (smartctl_device_smart_status == 0) or max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"raw\", attribute_name=~\"Current_Pending_Sector|Current_Pending_ECC_Cnt|Offline_Uncorrectable\"} > 0) or max by (host_name, device) (smartctl_device_media_errors > 0)) or vector(0))",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 0,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Attributs SMART en échec",
+            "description": "Attributs SMART des disques durs du NAS dont le statut n'est pas OK, et attributs des disques des hôtes dont la valeur normalisée est descendue au seuil du constructeur.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "(count(diskSMARTAttrStatus{diskSMARTAttrStatus!=\"OK\"}) or vector(0)) + (count(smartctl_device_attribute{attribute_value_type=\"value\"} <= ignoring(attribute_value_type) (smartctl_device_attribute{attribute_value_type=\"thresh\"} > 0)) or vector(0))",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 3,
+            "gridPos": {
+              "x": 4,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Pools dégradés",
+            "description": "Pools et volumes Synology qui ne sont pas normaux, et pools ZFS de Proxmox qui ne sont pas ONLINE.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "(sum(raidStatus != bool 1) or vector(0)) + (sum(zfs_pool_health != bool 0) or vector(0))",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 8,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Température disque max",
+            "description": "Température du disque le plus chaud, du NAS ou d'un hôte. Les alertes synology_temperature_high et smart_temperature_high se déclenchent au-dessus de 55 °C.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(diskTemperature or smartctl_device_temperature{temperature_type=\"current\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "celsius",
+                "noValue": "n/d",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 45
+                    },
+                    {
+                      "color": "red",
+                      "value": 55
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 12,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Vie restante SSD min",
+            "description": "Vie restante la plus basse des SSD, ceux de cache du NAS (selon Synology) et ceux des hôtes (attribut d'usure SMART). Les disques durs n'en ont pas.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "min((diskRemainLife >= 0) or max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"value\", attribute_name=~\"Percent_Lifetime_Remain|Wear_Leveling_Count|Media_Wearout_Indicator|SSD_Life_Left\"}) or max by (host_name, device) (100 - smartctl_device_percentage_used))",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "noValue": "n/d",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 10
+                    },
+                    {
+                      "color": "green",
+                      "value": 30
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 6,
+            "gridPos": {
+              "x": 16,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Système de fichiers le plus plein",
+            "description": "Occupation du système de fichiers le plus plein des hôtes Linux (sans vfat ni tmpfs).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(system_filesystem_utilization_ratio{type!~\"vfat|tmpfs\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "noValue": "n/d",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.8
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.9
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                },
+                "decimals": 1
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 7,
+            "gridPos": {
+              "x": 20,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "row",
+            "title": "NAS Synology : disques",
+            "collapsed": false,
+            "panels": [],
+            "id": 8,
+            "gridPos": {
+              "x": 0,
+              "y": 5,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "table",
+            "title": "Disques du NAS",
+            "description": "Un disque par ligne, avec l'état et la santé que rapporte Synology. n/d : valeur non fournie pour ce type de disque (vie restante des disques durs, secteurs défectueux des SSD).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskID, diskModel, diskType, diskRole) (diskTemperature * on(diskID) group_left(diskModel) diskModel * on(diskID) group_left(diskType) diskType * on(diskID) group_left(diskRole) diskRole)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskID) (diskStatus)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskID) (diskHealthStatus)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "D",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskID) (diskRemainLife)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "E",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskID) (diskBadSector)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "F",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskID) (diskRetry)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "G",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskID) (diskIdentifyFail)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "merge",
+                "options": {}
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "excludeByName": {
+                    "Time": true
+                  },
+                  "indexByName": {
+                    "diskID": 0,
+                    "diskModel": 1,
+                    "diskType": 2,
+                    "diskRole": 3,
+                    "Value #B": 4,
+                    "Value #C": 5,
+                    "Value #A": 6,
+                    "Value #D": 7,
+                    "Value #E": 8,
+                    "Value #F": 9,
+                    "Value #G": 10
+                  },
+                  "renameByName": {
+                    "diskID": "disque",
+                    "diskModel": "modèle",
+                    "diskType": "type",
+                    "diskRole": "rôle",
+                    "Value #A": "température",
+                    "Value #B": "état",
+                    "Value #C": "santé",
+                    "Value #D": "vie restante",
+                    "Value #E": "secteurs défectueux",
+                    "Value #F": "retries",
+                    "Value #G": "échecs d'identification"
+                  }
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  }
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "température"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "celsius"
+                    },
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "orange",
+                            "value": 45
+                          },
+                          {
+                            "color": "red",
+                            "value": 55
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "état"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "Normal",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "2": {
+                              "text": "Initialisé",
+                              "color": "orange",
+                              "index": 1
+                            },
+                            "3": {
+                              "text": "Non initialisé",
+                              "color": "orange",
+                              "index": 2
+                            },
+                            "4": {
+                              "text": "Partition système en échec",
+                              "color": "red",
+                              "index": 3
+                            },
+                            "5": {
+                              "text": "En panne",
+                              "color": "red",
+                              "index": 4
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "santé"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "Normal",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "2": {
+                              "text": "Avertissement",
+                              "color": "orange",
+                              "index": 1
+                            },
+                            "3": {
+                              "text": "Critique",
+                              "color": "red",
+                              "index": 2
+                            },
+                            "4": {
+                              "text": "En échec",
+                              "color": "red",
+                              "index": 3
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "vie restante"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "percent"
+                    },
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "-1": {
+                              "text": "n/d",
+                              "color": "transparent",
+                              "index": 0
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "red",
+                            "value": null
+                          },
+                          {
+                            "color": "orange",
+                            "value": 10
+                          },
+                          {
+                            "color": "green",
+                            "value": 30
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "secteurs défectueux"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "-1": {
+                              "text": "n/d",
+                              "color": "transparent",
+                              "index": 0
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "red",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "retries"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "orange",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "échecs d'identification"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "orange",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm",
+              "footer": {
+                "show": false
+              },
+              "sortBy": [
+                {
+                  "displayName": "disque",
+                  "desc": false
+                }
+              ]
+            },
+            "id": 9,
+            "gridPos": {
+              "x": 0,
+              "y": 6,
+              "w": 24,
+              "h": 7
+            }
+          },
+          {
+            "type": "table",
+            "title": "Usure SMART des disques durs du NAS",
+            "description": "Valeurs brutes SMART des disques durs du NAS, par périphérique. Synology ne publie pas le SMART des SSD de cache par SNMP. Un compteur de secteurs ou d'erreurs non corrigées qui monte annonce une panne ; les erreurs CRC viennent plutôt du câble ou du fond de panier. Seagate code les attributs Raw_Error_Rate et Seek_Error_Rate sur plusieurs champs, ils ne sont donc pas affichés.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskSMARTInfoDevName) (diskSMARTAttrRaw * on(diskSMARTInfoIndex) group_left(diskSMARTInfoDevName) diskSMARTInfoDevName * on(diskSMARTInfoIndex) group_left() diskSMARTAttrName{diskSMARTAttrName=\"Power_On_Hours\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskSMARTInfoDevName) (diskSMARTAttrRaw * on(diskSMARTInfoIndex) group_left(diskSMARTInfoDevName) diskSMARTInfoDevName * on(diskSMARTInfoIndex) group_left() diskSMARTAttrName{diskSMARTAttrName=\"Start/Stop_Count\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskSMARTInfoDevName) (diskSMARTAttrRaw * on(diskSMARTInfoIndex) group_left(diskSMARTInfoDevName) diskSMARTInfoDevName * on(diskSMARTInfoIndex) group_left() diskSMARTAttrName{diskSMARTAttrName=\"Load/Unload_Count\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "D",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskSMARTInfoDevName) (diskSMARTAttrRaw * on(diskSMARTInfoIndex) group_left(diskSMARTInfoDevName) diskSMARTInfoDevName * on(diskSMARTInfoIndex) group_left() diskSMARTAttrName{diskSMARTAttrName=\"Retired_Sectors_Count\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "E",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskSMARTInfoDevName) (diskSMARTAttrRaw * on(diskSMARTInfoIndex) group_left(diskSMARTInfoDevName) diskSMARTInfoDevName * on(diskSMARTInfoIndex) group_left() diskSMARTAttrName{diskSMARTAttrName=\"Pending-Sparing_Count\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "F",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskSMARTInfoDevName) (diskSMARTAttrRaw * on(diskSMARTInfoIndex) group_left(diskSMARTInfoDevName) diskSMARTInfoDevName * on(diskSMARTInfoIndex) group_left() diskSMARTAttrName{diskSMARTAttrName=\"Uncorrectable_Sectors_Count\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "G",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskSMARTInfoDevName) (diskSMARTAttrRaw * on(diskSMARTInfoIndex) group_left(diskSMARTInfoDevName) diskSMARTInfoDevName * on(diskSMARTInfoIndex) group_left() diskSMARTAttrName{diskSMARTAttrName=\"Reported_Uncorrectables\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "H",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskSMARTInfoDevName) (diskSMARTAttrRaw * on(diskSMARTInfoIndex) group_left(diskSMARTInfoDevName) diskSMARTInfoDevName * on(diskSMARTInfoIndex) group_left() diskSMARTAttrName{diskSMARTAttrName=\"Ultra_DMA_CRC_Error_Count\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "I",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (diskSMARTInfoDevName) (diskSMARTAttrRaw * on(diskSMARTInfoIndex) group_left(diskSMARTInfoDevName) diskSMARTInfoDevName * on(diskSMARTInfoIndex) group_left() diskSMARTAttrName{diskSMARTAttrName=\"Command_Timeout_Count\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "merge",
+                "options": {}
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "excludeByName": {
+                    "Time": true
+                  },
+                  "indexByName": {
+                    "diskSMARTInfoDevName": 0,
+                    "Value #A": 1,
+                    "Value #B": 2,
+                    "Value #C": 3,
+                    "Value #D": 4,
+                    "Value #E": 5,
+                    "Value #F": 6,
+                    "Value #G": 7,
+                    "Value #H": 8,
+                    "Value #I": 9
+                  },
+                  "renameByName": {
+                    "diskSMARTInfoDevName": "périphérique",
+                    "Value #A": "heures de marche",
+                    "Value #B": "démarrages",
+                    "Value #C": "parkings des têtes",
+                    "Value #D": "secteurs réalloués",
+                    "Value #E": "secteurs en attente",
+                    "Value #F": "secteurs illisibles",
+                    "Value #G": "erreurs non corrigées",
+                    "Value #H": "erreurs CRC (câble)",
+                    "Value #I": "timeouts"
+                  }
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  }
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "heures de marche"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "h"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "secteurs réalloués"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "red",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "secteurs en attente"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "red",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "secteurs illisibles"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "red",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "erreurs non corrigées"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "red",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "erreurs CRC (câble)"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "orange",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "timeouts"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "orange",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm",
+              "footer": {
+                "show": false
+              },
+              "sortBy": [
+                {
+                  "displayName": "périphérique",
+                  "desc": false
+                }
+              ]
+            },
+            "id": 10,
+            "gridPos": {
+              "x": 0,
+              "y": 13,
+              "w": 24,
+              "h": 6
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Température des disques du NAS",
+            "description": "Température de chaque disque du NAS. Ligne rouge : seuil de l'alerte (55 °C).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "diskTemperature",
+                "legendFormat": "{{diskID}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "celsius",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "transparent",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 55
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 11,
+            "gridPos": {
+              "x": 0,
+              "y": 19,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Vie restante des SSD de cache",
+            "description": "Vie restante des SSD de cache du NAS selon Synology. Elle baisse avec les écritures.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "diskRemainLife >= 0",
+                "legendFormat": "{{diskID}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "transparent",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 10
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 12,
+            "gridPos": {
+              "x": 12,
+              "y": 19,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "NAS Synology : entrées / sorties",
+            "collapsed": false,
+            "panels": [],
+            "id": 13,
+            "gridPos": {
+              "x": 0,
+              "y": 27,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Débit par disque (octets/s)",
+            "description": "Lectures au-dessus de zéro, écritures en dessous.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(storageIONReadX[2m])",
+                "legendFormat": "{{storageIODevice}} lecture",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "-rate(storageIONWrittenX[2m])",
+                "legendFormat": "{{storageIODevice}} écriture",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "Bps",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 14,
+            "gridPos": {
+              "x": 0,
+              "y": 28,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Opérations par disque (/s)",
+            "description": "Lectures au-dessus de zéro, écritures en dessous.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(storageIOReads[2m])",
+                "legendFormat": "{{storageIODevice}} lecture",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "-rate(storageIOWrites[2m])",
+                "legendFormat": "{{storageIODevice}} écriture",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "iops",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 15,
+            "gridPos": {
+              "x": 12,
+              "y": 28,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Pools et stockages",
+            "collapsed": false,
+            "panels": [],
+            "id": 16,
+            "gridPos": {
+              "x": 0,
+              "y": 36,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "État des pools Synology",
+            "description": "État de chaque pool et volume du NAS. Maintenance : reconstruction, vérification de parité, scrub, extension...",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "raidStatus",
+                "legendFormat": "{{raidName}}",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "n/d",
+                "mappings": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "Normal",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "11": {
+                        "text": "Dégradé",
+                        "color": "red",
+                        "index": 1
+                      },
+                      "12": {
+                        "text": "En panne",
+                        "color": "red",
+                        "index": 2
+                      }
+                    }
+                  },
+                  {
+                    "type": "range",
+                    "options": {
+                      "from": 2,
+                      "to": 10,
+                      "result": {
+                        "text": "Maintenance",
+                        "color": "orange"
+                      }
+                    }
+                  },
+                  {
+                    "type": "range",
+                    "options": {
+                      "from": 13,
+                      "to": 30,
+                      "result": {
+                        "text": "Maintenance",
+                        "color": "orange"
+                      }
+                    }
+                  }
+                ],
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "background",
+              "graphMode": "none",
+              "textMode": "value_and_name",
+              "orientation": "horizontal"
+            },
+            "id": 17,
+            "gridPos": {
+              "x": 0,
+              "y": 37,
+              "w": 6,
+              "h": 8
+            }
+          },
+          {
+            "type": "stat",
+            "title": "État des pools ZFS (Proxmox)",
+            "description": "État de chaque pool ZFS du nœud Proxmox, lu par zfs_exporter.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "zfs_pool_health",
+                "legendFormat": "{{host_name}} {{pool}}",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "n/d",
+                "mappings": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "ONLINE",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "DEGRADED",
+                        "color": "red",
+                        "index": 1
+                      },
+                      "2": {
+                        "text": "FAULTED",
+                        "color": "red",
+                        "index": 2
+                      },
+                      "3": {
+                        "text": "OFFLINE",
+                        "color": "red",
+                        "index": 3
+                      },
+                      "4": {
+                        "text": "UNAVAIL",
+                        "color": "red",
+                        "index": 4
+                      },
+                      "5": {
+                        "text": "REMOVED",
+                        "color": "red",
+                        "index": 5
+                      },
+                      "6": {
+                        "text": "SUSPENDED",
+                        "color": "red",
+                        "index": 6
+                      }
+                    }
+                  }
+                ],
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "background",
+              "graphMode": "none",
+              "textMode": "value_and_name",
+              "orientation": "horizontal"
+            },
+            "id": 18,
+            "gridPos": {
+              "x": 6,
+              "y": 37,
+              "w": 6,
+              "h": 8
+            }
+          },
+          {
+            "type": "bargauge",
+            "title": "Occupation des pools et stockages",
+            "description": "Volumes Synology (espace libre / taille), pools ZFS du nœud Proxmox (capacité zpool) et stockages Proxmox (utilisé / total).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "1 - raidFreeSize{raidName=~\"Volume.*\"} / raidTotalSize{raidName=~\"Volume.*\"}",
+                "legendFormat": "NAS {{raidName}}",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "zfs_pool_capacity_ratio",
+                "legendFormat": "ZFS {{pool}}",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (storage) (proxmox_storage_used_bytes / proxmox_storage_total_bytes)",
+                "legendFormat": "Proxmox {{storage}}",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "min": 0,
+                "max": 1,
+                "decimals": 1,
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.8
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.9
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "orientation": "horizontal",
+              "displayMode": "gradient",
+              "showUnfilled": true,
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              }
+            },
+            "id": 19,
+            "gridPos": {
+              "x": 12,
+              "y": 37,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Hôtes Linux",
+            "collapsed": false,
+            "panels": [],
+            "id": 20,
+            "gridPos": {
+              "x": 0,
+              "y": 45,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "bargauge",
+            "title": "Systèmes de fichiers les plus pleins",
+            "description": "Les 15 systèmes de fichiers les plus pleins des hôtes Linux, sans vfat ni tmpfs. L'alerte filesystem_usage_high se déclenche à 90 %.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "topk(15, max by (host_name, mountpoint) (system_filesystem_utilization_ratio{type!~\"vfat|tmpfs\"}))",
+                "legendFormat": "{{host_name}} {{mountpoint}}",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "min": 0,
+                "max": 1,
+                "decimals": 1,
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.8
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.9
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "orientation": "horizontal",
+              "displayMode": "gradient",
+              "showUnfilled": true,
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              }
+            },
+            "id": 21,
+            "gridPos": {
+              "x": 0,
+              "y": 46,
+              "w": 12,
+              "h": 10
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Taux d'occupation des disques",
+            "description": "Part du temps où le disque traite au moins une requête (disques entiers, sans les partitions). Un conteneur LXC voit les disques de l'hôte Proxmox : la même courbe peut apparaître sous plusieurs hôtes.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (rate(system_disk_io_time_seconds_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[5m]))",
+                "legendFormat": "{{host_name}} {{device}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "transparent",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.9
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 22,
+            "gridPos": {
+              "x": 12,
+              "y": 46,
+              "w": 12,
+              "h": 10
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Débit disque (octets/s)",
+            "description": "Lectures au-dessus de zéro, écritures en dessous.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (host_name, device) (rate(system_disk_io_bytes_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\", direction=\"read\"}[5m]))",
+                "legendFormat": "{{host_name}} {{device}} lecture",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "-sum by (host_name, device) (rate(system_disk_io_bytes_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\", direction=\"write\"}[5m]))",
+                "legendFormat": "{{host_name}} {{device}} écriture",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "Bps",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 23,
+            "gridPos": {
+              "x": 0,
+              "y": 56,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Latence moyenne par opération",
+            "description": "Temps moyen d'une lecture ou écriture sur 5 minutes.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (host_name, device) (rate(system_disk_operation_time_seconds_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[5m])) / sum by (host_name, device) (rate(system_disk_operations_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[5m]) > 0)",
+                "legendFormat": "{{host_name}} {{device}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                },
+                "min": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 24,
+            "gridPos": {
+              "x": 12,
+              "y": 56,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Hôtes : S.M.A.R.T.",
+            "collapsed": false,
+            "panels": [],
+            "id": 25,
+            "gridPos": {
+              "x": 0,
+              "y": 64,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "table",
+            "title": "Disques des hôtes",
+            "description": "Un disque physique par ligne, lu par smartctl_exporter sur les hôtes du groupe smart (chataigne). Verdict : évaluation globale du disque par son firmware. Un secteur en attente ou illisible annonce une panne ; un compteur de secteurs réalloués stable est toléré, un compteur qui monte ne l'est pas. Les erreurs CRC viennent plutôt du câble. Vie restante : valeur normalisée de l'attribut d'usure des SSD (100 : neuf), ou 100 - percentage_used pour un NVMe. Un disque en veille n'est pas relu.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device, model_name, protocol) (smartctl_device_capacity_bytes * on(host_name, device) group_left(model_name, protocol) smartctl_device)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_smart_status)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_temperature{temperature_type=\"current\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "D",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_power_on_seconds)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "E",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_power_cycle_count)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "F",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"raw\", attribute_name=~\"Reallocated_Sector_Ct\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "G",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"raw\", attribute_name=~\"Current_Pending_Sector|Current_Pending_ECC_Cnt\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "H",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"raw\", attribute_name=~\"Offline_Uncorrectable\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "I",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"raw\", attribute_name=~\"UDMA_CRC_Error_Count|CRC_Error_Count\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "J",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_error_log_count{error_log_type=\"summary\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "K",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"value\", attribute_name=~\"Percent_Lifetime_Remain|Wear_Leveling_Count|Media_Wearout_Indicator|SSD_Life_Left\"}) or max by (host_name, device) (100 - smartctl_device_percentage_used)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "merge",
+                "options": {}
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "excludeByName": {
+                    "Time": true
+                  },
+                  "indexByName": {
+                    "host_name": 0,
+                    "device": 1,
+                    "model_name": 2,
+                    "protocol": 3,
+                    "Value #A": 4,
+                    "Value #B": 5,
+                    "Value #C": 6,
+                    "Value #D": 7,
+                    "Value #E": 8,
+                    "Value #F": 9,
+                    "Value #G": 10,
+                    "Value #H": 11,
+                    "Value #I": 12,
+                    "Value #J": 13,
+                    "Value #K": 14
+                  },
+                  "renameByName": {
+                    "host_name": "hôte",
+                    "device": "disque",
+                    "model_name": "modèle",
+                    "protocol": "protocole",
+                    "Value #A": "capacité",
+                    "Value #B": "verdict",
+                    "Value #C": "température",
+                    "Value #D": "en marche depuis",
+                    "Value #E": "démarrages",
+                    "Value #F": "secteurs réalloués",
+                    "Value #G": "secteurs en attente",
+                    "Value #H": "secteurs illisibles",
+                    "Value #I": "erreurs CRC (câble)",
+                    "Value #J": "journal d'erreurs",
+                    "Value #K": "vie restante"
+                  }
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  }
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "capacité"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "bytes"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "verdict"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "En échec",
+                              "color": "red",
+                              "index": 1
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "température"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "celsius"
+                    },
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "orange",
+                            "value": 45
+                          },
+                          {
+                            "color": "red",
+                            "value": 55
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "en marche depuis"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "s"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "secteurs réalloués"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "orange",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "secteurs en attente"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "red",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "secteurs illisibles"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "red",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "erreurs CRC (câble)"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "orange",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "journal d'erreurs"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": null
+                          },
+                          {
+                            "color": "orange",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "vie restante"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "percent"
+                    },
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "red",
+                            "value": null
+                          },
+                          {
+                            "color": "orange",
+                            "value": 10
+                          },
+                          {
+                            "color": "green",
+                            "value": 30
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "thresholds"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm",
+              "footer": {
+                "show": false
+              },
+              "sortBy": [
+                {
+                  "displayName": "disque",
+                  "desc": false
+                }
+              ]
+            },
+            "id": 26,
+            "gridPos": {
+              "x": 0,
+              "y": 65,
+              "w": 24,
+              "h": 9
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Température des disques des hôtes",
+            "description": "Température de chaque disque des hôtes. Ligne rouge : seuil de l'alerte smart_temperature_high (55 °C).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "smartctl_device_temperature{temperature_type=\"current\"}",
+                "legendFormat": "{{host_name}} {{device}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "celsius",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "transparent",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 55
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 27,
+            "gridPos": {
+              "x": 0,
+              "y": 74,
+              "w": 8,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Secteurs défectueux des disques des hôtes",
+            "description": "Secteurs réalloués, en attente et illisibles. Une courbe qui monte annonce une panne : l'alerte smart_sectors_growing se déclenche.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device, attribute_name) (smartctl_device_attribute{attribute_value_type=\"raw\", attribute_name=~\"Reallocated_Sector_Ct|Current_Pending_Sector|Current_Pending_ECC_Cnt|Offline_Uncorrectable\"})",
+                "legendFormat": "{{host_name}} {{device}} {{attribute_name}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                },
+                "min": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 28,
+            "gridPos": {
+              "x": 8,
+              "y": 74,
+              "w": 8,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Vie restante des SSD des hôtes",
+            "description": "Valeur normalisée de l'attribut d'usure de chaque SSD des hôtes (100 : neuf). Elle baisse avec les écritures.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"value\", attribute_name=~\"Percent_Lifetime_Remain|Wear_Leveling_Count|Media_Wearout_Indicator|SSD_Life_Left\"}) or max by (host_name, device) (100 - smartctl_device_percentage_used)",
+                "legendFormat": "{{host_name}} {{device}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "transparent",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 10
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 29,
+            "gridPos": {
+              "x": 16,
+              "y": 74,
+              "w": 8,
+              "h": 8
             }
           }
         ]
