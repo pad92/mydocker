@@ -8,20 +8,21 @@
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
 # - with the header a new user is created with the Viewer role and sees the
-#   nine provisioned dashboards (Authentik, Proxmox, UniFi, Synology, hosts,
-#   logs, Docker, DNS, firewall);
+#   ten provisioned dashboards (Authentik, Proxmox, UniFi, Synology, hosts,
+#   logs, Docker, DNS, firewall, HTTP);
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
 # - every VictoriaLogs target of the dashboards, sent as the viewer to
 #   /api/ds/query, answers 200 without error and returns data from records
 #   ingested before (Proxmox, Authentik, Docker, AdGuard Home, UniFi firewall
-#   and CEF, with the fields Vector produces);
+#   and CEF, Traefik access logs, with the fields Vector produces);
 # - every VictoriaMetrics target answers 200 without error; the targets of
 #   the hosts dashboard also return data from host metrics imported before
 #   (one silent host, one degraded ZFS pool), except "silent hosts" for a host
 #   that still reports, which must return none. There is no Proxmox, UniFi or
 #   Synology metric in the test, so their targets only have to parse;
-# - the IP tables of the DNS and firewall dashboards (two per dashboard) join
+# - the IP tables of the DNS and firewall dashboards (two per dashboard) and
+#   the client table of the HTTP dashboard join
 #   their IP with UnPoller client and device series imported before: each
 #   such panel is Mixed, its VictoriaMetrics target is an instant table, an
 #   outer join on the IP field of the logs query keeps only rows with a
@@ -102,7 +103,7 @@ while IFS=$'\t' read -r source target; do
     "$work_dir/compose.json" > "$work_dir/configs/$source"
   mounts+=(-v "$work_dir/configs/$source:$target:ro")
 done < <(jq -r '.services.grafana.configs[] | [.source, .target] | @tsv' "$work_dir/compose.json")
-[[ ${#mounts[@]} -eq 22 ]] || fail "expected 11 Grafana configs, got $((${#mounts[@]} / 2))"
+[[ ${#mounts[@]} -eq 24 ]] || fail "expected 12 Grafana configs, got $((${#mounts[@]} / 2))"
 
 pinned="$(jq -r '.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC' "$work_dir/compose.json")"
 [[ "$pinned" == "$plugin_id@"* ]] || fail "GF_PLUGINS_PREINSTALL_SYNC is '$pinned', expected $plugin_id@<version>"
@@ -212,12 +213,42 @@ cef = [
      "UNIFIsrcClientIp": "192.168.0.30", "UNIFIdstZone": "External",
      "_msg": "0|Ubiquiti|UniFi Network|203"},
 ]
+# Traefik access logs (JSON fields prefixed with app_ by Vector). The status
+# comes as "200.0" or 200 depending on the line; durations are in ns. The
+# value variant filters on cloud.home.lan, nextcloud@docker, GET and
+# 192.168.0.57 at once, so these lines alone carry a 2xx, a 4xx, a 5xx and
+# the same path three times. A line without a host (a bare TLS probe) must be
+# excluded; 172.18.0.1 is the Docker bridge, unknown to UniFi.
+def http(host, service, method, client, path, status, duration, origin, size,
+         proto="HTTP/2.0", tls="1.3"):
+    r = {"host_name": "proxy.home.lan", "app_clienthost": client,
+         "app_requestmethod": method, "app_requestpath": path,
+         "app_downstreamstatus": status, "app_duration": duration,
+         "app_originduration": origin, "app_downstreamcontentsize": size,
+         "app_servicename": service, "app_requestprotocol": proto, "app_tlsversion": tls}
+    if host:
+        r["app_requesthost"] = host
+    return r
+traefik = [
+    http("cloud.home.lan", "nextcloud@docker", "GET", "192.168.0.57", "/status.php", "200.0",
+         40000000, 35000000, 512),
+    http("cloud.home.lan", "nextcloud@docker", "GET", "192.168.0.57", "/status.php", 200,
+         60000000, 55000000, 512),
+    http("cloud.home.lan", "nextcloud@docker", "GET", "192.168.0.57", "/status.php", "503.0",
+         900000000, 880000000, 128),
+    http("cloud.home.lan", "nextcloud@docker", "GET", "192.168.0.57", "/missing", 404,
+         5000000, 3000000, 64),
+    http("grafana.home.lan", "grafana@docker", "POST", "172.18.0.1", "/api/ds/query", "200.0",
+         120000000, 110000000, 2048, proto="HTTP/1.1", tls="1.2"),
+    http("", "", "GET", "203.0.113.5", "/", "404.0", 1000000, 0, 19),
+]
 records = [{"log_stream": "proxmox", "host_name": "pve.home.lan", "_msg": "pve", **r} for r in proxmox]
 records += [{"log_stream": "authentik", "host_name": "sso.home.lan", "_msg": "ak", **r} for r in authentik]
 records += [{"log_stream": "docker", **r} for r in docker]
 records += [{"log_stream": "dns_queries", "_msg": "dns", **r} for r in dns_queries]
 records += [{"log_stream": "firewall", "severity": "notice", **r} for r in firewall]
 records += [{"log_stream": "syslog", "facility": "user", **r} for r in cef]
+records += [{"log_stream": "traefik", "_msg": "http", **r} for r in traefik]
 with open(f"{work}/records.jsonl", "w") as f:
     for i, r in enumerate(records):
         age = r.pop("_age", i % 5 + 1)
@@ -286,6 +317,8 @@ values = {
     "victoria-firewall": {"host_name": "gw", "action": "drop", "ruleset": "WAN_LOCAL"},
     "victoria-logs": {"log_stream": "docker", "host_name": "test.home.lan"},
     "victoria-hosts": {"host_name": "test.home.lan"},
+    "victoria-http": {"requesthost": "cloud.home.lan", "service": "nextcloud@docker",
+                      "method": "GET", "client": "192.168.0.57"},
 }
 
 def substitute(expr, datasource, variables, variant, all_values):
@@ -300,7 +333,7 @@ def substitute(expr, datasource, variables, variant, all_values):
 
 index = []
 for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
-             "docker", "dns", "firewall"):
+             "docker", "dns", "firewall", "http"):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     declared = {v["name"] for v in dash.get("templating", {}).get("list", [])}
     all_values = {v["name"]: v.get("allValue") for v in dash.get("templating", {}).get("list", [])
@@ -326,7 +359,8 @@ for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
                               "panel": panel["title"], "refId": query.get("refId", "A"),
                               "datasource": datasource, "variant": variant,
                               "unifi_map": "unpoller_" in target["expr"]
-                                           and dash["uid"] in ("victoria-dns", "victoria-firewall")})
+                                           and dash["uid"] in ("victoria-dns", "victoria-firewall",
+                                                           "victoria-http")})
 json.dump(index, open(f"{work}/bodies/index.json", "w"))
 PY
 chmod -R a+rX "$work_dir"
@@ -444,10 +478,18 @@ if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
     errors.append(f"new user roles {orgs}, expected one org with Viewer")
 
 expected_uids = ["victoria-authentik", "victoria-dns", "victoria-docker", "victoria-firewall",
-                 "victoria-hosts", "victoria-logs", "victoria-proxmox", "victoria-synology",
+                 "victoria-hosts", "victoria-http", "victoria-logs", "victoria-proxmox", "victoria-synology",
                  "victoria-unifi"]
 # Targets that must return nothing: test.home.lan is not silent.
 expected_empty = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "value")}
+# Exact values from the Traefik records: 4 lines match the four values (one
+# 404, one 503), 5 lines have a host (the hostless 404 probe must not count).
+expected_values = {("victoria-http", "Requêtes", "value"): 4,
+                   ("victoria-http", "Requêtes", "all"): 5,
+                   ("victoria-http", "Taux de 4xx", "value"): 25,
+                   ("victoria-http", "Taux de 4xx", "all"): 20,
+                   ("victoria-http", "Taux de 5xx", "value"): 25,
+                   ("victoria-http", "Taux de 5xx", "all"): 20}
 search = load("search.json")
 if search is not None:
     uids = sorted(d.get("uid") for d in search)
@@ -479,8 +521,10 @@ unifi_ips = ["192.168.0.10", "192.168.0.57", "192.168.0.99", "192.168.69.254"]
 # panel, B renamed to the IP field that A groups by, an outer join on it, rows
 # without a count removed (IPs that UnPoller knows but no log mentions).
 mapped = {"victoria-dns": {"Clients les plus actifs", "Clients les plus bloqués"},
-          "victoria-firewall": {"Top sources bloquées", "Top destinations bloquées"}}
-for name, uid in (("dns", "victoria-dns"), ("firewall", "victoria-firewall")):
+          "victoria-firewall": {"Top sources bloquées", "Top destinations bloquées"},
+          "victoria-http": {"Clients les plus actifs"}}
+for name, uid in (("dns", "victoria-dns"), ("firewall", "victoria-firewall"),
+                  ("http", "victoria-http")):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     found = set()
     for panel in dash["panels"]:
@@ -562,6 +606,14 @@ for q in index:
                 errors.append(f"{label}: data returned, expected none")
         elif not found:
             errors.append(f"{label}: no data returned")
+        key = (q["dashboard"], q["panel"], q["variant"])
+        if key in expected_values:
+            got = [float(x) for f in result.get("frames", [])
+                   for i, field in enumerate(f.get("schema", {}).get("fields", []))
+                   if field.get("type") == "number"
+                   for x in f.get("data", {}).get("values", [])[i] if x is not None]
+            if len(got) != 1 or abs(got[0] - expected_values[key]) > 0.01:
+                errors.append(f"{label}: {got}, expected {expected_values[key]}")
 
 seen = sorted({q["dashboard"] for q in index})
 if seen != expected_uids:
