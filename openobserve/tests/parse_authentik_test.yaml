@@ -1,0 +1,151 @@
+# Unit tests for authentik/parse_authentik.vrl, run by test_parse_authentik.sh.
+# The source and sink only make the config valid: the tests inject records
+# straight into the remap transform.
+sources:
+  unused:
+    type: demo_logs
+    format: json
+transforms:
+  parse_authentik:
+    type: remap
+    inputs: [unused]
+    file: /cfg/parse_authentik.vrl
+sinks:
+  discard:
+    type: blackhole
+    inputs: [parse_authentik]
+
+tests:
+  - name: postgresql LOG line tagged WARN by the collector is info
+    inputs:
+      - insert_at: parse_authentik
+        type: log
+        log_fields:
+          container_name: authentik_postgresql
+          severity: WARN
+          body: "2026-11-25 10:00:00.000 UTC [27] LOG:  checkpoint starting: time"
+    outputs:
+      - extract_from: parse_authentik
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.ak_component, "postgresql")
+              assert_eq!(.ak_level, "info")
+              assert_eq!(.ak_kind, "log")
+              assert_eq!(.ak_action, "")
+              assert_eq!(.ak_user, "")
+
+  - name: postgresql ERROR and FATAL are error and critical
+    inputs:
+      - insert_at: parse_authentik
+        type: log
+        log_fields:
+          container_name: authentik_postgresql
+          severity: WARN
+          body: "2026-11-25 10:00:00.000 UTC [123] ERROR:  deadlock detected"
+      - insert_at: parse_authentik
+        type: log
+        log_fields:
+          container_name: authentik_postgresql
+          severity: WARN
+          body: "2026-11-25 10:00:00.000 UTC [77] FATAL:  terminating connection"
+    outputs:
+      - extract_from: parse_authentik
+        conditions:
+          - type: vrl
+            source: |
+              b = string!(.body)
+              if contains(b, "ERROR:") { assert_eq!(.ak_level, "error") }
+              if contains(b, "FATAL:") { assert_eq!(.ak_level, "critical") }
+              true
+
+  - name: postgresql continuation line is info
+    inputs:
+      - insert_at: parse_authentik
+        type: log
+        log_fields:
+          container_name: authentik_postgresql
+          severity: WARN
+          body: "\tProcess 123 waits for ShareLock on transaction 456"
+    outputs:
+      - extract_from: parse_authentik
+        conditions:
+          - type: vrl
+            source: assert_eq!(.ak_level, "info")
+
+  - name: outpost forward-auth request
+    inputs:
+      - insert_at: parse_authentik
+        type: log
+        log_fields:
+          container_name: authentik_server
+          app_level: warn
+          app_remote: 192.0.2.5
+          app_path: /outpost.goauthentik.io/auth/traefik
+          app_host: app.example.com
+          app_runtime: "3.2"
+    outputs:
+      - extract_from: parse_authentik
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.ak_component, "server")
+              assert_eq!(.ak_kind, "forward_auth")
+              assert_eq!(.ak_level, "warning")
+              assert_eq!(.ak_client_ip, "192.0.2.5")
+              assert_eq!(.ak_app_host, "app.example.com")
+              assert_eq!(.ak_runtime_ms, 3.2)
+
+  - name: login_failed event
+    inputs:
+      - insert_at: parse_authentik
+        type: log
+        log_fields:
+          container_name: authentik_server
+          app_level: warning
+          app_action: login_failed
+          app_context_username: bob
+          app_client_ip: 192.0.2.9
+    outputs:
+      - extract_from: parse_authentik
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.ak_kind, "event")
+              assert_eq!(.ak_action, "login_failed")
+              assert_eq!(.ak_user, "bob")
+              assert_eq!(.ak_client_ip, "192.0.2.9")
+
+  - name: secrets in the request path are redacted
+    inputs:
+      - insert_at: parse_authentik
+        type: log
+        log_fields:
+          container_name: authentik_server
+          app_level: info
+          app_path: /application/o/authorize/?client_id=abc&code=s3cr3t&state=xyz
+          app_runtime: 12
+    outputs:
+      - extract_from: parse_authentik
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.ak_kind, "http")
+              assert_eq!(.app_path, "/application/o/authorize/?client_id=abc&code=[REDACTED]&state=xyz")
+
+  - name: worker task and fatal level
+    inputs:
+      - insert_at: parse_authentik
+        type: log
+        log_fields:
+          container_name: authentik_worker
+          app_level: fatal
+          app_actor_name: outpost_send_update
+    outputs:
+      - extract_from: parse_authentik
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.ak_component, "worker")
+              assert_eq!(.ak_kind, "task")
+              assert_eq!(.ak_level, "critical")

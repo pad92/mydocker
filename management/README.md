@@ -166,6 +166,14 @@ The logo, favicon, background, and application icons are SVG files in `authentik
 - **Adding a file.** Put it in `authentik/media/` and name it in a blueprint. `tests/test_media.sh` fails on a file that no blueprint names, on a name with no file, and on an SVG that is not inert: an SVG opened directly runs as a page of the Authentik host, so it must hold no script, event handler, embedded document, or external reference.
 - **Icon sources.** `logo.svg`, `favicon.svg`, `background.svg`, `icons/openobserve.svg`, `icons/h5ai.svg`, and `icons/immich.svg` are made for this repository. The other icons come from [homarr-labs/dashboard-icons](https://github.com/homarr-labs/dashboard-icons) (Apache-2.0), `icons/zyxel.svg` cropped to the logo mark; the logos themselves remain the trademarks of their projects.
 
+### Logs and alerts
+
+The logs of the three containers reach OpenObserve with the other Docker logs. An OpenObserve pipeline moves them to the `authentik` stream and adds `ak_*` fields (component, normalized level, client IP, event action and user, forward-auth host). The dashboard *Sécurité — Authentik* and four alerts use those fields: failed login burst, sensitive event (suspicious request, impersonation, exception), errors, and server or worker silent for 10 minutes. See [its README](../openobserve/README.md#4-authentik-logs-authentik-stream).
+
+- **Container names.** The pipeline selects the records whose `container_name` contains `authentik_`. Renaming a container sends its logs back to the `docker` stream, and `authentik_logs_silent` fires for `server` or `worker`.
+- **Blueprint deadlock.** The `deadlock detected` error of a concurrent blueprint apply (see [Blueprints](#blueprints)) is logged by PostgreSQL as `ERROR` and can trigger `authentik_errors`. Re-running the apply is enough.
+- **Client IPs.** Failed logins are reported by client IP. Behind Cloudflare Tunnel, that IP is only the real one once the `trustedIPs` setting described in [Internal and public exposure](#internal-and-public-exposure) is in place.
+
 ### Host names of other stacks
 
 `OPENOBSERVE_HOST_LOCAL`, `FORGEJO_HOST_LOCAL`, `GRAMPSWEB_HOST_LOCAL`, and `IMMICH_HOST_LOCAL` only feed the blueprints. They must equal `OPENOBSERVE_DOMAIN`, `FORGEJO_DOMAIN`, `GRAMPSWEB_DOMAIN`, and `TRAEFIK_HOST_LOCAL` in the `.env` of those stacks: a different value gives a provider that never matches (OpenObserve answers 404 through the middleware) or a redirect URI that Authentik rejects (Forgejo, Gramps Web, or Immich login fails with "redirect URI error").

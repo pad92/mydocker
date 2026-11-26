@@ -1,0 +1,751 @@
+{
+  "version": 8,
+  "title": "Sécurité — Authentik",
+  "description": "Connexions, événements, forward-auth et santé d'Authentik (stream authentik, champs ak_* ajoutés par la fonction parse_authentik). Les noms PTR viennent de la table d'enrichissement « ptr » ; une IP sans PTR connu reste affichée seule. Filtres : Composant (erreurs) et Application (forward-auth).",
+  "defaultDatetimeDuration": {
+    "type": "relative",
+    "relativeTimePeriod": "7d"
+  },
+  "tabs": [
+    {
+      "tabId": "default",
+      "name": "Authentik",
+      "panels": [
+        {
+          "id": "Panel_1",
+          "type": "metric",
+          "title": "Logins réussis",
+          "description": "Événements login",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT count(*) AS n FROM \"authentik\" WHERE ak_kind = 'event' AND ak_action = 'login'",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [],
+                "y": [
+                  {
+                    "label": "n",
+                    "alias": "n",
+                    "column": "n"
+                  }
+                ],
+                "z": [],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 0,
+            "w": 48,
+            "h": 7,
+            "i": 1
+          }
+        },
+        {
+          "id": "Panel_2",
+          "type": "metric",
+          "title": "Logins échoués",
+          "description": "login_failed et invalid_identifier",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT count(*) AS n FROM \"authentik\" WHERE ak_kind = 'event' AND ak_action IN ('login_failed','invalid_identifier')",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [],
+                "y": [
+                  {
+                    "label": "n",
+                    "alias": "n",
+                    "column": "n"
+                  }
+                ],
+                "z": [],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 48,
+            "y": 0,
+            "w": 48,
+            "h": 7,
+            "i": 2
+          }
+        },
+        {
+          "id": "Panel_3",
+          "type": "metric",
+          "title": "Requêtes forward-auth",
+          "description": "Contrôles d'accès de l'outpost embarqué",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT count(*) AS n FROM \"authentik\" WHERE ak_kind = 'forward_auth' AND ak_app_host IN ($application)",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [],
+                "y": [
+                  {
+                    "label": "n",
+                    "alias": "n",
+                    "column": "n"
+                  }
+                ],
+                "z": [],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 96,
+            "y": 0,
+            "w": 48,
+            "h": 7,
+            "i": 3
+          }
+        },
+        {
+          "id": "Panel_4",
+          "type": "metric",
+          "title": "Erreurs",
+          "description": "ak_level error ou critical",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT count(*) AS n FROM \"authentik\" WHERE ak_level IN ('error','critical') AND ak_component IN ($composant)",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [],
+                "y": [
+                  {
+                    "label": "n",
+                    "alias": "n",
+                    "column": "n"
+                  }
+                ],
+                "z": [],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 144,
+            "y": 0,
+            "w": 48,
+            "h": 7,
+            "i": 4
+          }
+        },
+        {
+          "id": "Panel_5",
+          "type": "line",
+          "title": "Logins et échecs dans le temps",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT histogram(_timestamp) AS ts, sum(CASE WHEN ak_action = 'login' THEN 1 ELSE 0 END) AS logins, sum(CASE WHEN ak_action IN ('login_failed','invalid_identifier') THEN 1 ELSE 0 END) AS echecs, sum(CASE WHEN ak_action = 'logout' THEN 1 ELSE 0 END) AS logouts FROM \"authentik\" WHERE ak_kind = 'event' GROUP BY ts ORDER BY ts",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [
+                  {
+                    "label": "ts",
+                    "alias": "ts",
+                    "column": "ts"
+                  }
+                ],
+                "y": [
+                  {
+                    "label": "logins",
+                    "alias": "logins",
+                    "column": "logins"
+                  },
+                  {
+                    "label": "echecs",
+                    "alias": "echecs",
+                    "column": "echecs"
+                  },
+                  {
+                    "label": "logouts",
+                    "alias": "logouts",
+                    "column": "logouts"
+                  }
+                ],
+                "z": [],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 7,
+            "w": 96,
+            "h": 14,
+            "i": 5
+          }
+        },
+        {
+          "id": "Panel_6",
+          "type": "h-bar",
+          "title": "Événements par action",
+          "description": "Événements Authentik (ak_kind = event)",
+          "config": {
+            "show_legends": false,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT ak_action, count(*) AS n FROM \"authentik\" WHERE ak_kind = 'event' GROUP BY ak_action ORDER BY n DESC LIMIT 20",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [
+                  {
+                    "label": "ak_action",
+                    "alias": "ak_action",
+                    "column": "ak_action"
+                  }
+                ],
+                "y": [
+                  {
+                    "label": "n",
+                    "alias": "n",
+                    "column": "n"
+                  }
+                ],
+                "z": [],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 96,
+            "y": 7,
+            "w": 96,
+            "h": 14,
+            "i": 6
+          }
+        },
+        {
+          "id": "Panel_7",
+          "type": "table",
+          "title": "Échecs de connexion par utilisateur et IP",
+          "description": "Nom saisi, IP source et nom PTR",
+          "config": {
+            "show_legends": false,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT t.ak_user AS utilisateur, t.ak_client_ip AS ip, p0.ptr AS ptr, count(*) AS echecs, max(t._timestamp) AS dernier FROM \"authentik\" t LEFT JOIN enrichment_tables.\"ptr\" p0 ON t.ak_client_ip = p0.ip WHERE t.ak_kind = 'event' AND t.ak_action IN ('login_failed','invalid_identifier') GROUP BY t.ak_user, t.ak_client_ip, p0.ptr ORDER BY echecs DESC LIMIT 50",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [
+                  {
+                    "label": "utilisateur",
+                    "alias": "utilisateur",
+                    "column": "utilisateur"
+                  },
+                  {
+                    "label": "ip",
+                    "alias": "ip",
+                    "column": "ip"
+                  },
+                  {
+                    "label": "ptr",
+                    "alias": "ptr",
+                    "column": "ptr"
+                  }
+                ],
+                "y": [
+                  {
+                    "label": "echecs",
+                    "alias": "echecs",
+                    "column": "echecs"
+                  },
+                  {
+                    "label": "dernier",
+                    "alias": "dernier",
+                    "column": "dernier"
+                  }
+                ],
+                "z": [],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 21,
+            "w": 96,
+            "h": 14,
+            "i": 7
+          }
+        },
+        {
+          "id": "Panel_8",
+          "type": "table",
+          "title": "Événements récents",
+          "description": "",
+          "config": {
+            "show_legends": false,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT t._timestamp AS ts, t.ak_action AS action, t.ak_user AS utilisateur, t.ak_client_ip AS ip, p0.ptr AS ptr, t.ak_level AS niveau FROM \"authentik\" t LEFT JOIN enrichment_tables.\"ptr\" p0 ON t.ak_client_ip = p0.ip WHERE t.ak_kind = 'event' ORDER BY t._timestamp DESC LIMIT 100",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [
+                  {
+                    "label": "ts",
+                    "alias": "ts",
+                    "column": "ts"
+                  },
+                  {
+                    "label": "action",
+                    "alias": "action",
+                    "column": "action"
+                  },
+                  {
+                    "label": "utilisateur",
+                    "alias": "utilisateur",
+                    "column": "utilisateur"
+                  },
+                  {
+                    "label": "ip",
+                    "alias": "ip",
+                    "column": "ip"
+                  },
+                  {
+                    "label": "ptr",
+                    "alias": "ptr",
+                    "column": "ptr"
+                  },
+                  {
+                    "label": "niveau",
+                    "alias": "niveau",
+                    "column": "niveau"
+                  }
+                ],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 96,
+            "y": 21,
+            "w": 96,
+            "h": 14,
+            "i": 8
+          }
+        },
+        {
+          "id": "Panel_9",
+          "type": "line",
+          "title": "Forward-auth par application",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT histogram(_timestamp) AS ts, ak_app_host, count(*) AS n FROM \"authentik\" WHERE ak_kind = 'forward_auth' AND ak_app_host IN ($application) GROUP BY ts, ak_app_host ORDER BY ts",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [
+                  {
+                    "label": "ts",
+                    "alias": "ts",
+                    "column": "ts"
+                  }
+                ],
+                "y": [
+                  {
+                    "label": "n",
+                    "alias": "n",
+                    "column": "n"
+                  }
+                ],
+                "z": [
+                  {
+                    "label": "ak_app_host",
+                    "alias": "ak_app_host",
+                    "column": "ak_app_host"
+                  }
+                ],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 35,
+            "w": 96,
+            "h": 14,
+            "i": 9
+          }
+        },
+        {
+          "id": "Panel_10",
+          "type": "table",
+          "title": "Forward-auth : volume, refus et latence",
+          "description": "Statut ≥ 400 : refus ou erreur ; p95 en ms",
+          "config": {
+            "show_legends": false,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT ak_app_host AS application, count(*) AS requetes, sum(CASE WHEN app_status >= 400 THEN 1 ELSE 0 END) AS statut_4xx_5xx, approx_percentile_cont(ak_runtime_ms, 0.95) AS p95_ms FROM \"authentik\" WHERE ak_kind = 'forward_auth' AND ak_app_host IN ($application) GROUP BY ak_app_host ORDER BY requetes DESC",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [
+                  {
+                    "label": "application",
+                    "alias": "application",
+                    "column": "application"
+                  }
+                ],
+                "y": [
+                  {
+                    "label": "requetes",
+                    "alias": "requetes",
+                    "column": "requetes"
+                  },
+                  {
+                    "label": "statut_4xx_5xx",
+                    "alias": "statut_4xx_5xx",
+                    "column": "statut_4xx_5xx"
+                  },
+                  {
+                    "label": "p95_ms",
+                    "alias": "p95_ms",
+                    "column": "p95_ms"
+                  }
+                ],
+                "z": [],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 96,
+            "y": 35,
+            "w": 96,
+            "h": 14,
+            "i": 10
+          }
+        },
+        {
+          "id": "Panel_11",
+          "type": "bar",
+          "title": "Avertissements et erreurs par composant",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT histogram(_timestamp) AS ts, ak_component, count(*) AS n FROM \"authentik\" WHERE ak_level IN ('warning','error','critical') AND ak_component IN ($composant) GROUP BY ts, ak_component ORDER BY ts",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [
+                  {
+                    "label": "ts",
+                    "alias": "ts",
+                    "column": "ts"
+                  }
+                ],
+                "y": [
+                  {
+                    "label": "n",
+                    "alias": "n",
+                    "column": "n"
+                  }
+                ],
+                "z": [
+                  {
+                    "label": "ak_component",
+                    "alias": "ak_component",
+                    "column": "ak_component"
+                  }
+                ],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 49,
+            "w": 96,
+            "h": 14,
+            "i": 11
+          }
+        },
+        {
+          "id": "Panel_12",
+          "type": "table",
+          "title": "Erreurs récentes",
+          "description": "",
+          "config": {
+            "show_legends": false,
+            "legends_position": "bottom"
+          },
+          "queryType": "sql",
+          "queries": [
+            {
+              "query": "SELECT _timestamp AS ts, ak_component AS composant, ak_level AS niveau, ak_kind AS type, app_event AS evenement, body FROM \"authentik\" WHERE ak_level IN ('warning','error','critical') AND ak_component IN ($composant) ORDER BY _timestamp DESC LIMIT 100",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "authentik",
+                "stream_type": "logs",
+                "x": [
+                  {
+                    "label": "ts",
+                    "alias": "ts",
+                    "column": "ts"
+                  },
+                  {
+                    "label": "composant",
+                    "alias": "composant",
+                    "column": "composant"
+                  },
+                  {
+                    "label": "niveau",
+                    "alias": "niveau",
+                    "column": "niveau"
+                  },
+                  {
+                    "label": "type",
+                    "alias": "type",
+                    "column": "type"
+                  },
+                  {
+                    "label": "evenement",
+                    "alias": "evenement",
+                    "column": "evenement"
+                  },
+                  {
+                    "label": "body",
+                    "alias": "body",
+                    "column": "body"
+                  }
+                ],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "type": "list",
+                  "values": [],
+                  "logicalOperator": "AND",
+                  "filterType": "list"
+                }
+              },
+              "config": {
+                "promql_legend": ""
+              }
+            }
+          ],
+          "layout": {
+            "x": 96,
+            "y": 49,
+            "w": 96,
+            "h": 14,
+            "i": 12
+          }
+        }
+      ]
+    }
+  ],
+  "variables": {
+    "list": [
+      {
+        "type": "query_values",
+        "name": "composant",
+        "label": "Composant",
+        "query_data": {
+          "stream_type": "logs",
+          "stream": "authentik",
+          "field": "ak_component",
+          "max_record_size": 50
+        },
+        "value": "",
+        "options": [],
+        "multiSelect": true,
+        "selectAllValueForMultiSelect": "all",
+        "hideOnDashboard": false
+      },
+      {
+        "type": "query_values",
+        "name": "application",
+        "label": "Application",
+        "query_data": {
+          "stream_type": "logs",
+          "stream": "authentik",
+          "field": "ak_app_host",
+          "max_record_size": 50
+        },
+        "value": "",
+        "options": [],
+        "multiSelect": true,
+        "selectAllValueForMultiSelect": "all",
+        "hideOnDashboard": false
+      }
+    ],
+    "showDynamicFilters": false
+  }
+}

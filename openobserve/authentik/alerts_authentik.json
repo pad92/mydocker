@@ -1,0 +1,102 @@
+[
+  {
+    "folder": "securite",
+    "name": "authentik_login_failed_burst",
+    "stream_type": "logs",
+    "stream_name": "authentik",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "sql",
+      "sql": "SELECT _timestamp, ak_action, ak_user, ak_client_ip FROM \"authentik\" WHERE ak_kind = 'event' AND ak_action IN ('login_failed','invalid_identifier')"
+    },
+    "trigger_condition": {
+      "period": 15,
+      "operator": ">=",
+      "threshold": 5,
+      "frequency": 5,
+      "frequency_type": "minutes",
+      "silence": 60,
+      "align_time": true
+    },
+    "destinations": [
+      "free_mobile_sms"
+    ],
+    "enabled": true,
+    "description": "SMS si au moins 5 echecs de connexion Authentik en 15 minutes"
+  },
+  {
+    "folder": "securite",
+    "name": "authentik_sensitive_event",
+    "stream_type": "logs",
+    "stream_name": "authentik",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "sql",
+      "sql": "SELECT _timestamp, ak_action, ak_user, ak_client_ip FROM \"authentik\" WHERE ak_kind = 'event' AND ak_action IN ('suspicious_request','impersonation_started','system_exception','policy_exception','configuration_error')"
+    },
+    "trigger_condition": {
+      "period": 5,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 5,
+      "frequency_type": "minutes",
+      "silence": 60,
+      "align_time": true
+    },
+    "destinations": [
+      "free_mobile_sms"
+    ],
+    "enabled": true,
+    "description": "SMS si evenement Authentik sensible (requete suspecte, impersonation, exception systeme ou de politique, erreur de configuration)"
+  },
+  {
+    "folder": "infra",
+    "name": "authentik_errors",
+    "stream_type": "logs",
+    "stream_name": "authentik",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "sql",
+      "sql": "SELECT _timestamp, ak_component, ak_level, body FROM \"authentik\" WHERE ak_level IN ('error','critical')"
+    },
+    "trigger_condition": {
+      "period": 15,
+      "operator": ">=",
+      "threshold": 3,
+      "frequency": 5,
+      "frequency_type": "minutes",
+      "silence": 60,
+      "align_time": true
+    },
+    "destinations": [
+      "free_mobile_sms"
+    ],
+    "enabled": true,
+    "description": "SMS si au moins 3 erreurs Authentik (server, worker ou postgresql) en 15 minutes"
+  },
+  {
+    "folder": "infra",
+    "name": "authentik_logs_silent",
+    "stream_type": "logs",
+    "stream_name": "authentik",
+    "is_real_time": false,
+    "query_condition": {
+      "type": "sql",
+      "sql": "SELECT ak_component, max(_timestamp) AS last_seen FROM \"authentik\" WHERE ak_component IN ('server','worker') GROUP BY ak_component HAVING max(_timestamp) < cast(to_unixtime(now()) AS bigint)*1000000 - 600000000"
+    },
+    "trigger_condition": {
+      "period": 1440,
+      "operator": ">=",
+      "threshold": 1,
+      "frequency": 5,
+      "frequency_type": "minutes",
+      "silence": 60,
+      "align_time": true
+    },
+    "destinations": [
+      "free_mobile_sms"
+    ],
+    "enabled": true,
+    "description": "SMS si authentik_server ou authentik_worker n'a plus envoye de log depuis 10 minutes"
+  }
+]

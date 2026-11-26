@@ -236,3 +236,62 @@ GROUP BY fw_descr, fw_dst, fw_dpt ORDER BY hits DESC LIMIT 20
 
 ### UniFi Setup
 In UniFi Network, *Settings > CyberSecure > Traffic Logging* (or *System > Remote Logging* depending on the version): enable *SIEM Server* or *Syslog*, then set the host address and port `514`.
+
+## 4. Authentik Logs (`authentik` stream)
+
+### Role
+The Docker logs of the Authentik stack (`authentik_server`, `authentik_worker`, `authentik_postgresql`) reach OpenObserve in the `docker` stream, like every other container. An OpenObserve pipeline moves them to a stream of their own, `authentik`, and adds `ak_*` fields that the dashboard and the alerts query. Nothing changes on the Authentik side.
+
+The OpenObserve objects are kept in [`authentik/`](./authentik/) as exports. They are created in the OpenObserve UI or API, not by the compose file:
+
+| File | OpenObserve object |
+| :--- | :--- |
+| [`parse_authentik.vrl`](./authentik/parse_authentik.vrl) | Function `parse_authentik` (VRL). |
+| [`pipeline_docker_redact_url_secrets.json`](./authentik/pipeline_docker_redact_url_secrets.json) | Realtime pipeline `docker_redact_url_secrets` on the `docker` stream (IDs and version removed). |
+| [`dashboard_authentik.json`](./authentik/dashboard_authentik.json) | Dashboard *Sécurité — Authentik*, `securite` folder. |
+| [`alerts_authentik.json`](./authentik/alerts_authentik.json) | The four alerts below, with the name of their folder. |
+
+### Routing
+The `docker_redact_url_secrets` pipeline first runs `redact_url_secrets` on every record of `docker`. Records whose `container_name` contains `authentik_` then go through `parse_authentik` and are written to `authentik`; all others go back to `docker`. Authentik logs are therefore no longer in `docker`. Records ingested before the pipeline existed stay in `docker`: OpenObserve only accepts events from the last 5 hours, so there is no backfill.
+
+### Fields
+`parse_authentik` also masks secrets in `app_event`, `app_path` and `app_context_http_request` (OAuth `code`, tokens, passwords in query strings), then adds:
+
+| Field | Content | Example |
+| :--- | :--- | :--- |
+| `ak_component` | Container name without the `authentik_` prefix. | `server`, `worker`, `postgresql` |
+| `ak_kind` | `event` (Authentik event), `forward_auth` (embedded outpost), `health`, `http`, `task` or `log`. | `forward_auth` |
+| `ak_level` | Level in a single vocabulary: `debug`, `info`, `warning`, `error`, `critical`. | `warning` |
+| `ak_client_ip` | Client IP, from `app_client_ip` (Python) or `app_remote` (outpost). | `192.0.2.10` |
+| `ak_runtime_ms` | Request duration in ms, as a float. | `3.2` |
+| `ak_action` | Event action; empty outside events. | `login_failed` |
+| `ak_user` | User of the event (the name typed for `login_failed`); empty outside events. | `bob` |
+| `ak_app_host` | Protected host of a forward-auth request. | `app.example.com` |
+
+`ak_action` and `ak_user` are written on every record, even empty: OpenObserve rejects a query on a field missing from the stream schema (`unknown field`), and events are rare.
+
+`ak_level` is normalized because the sources disagree. Authentik writes `warning` (Python) or `warn` (outpost); `warn` becomes `warning` and `fatal` or `panic` becomes `critical`. The collector tags every PostgreSQL line `WARN`, including plain `LOG:` lines and continuation lines, so for `postgresql` the level is read from the `[pid] LEVEL:` prefix of the message instead: `ERROR` gives `error`, `FATAL` and `PANIC` give `critical`, `WARNING` gives `warning`, anything else `info`. Records ingested before this normalization (26 November 2026) still carry the raw level.
+
+### Dashboard
+*Sécurité — Authentik* (folder `securite`, last 7 days by default): counters for successful and failed logins, forward-auth requests and errors; logins over time; events by action; failed logins by user and IP; recent events; forward-auth volume, refusals and p95 latency by application; warnings and errors by component. IPs get their name from the `ptr` enrichment table. Two filters: *Composant* (error panels) and *Application* (forward-auth panels).
+
+### Alerts
+All are scheduled SQL alerts, checked every 5 minutes, silenced for 60 minutes after firing, sent to `free_mobile_sms`. They fire when the query returns at least *threshold* rows over the period.
+
+| Alert | Folder | Fires when | Period | Threshold |
+| :--- | :--- | :--- | :--- | :--- |
+| `authentik_login_failed_burst` | `securite` | `login_failed` or `invalid_identifier` events | 15 min | 5 |
+| `authentik_sensitive_event` | `securite` | `suspicious_request`, `impersonation_started`, `system_exception`, `policy_exception` or `configuration_error` events | 5 min | 1 |
+| `authentik_errors` | `infra` | records with `ak_level` `error` or `critical` | 15 min | 3 |
+| `authentik_logs_silent` | `infra` | `server` or `worker` has sent no log for 10 minutes (same pattern as `host_metrics_silent`) | 24 h | 1 |
+
+`log_ingestion_stopped` does not watch the `authentik` stream; `authentik_logs_silent` covers it. A component that stays silent for more than 24 hours drops out of the query and no longer fires.
+
+### Testing the Function
+[`tests/test_parse_authentik.sh`](./tests/test_parse_authentik.sh) runs `parse_authentik.vrl` in a Vector `remap` transform (OpenObserve and Vector share VRL) against the cases of [`tests/parse_authentik_test.yaml`](./tests/parse_authentik_test.yaml): PostgreSQL levels, forward-auth, `login_failed` event, secret masking, worker task. It needs Docker and makes no network call:
+
+```bash
+./tests/test_parse_authentik.sh
+```
+
+After a change, push the function to OpenObserve (UI *Pipelines > Functions*, or the `updateFunction` API) and save the export here.
