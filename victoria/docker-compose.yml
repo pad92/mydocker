@@ -394,6 +394,16 @@ services:
         target: /etc/grafana/dashboards/unifi.json
       - source: grafana_dashboard_synology
         target: /etc/grafana/dashboards/synology.json
+      - source: grafana_dashboard_hosts
+        target: /etc/grafana/dashboards/hosts.json
+      - source: grafana_dashboard_logs
+        target: /etc/grafana/dashboards/logs.json
+      - source: grafana_dashboard_docker
+        target: /etc/grafana/dashboards/docker.json
+      - source: grafana_dashboard_dns
+        target: /etc/grafana/dashboards/dns.json
+      - source: grafana_dashboard_firewall
+        target: /etc/grafana/dashboards/firewall.json
     volumes:
       - ${GRAFANA_DATA_DIR:?Set GRAFANA_DATA_DIR}:/var/lib/grafana
     # traefik_gateway for Traefik and to download the plugin; victoria for
@@ -1565,7 +1575,8 @@ configs:
         "title": "Authentik",
         "tags": [
           "authentik",
-          "victorialogs"
+          "victorialogs",
+          "victoria"
         ],
         "editable": false,
         "timezone": "browser",
@@ -1576,6 +1587,18 @@ configs:
         },
         "refresh": "1m",
         "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          }
+        ],
         "templating": {
           "list": [
             {
@@ -2409,7 +2432,8 @@ configs:
         "tags": [
           "proxmox",
           "victoriametrics",
-          "victorialogs"
+          "victorialogs",
+          "victoria"
         ],
         "editable": false,
         "timezone": "browser",
@@ -2420,6 +2444,18 @@ configs:
         },
         "refresh": "1m",
         "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          }
+        ],
         "templating": {
           "list": []
         },
@@ -4279,7 +4315,8 @@ configs:
         "title": "UniFi",
         "tags": [
           "unifi",
-          "victoriametrics"
+          "victoriametrics",
+          "victoria"
         ],
         "editable": false,
         "timezone": "browser",
@@ -4290,6 +4327,18 @@ configs:
         },
         "refresh": "1m",
         "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          }
+        ],
         "templating": {
           "list": []
         },
@@ -5048,7 +5097,8 @@ configs:
         "title": "Synology NAS",
         "tags": [
           "synology",
-          "victoriametrics"
+          "victoriametrics",
+          "victoria"
         ],
         "editable": false,
         "timezone": "browser",
@@ -5059,6 +5109,18 @@ configs:
         },
         "refresh": "1m",
         "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          }
+        ],
         "templating": {
           "list": []
         },
@@ -5827,6 +5889,5170 @@ configs:
               "y": 31,
               "w": 24,
               "h": 8
+            }
+          }
+        ]
+      }
+  grafana_dashboard_hosts:
+    content: |
+      {
+        "uid": "victoria-hosts",
+        "title": "Hôtes",
+        "tags": [
+          "hosts",
+          "victoriametrics",
+          "victoria"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          }
+        ],
+        "templating": {
+          "list": [
+            {
+              "name": "host_name",
+              "label": "Hôte",
+              "type": "query",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "victoriametrics"
+              },
+              "definition": "label_values(system_cpu_time_seconds_total, host_name)",
+              "query": {
+                "qryType": 1,
+                "query": "label_values(system_cpu_time_seconds_total, host_name)",
+                "refId": "host_name"
+              },
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".*",
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            }
+          ]
+        },
+        "annotations": {
+          "list": []
+        },
+        "panels": [
+          {
+            "type": "row",
+            "title": "État",
+            "collapsed": false,
+            "panels": [],
+            "id": 1,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Hôtes qui remontent",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "count(count by (host_name) (system_memory_utilization_ratio{host_name=~\"$$host_name\"}))",
+                "legendFormat": "__auto",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 0,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Hôtes silencieux (> 10 min)",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "count(max by (host_name) (lag(system_cpu_time_seconds_total{host_name=~\"$$host_name\"}[24h])) > 600)",
+                "legendFormat": "__auto",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 3,
+            "gridPos": {
+              "x": 6,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Système de fichiers le plus plein",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(system_filesystem_utilization_ratio{host_name=~\"$$host_name\", type!~\"vfat|tmpfs|squashfs|overlay\"})",
+                "legendFormat": "__auto",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                },
+                "decimals": 1
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 12,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Pools ZFS dégradés",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "count(zfs_pool_health != 0)",
+                "legendFormat": "__auto",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 18,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "row",
+            "title": "Ressources",
+            "collapsed": false,
+            "panels": [],
+            "id": 6,
+            "gridPos": {
+              "x": 0,
+              "y": 5,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "CPU",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "1 - sum by (host_name) (rate(system_cpu_time_seconds_total{host_name=~\"$$host_name\", state=\"idle\"}[5m])) / sum by (host_name) (rate(system_cpu_time_seconds_total{host_name=~\"$$host_name\"}[5m]))",
+                "legendFormat": "{{host_name}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 7,
+            "gridPos": {
+              "x": 0,
+              "y": 6,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Mémoire utilisée",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "system_memory_utilization_ratio{host_name=~\"$$host_name\", state=\"used\"}",
+                "legendFormat": "{{host_name}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 8,
+            "gridPos": {
+              "x": 12,
+              "y": 6,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Charge (5 min)",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "system_cpu_load_average_5m{host_name=~\"$$host_name\"}",
+                "legendFormat": "{{host_name}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 9,
+            "gridPos": {
+              "x": 0,
+              "y": 14,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Occupation des systèmes de fichiers",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, mountpoint) (system_filesystem_utilization_ratio{host_name=~\"$$host_name\", type!~\"vfat|tmpfs|squashfs|overlay\"})",
+                "legendFormat": "{{host_name}} {{mountpoint}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 10,
+            "gridPos": {
+              "x": 12,
+              "y": 14,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Entrées / sorties",
+            "collapsed": false,
+            "panels": [],
+            "id": 11,
+            "gridPos": {
+              "x": 0,
+              "y": 22,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Réseau (octets/s)",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (host_name, direction) (rate(system_network_io_bytes_total{host_name=~\"$$host_name\", device=~\"eth.*|en.*|vmbr[0-9]+|bond.*|wl.*\"}[5m]))",
+                "legendFormat": "{{host_name}} {{direction}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "Bps",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 12,
+            "gridPos": {
+              "x": 0,
+              "y": 23,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Disques (octets/s)",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (host_name, direction) (rate(system_disk_io_bytes_total{host_name=~\"$$host_name\", device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[5m]))",
+                "legendFormat": "{{host_name}} {{direction}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "Bps",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 13,
+            "gridPos": {
+              "x": 12,
+              "y": 23,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "ZFS",
+            "collapsed": false,
+            "panels": [],
+            "id": 14,
+            "gridPos": {
+              "x": 0,
+              "y": 31,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Remplissage des pools",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "zfs_pool_capacity_ratio",
+                "legendFormat": "{{pool}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 15,
+            "gridPos": {
+              "x": 0,
+              "y": 32,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Santé des pools (0 = ONLINE)",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "zfs_pool_health",
+                "legendFormat": "{{pool}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 16,
+            "gridPos": {
+              "x": 12,
+              "y": 32,
+              "w": 12,
+              "h": 8
+            }
+          }
+        ]
+      }
+  grafana_dashboard_logs:
+    content: |
+      {
+        "uid": "victoria-logs",
+        "title": "Logs",
+        "tags": [
+          "logs",
+          "victorialogs",
+          "victoria"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          }
+        ],
+        "templating": {
+          "list": [
+            {
+              "name": "log_stream",
+              "label": "Flux",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "log_stream",
+                "query": "*",
+                "refId": "log_stream"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            },
+            {
+              "name": "host_name",
+              "label": "Hôte",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "host_name",
+                "query": "*",
+                "refId": "host_name"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            },
+            {
+              "name": "search",
+              "label": "Recherche (LogsQL)",
+              "type": "textbox",
+              "query": "*",
+              "current": {
+                "text": "*",
+                "value": "*"
+              }
+            }
+          ]
+        },
+        "annotations": {
+          "list": []
+        },
+        "panels": [
+          {
+            "type": "row",
+            "title": "Volume",
+            "collapsed": false,
+            "panels": [],
+            "id": 1,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Logs",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 0,
+              "y": 1,
+              "w": 8,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Erreurs",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 3,
+            "gridPos": {
+              "x": 8,
+              "y": 1,
+              "w": 8,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Hôtes",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search | stats count_uniq(host_name) as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 16,
+              "y": 1,
+              "w": 8,
+              "h": 4
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Logs par flux",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search | stats by (log_stream) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{log_stream}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 0,
+              "y": 5,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Logs par hôte",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search | stats by (host_name) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{host_name}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 6,
+            "gridPos": {
+              "x": 12,
+              "y": 5,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Erreurs par hôte",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats by (host_name) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{host_name}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 7,
+            "gridPos": {
+              "x": 0,
+              "y": 13,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Erreurs par hôte et flux",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats by (host_name, log_stream) count() as n | sort by (n desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "host_name": 0,
+                    "log_stream": 1,
+                    "n": 2
+                  },
+                  "renameByName": {
+                    "host_name": "hôte",
+                    "log_stream": "flux",
+                    "n": "erreurs"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 8,
+            "gridPos": {
+              "x": 12,
+              "y": 13,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Conteneurs Docker",
+            "collapsed": false,
+            "panels": [],
+            "id": 9,
+            "gridPos": {
+              "x": 0,
+              "y": 21,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Logs par conteneur",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) $$search | stats by (container_name) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{container_name}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 10,
+            "gridPos": {
+              "x": 0,
+              "y": 22,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Erreurs par conteneur",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats by (host_name, container_name) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "host_name": 0,
+                    "container_name": 1,
+                    "n": 2,
+                    "dernier": 3
+                  },
+                  "renameByName": {
+                    "host_name": "hôte",
+                    "container_name": "conteneur",
+                    "n": "erreurs",
+                    "dernier": "dernier"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 11,
+            "gridPos": {
+              "x": 12,
+              "y": 22,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Logs",
+            "collapsed": false,
+            "panels": [],
+            "id": 12,
+            "gridPos": {
+              "x": 0,
+              "y": 30,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "logs",
+            "title": "Logs (200 derniers)",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search | sort by (_time desc) | limit 200",
+                "queryType": "instant"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "enableLogDetails": true,
+              "dedupStrategy": "none",
+              "prettifyLogMessage": false,
+              "showCommonLabels": false,
+              "showLabels": false
+            },
+            "id": 13,
+            "gridPos": {
+              "x": 0,
+              "y": 31,
+              "w": 24,
+              "h": 14
+            }
+          }
+        ]
+      }
+  grafana_dashboard_docker:
+    content: |
+      {
+        "uid": "victoria-docker",
+        "title": "Services Docker",
+        "tags": [
+          "docker",
+          "victorialogs",
+          "victoria"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          }
+        ],
+        "templating": {
+          "list": [
+            {
+              "name": "host_name",
+              "label": "Hôte",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "host_name",
+                "query": "{log_stream=\"docker\"}",
+                "refId": "host_name"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            },
+            {
+              "name": "compose_project",
+              "label": "Projet Compose",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "compose_project",
+                "query": "{log_stream=\"docker\"} host_name:in($$host_name)",
+                "refId": "compose_project"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            },
+            {
+              "name": "container_name",
+              "label": "Conteneur",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "container_name",
+                "query": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project)",
+                "refId": "container_name"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            },
+            {
+              "name": "search",
+              "label": "Recherche (LogsQL)",
+              "type": "textbox",
+              "query": "*",
+              "current": {
+                "text": "*",
+                "value": "*"
+              }
+            }
+          ]
+        },
+        "annotations": {
+          "list": []
+        },
+        "panels": [
+          {
+            "type": "row",
+            "title": "Vue d'ensemble",
+            "collapsed": false,
+            "panels": [],
+            "id": 1,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Logs",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 0,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Erreurs",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 3,
+            "gridPos": {
+              "x": 6,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Conteneurs qui loguent",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search | stats count_uniq(container_name) as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 12,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Part de stderr",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search | stats count() if (log_iostream:=stderr) as e, count() as n | math e / n as ratio | fields ratio",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                },
+                "decimals": 1
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 18,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "row",
+            "title": "Volume",
+            "collapsed": false,
+            "panels": [],
+            "id": 6,
+            "gridPos": {
+              "x": 0,
+              "y": 5,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Logs par conteneur",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search | stats by (container_name) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{container_name}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 7,
+            "gridPos": {
+              "x": 0,
+              "y": 6,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Erreurs par conteneur",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats by (container_name) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{container_name}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 8,
+            "gridPos": {
+              "x": 12,
+              "y": 6,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "stdout / stderr",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search | stats by (log_iostream) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{log_iostream}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 9,
+            "gridPos": {
+              "x": 0,
+              "y": 14,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Logs par sévérité",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search | format if (severity:\"\") \"absent\" as severity | format \"<uc:severity>\" as severity | stats by (severity) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{severity}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 10,
+            "gridPos": {
+              "x": 12,
+              "y": 14,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Erreurs",
+            "collapsed": false,
+            "panels": [],
+            "id": 11,
+            "gridPos": {
+              "x": 0,
+              "y": 22,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "table",
+            "title": "Messages d'erreur les plus fréquents",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | replace_regexp (\"[0-9]+\", \"N\") at _msg | extract_regexp \"^(?P<msg>.{1,200})\" from _msg | stats by (container_name, msg) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "container_name": 0,
+                    "msg": 1,
+                    "n": 2,
+                    "dernier": 3
+                  },
+                  "renameByName": {
+                    "container_name": "conteneur",
+                    "msg": "message (200 car., chiffres = N)",
+                    "n": "occurrences",
+                    "dernier": "dernier"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 12,
+            "gridPos": {
+              "x": 0,
+              "y": 23,
+              "w": 16,
+              "h": 10
+            }
+          },
+          {
+            "type": "table",
+            "title": "Erreurs par conteneur",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats by (host_name, container_name) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "host_name": 0,
+                    "container_name": 1,
+                    "n": 2,
+                    "dernier": 3
+                  },
+                  "renameByName": {
+                    "host_name": "hôte",
+                    "container_name": "conteneur",
+                    "n": "erreurs",
+                    "dernier": "dernier"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 13,
+            "gridPos": {
+              "x": 16,
+              "y": 23,
+              "w": 8,
+              "h": 10
+            }
+          },
+          {
+            "type": "row",
+            "title": "Santé",
+            "collapsed": false,
+            "panels": [],
+            "id": 14,
+            "gridPos": {
+              "x": 0,
+              "y": 33,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "table",
+            "title": "Conteneurs sans log depuis 1 h",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search | stats by (host_name, container_name) count() if (_time:1h) as recent, count() as n, max(_time) as dernier | filter recent:=0 | fields host_name, container_name, dernier, n | sort by (dernier desc) | limit 50",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "host_name": 0,
+                    "container_name": 1,
+                    "dernier": 2,
+                    "n": 3
+                  },
+                  "renameByName": {
+                    "host_name": "hôte",
+                    "container_name": "conteneur",
+                    "dernier": "dernier log",
+                    "n": "logs sur la période"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 15,
+            "gridPos": {
+              "x": 0,
+              "y": 34,
+              "w": 24,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Logs",
+            "collapsed": false,
+            "panels": [],
+            "id": 16,
+            "gridPos": {
+              "x": 0,
+              "y": 42,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "logs",
+            "title": "Logs (200 derniers)",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search | sort by (_time desc) | limit 200",
+                "queryType": "instant"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "enableLogDetails": true,
+              "dedupStrategy": "none",
+              "prettifyLogMessage": false,
+              "showCommonLabels": false,
+              "showLabels": false
+            },
+            "id": 17,
+            "gridPos": {
+              "x": 0,
+              "y": 43,
+              "w": 24,
+              "h": 14
+            }
+          }
+        ]
+      }
+  grafana_dashboard_dns:
+    content: |
+      {
+        "uid": "victoria-dns",
+        "title": "DNS",
+        "tags": [
+          "dns",
+          "victorialogs",
+          "victoria"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          }
+        ],
+        "templating": {
+          "list": [
+            {
+              "name": "host_name",
+              "label": "Serveur",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "host_name",
+                "query": "{log_stream=\"dns_queries\"}",
+                "refId": "host_name"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            },
+            {
+              "name": "client",
+              "label": "Client",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "body_ip",
+                "query": "{log_stream=\"dns_queries\"}",
+                "refId": "client"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            },
+            {
+              "name": "search",
+              "label": "Recherche (LogsQL)",
+              "type": "textbox",
+              "query": "*",
+              "current": {
+                "text": "*",
+                "value": "*"
+              }
+            }
+          ]
+        },
+        "annotations": {
+          "list": []
+        },
+        "panels": [
+          {
+            "type": "row",
+            "title": "Vue d'ensemble",
+            "collapsed": false,
+            "panels": [],
+            "id": 1,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Requêtes",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 0,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Bloquées",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search body_result_isfiltered:true | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 3,
+            "gridPos": {
+              "x": 4,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Taux de blocage",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search | stats count() as total, count() if (body_result_isfiltered:true) as bloquees | math bloquees*100/total as pct | fields pct",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                },
+                "decimals": 1
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 8,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Taux de réponses en cache",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search | stats count() as total, count() if (body_cached:true) as cache | math cache*100/total as pct | fields pct",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                },
+                "decimals": 1
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 12,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Clients distincts",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search | stats count_uniq(body_ip) as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 6,
+            "gridPos": {
+              "x": 16,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Latence p95 hors cache",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search -body_cached:true -body_upstream:\"\" | stats quantile(0.95, body_elapsed) as p95",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "ns",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                },
+                "decimals": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 7,
+            "gridPos": {
+              "x": 20,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "row",
+            "title": "Trafic",
+            "collapsed": false,
+            "panels": [],
+            "id": 8,
+            "gridPos": {
+              "x": 0,
+              "y": 5,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Requêtes par serveur",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search | stats by (host_name) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{host_name}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 9,
+            "gridPos": {
+              "x": 0,
+              "y": 6,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Requêtes par type",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search | stats by (body_qt) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{body_qt}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 10,
+            "gridPos": {
+              "x": 12,
+              "y": 6,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Requêtes par résultat",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search body_result_isfiltered:true | stats count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "bloquées"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search body_result_reason:~\"^(9|10|11)\" | stats count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "réécrites"
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search body_result_reason:in(\"1\", \"1.0\") | stats count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "liste blanche"
+              },
+              {
+                "refId": "D",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search -body_result_isfiltered:true -body_result_reason:~\"^(9|10|11)\" -body_result_reason:in(\"1\", \"1.0\") | stats count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "résolues normalement"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 11,
+            "gridPos": {
+              "x": 0,
+              "y": 14,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Cache et résolution amont",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search body_cached:true | stats count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "en cache"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search -body_cached:true -body_upstream:\"\" | stats count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "résolues en amont"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 12,
+            "gridPos": {
+              "x": 12,
+              "y": 14,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Latence et amont",
+            "collapsed": false,
+            "panels": [],
+            "id": 13,
+            "gridPos": {
+              "x": 0,
+              "y": 22,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Latence p95 hors cache par serveur",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search -body_cached:true -body_upstream:\"\" | stats by (host_name) quantile(0.95, body_elapsed) as p95",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{host_name}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "ns",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 14,
+            "gridPos": {
+              "x": 0,
+              "y": 23,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Requêtes par résolveur amont",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search -body_cached:true -body_upstream:\"\" | stats by (body_upstream) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{body_upstream}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 15,
+            "gridPos": {
+              "x": 12,
+              "y": 23,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Clients",
+            "collapsed": false,
+            "panels": [],
+            "id": 16,
+            "gridPos": {
+              "x": 0,
+              "y": 31,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Requêtes par client",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search | stats by (body_ip) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{body_ip}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 17,
+            "gridPos": {
+              "x": 0,
+              "y": 32,
+              "w": 12,
+              "h": 9
+            }
+          },
+          {
+            "type": "table",
+            "title": "Clients les plus actifs",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search | stats by (body_ip) count() as n, count() if (body_result_isfiltered:true) as bloquees, count_uniq(body_qh) as domaines | sort by (n desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "bloquees",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "domaines",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "body_ip": 0,
+                    "n": 1,
+                    "bloquees": 2,
+                    "domaines": 3
+                  },
+                  "renameByName": {
+                    "body_ip": "client",
+                    "n": "requêtes",
+                    "bloquees": "bloquées",
+                    "domaines": "domaines"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 18,
+            "gridPos": {
+              "x": 12,
+              "y": 32,
+              "w": 12,
+              "h": 9
+            }
+          },
+          {
+            "type": "row",
+            "title": "Domaines",
+            "collapsed": false,
+            "panels": [],
+            "id": 19,
+            "gridPos": {
+              "x": 0,
+              "y": 41,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "table",
+            "title": "Domaines les plus demandés",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search | stats by (body_qh) count() as n, count_uniq(body_ip) as clients | sort by (n desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "clients",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "body_qh": 0,
+                    "n": 1,
+                    "clients": 2
+                  },
+                  "renameByName": {
+                    "body_qh": "domaine",
+                    "n": "requêtes",
+                    "clients": "clients"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 20,
+            "gridPos": {
+              "x": 0,
+              "y": 42,
+              "w": 12,
+              "h": 10
+            }
+          },
+          {
+            "type": "table",
+            "title": "Domaines bloqués",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search body_result_isfiltered:true | stats by (body_qh) count() as n, count_uniq(body_ip) as clients | sort by (n desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "clients",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "body_qh": 0,
+                    "n": 1,
+                    "clients": 2
+                  },
+                  "renameByName": {
+                    "body_qh": "domaine",
+                    "n": "requêtes",
+                    "clients": "clients"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 21,
+            "gridPos": {
+              "x": 12,
+              "y": 42,
+              "w": 12,
+              "h": 10
+            }
+          },
+          {
+            "type": "table",
+            "title": "Domaines les plus lents (hors cache, au moins 3 requêtes)",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search -body_cached:true -body_upstream:\"\" | stats by (body_qh) count() as n, quantile(0.95, body_elapsed) as p95 | filter n:>=3 | math round(p95/1000000, 0.1) as ms | sort by (ms desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "ms",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "p95",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "body_qh": 0,
+                    "n": 1,
+                    "ms": 2,
+                    "p95": 3
+                  },
+                  "renameByName": {
+                    "body_qh": "domaine",
+                    "n": "requêtes",
+                    "ms": "p95 (ms)",
+                    "p95": "p95 (ns)"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 22,
+            "gridPos": {
+              "x": 0,
+              "y": 52,
+              "w": 12,
+              "h": 10
+            }
+          },
+          {
+            "type": "table",
+            "title": "Clients les plus bloqués",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search body_result_isfiltered:true | stats by (body_ip) count() as n, count_uniq(body_qh) as domaines | sort by (n desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "domaines",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "body_ip": 0,
+                    "n": 1,
+                    "domaines": 2
+                  },
+                  "renameByName": {
+                    "body_ip": "client",
+                    "n": "bloquées",
+                    "domaines": "domaines"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 23,
+            "gridPos": {
+              "x": 12,
+              "y": 52,
+              "w": 12,
+              "h": 10
+            }
+          },
+          {
+            "type": "row",
+            "title": "Requêtes récentes",
+            "collapsed": false,
+            "panels": [],
+            "id": 24,
+            "gridPos": {
+              "x": 0,
+              "y": 62,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "logs",
+            "title": "Requêtes (200 dernières)",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search | format \"<host_name> <body_ip> <body_qt> <body_qh> cache=<body_cached> bloquée=<body_result_isfiltered> amont=<body_upstream>\" as _msg | sort by (_time desc) | limit 200",
+                "queryType": "instant"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "enableLogDetails": true,
+              "dedupStrategy": "none",
+              "prettifyLogMessage": false,
+              "showCommonLabels": false,
+              "showLabels": false
+            },
+            "id": 25,
+            "gridPos": {
+              "x": 0,
+              "y": 63,
+              "w": 24,
+              "h": 14
+            }
+          }
+        ]
+      }
+  grafana_dashboard_firewall:
+    content: |
+      {
+        "uid": "victoria-firewall",
+        "title": "Firewall",
+        "tags": [
+          "firewall",
+          "victorialogs",
+          "victoria"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          }
+        ],
+        "templating": {
+          "list": [
+            {
+              "name": "host_name",
+              "label": "Hôte",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "host_name",
+                "query": "{log_stream=\"firewall\"}",
+                "refId": "host_name"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            },
+            {
+              "name": "action",
+              "label": "Action",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "fw_action",
+                "query": "{log_stream=\"firewall\"}",
+                "refId": "action"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            },
+            {
+              "name": "ruleset",
+              "label": "Jeu de règles (zones)",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "fw_ruleset",
+                "query": "{log_stream=\"firewall\"}",
+                "refId": "ruleset"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            },
+            {
+              "name": "search",
+              "label": "Recherche (LogsQL)",
+              "type": "textbox",
+              "query": "*",
+              "current": {
+                "text": "*",
+                "value": "*"
+              }
+            }
+          ]
+        },
+        "annotations": {
+          "list": []
+        },
+        "panels": [
+          {
+            "type": "row",
+            "title": "Vue d'ensemble",
+            "collapsed": false,
+            "panels": [],
+            "id": 1,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Paquets bloqués",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 0,
+              "y": 1,
+              "w": 5,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Bloqués depuis le WAN",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search fw_ruleset:~\"^WAN_\" | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 3,
+            "gridPos": {
+              "x": 5,
+              "y": 1,
+              "w": 5,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Sources distinctes",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats count_uniq(fw_src) as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 10,
+              "y": 1,
+              "w": 5,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Ports de destination distincts",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats count_uniq(fw_dpt) as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 15,
+              "y": 1,
+              "w": 5,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Événements IPS/IDS",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"syslog\"} appname:CEF host_name:in($$host_name) $$search ((UNIFIcategory:Security -cef_signature_id:203) or cef_name:~\"(?i)threat|intrus|honeypot\") | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 6,
+            "gridPos": {
+              "x": 20,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "row",
+            "title": "Blocages dans le temps",
+            "collapsed": false,
+            "panels": [],
+            "id": 7,
+            "gridPos": {
+              "x": 0,
+              "y": 5,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Blocages par règle",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats by (fw_rule) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{fw_rule}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 8,
+            "gridPos": {
+              "x": 0,
+              "y": 6,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Blocages par zone source",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | extract \"<zone_src>_<zone_dst>\" from fw_ruleset | stats by (zone_src) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{zone_src}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 9,
+            "gridPos": {
+              "x": 12,
+              "y": 6,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Blocages par interface d'entrée",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats by (fw_in) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{fw_in}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 10,
+            "gridPos": {
+              "x": 0,
+              "y": 14,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Blocages par action et protocole",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats by (fw_action, fw_proto) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{fw_action}} {{fw_proto}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 11,
+            "gridPos": {
+              "x": 12,
+              "y": 14,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Sources, cibles et règles",
+            "collapsed": false,
+            "panels": [],
+            "id": 12,
+            "gridPos": {
+              "x": 0,
+              "y": 22,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "table",
+            "title": "Top sources bloquées",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats by (fw_src, fw_in) count() as n, count_uniq(fw_dpt) as ports, max(_time) as dernier | sort by (n desc) | limit 20",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "ports",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "fw_src": 0,
+                    "fw_in": 1,
+                    "n": 2,
+                    "ports": 3,
+                    "dernier": 4
+                  },
+                  "renameByName": {
+                    "fw_src": "source",
+                    "fw_in": "interface",
+                    "n": "paquets",
+                    "ports": "ports",
+                    "dernier": "dernier"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 13,
+            "gridPos": {
+              "x": 0,
+              "y": 23,
+              "w": 12,
+              "h": 9
+            }
+          },
+          {
+            "type": "table",
+            "title": "Top ports de destination",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats by (fw_proto, fw_dpt) count() as n, count_uniq(fw_src) as sources | sort by (n desc) | limit 20",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "sources",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "fw_proto": 0,
+                    "fw_dpt": 1,
+                    "n": 2,
+                    "sources": 3
+                  },
+                  "renameByName": {
+                    "fw_proto": "protocole",
+                    "fw_dpt": "port",
+                    "n": "paquets",
+                    "sources": "sources"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 14,
+            "gridPos": {
+              "x": 12,
+              "y": 23,
+              "w": 12,
+              "h": 9
+            }
+          },
+          {
+            "type": "table",
+            "title": "Top destinations bloquées",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats by (fw_dst, fw_out) count() as n, count_uniq(fw_src) as sources | sort by (n desc) | limit 20",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "sources",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "fw_dst": 0,
+                    "fw_out": 1,
+                    "n": 2,
+                    "sources": 3
+                  },
+                  "renameByName": {
+                    "fw_dst": "destination",
+                    "fw_out": "interface de sortie",
+                    "n": "paquets",
+                    "sources": "sources"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 15,
+            "gridPos": {
+              "x": 0,
+              "y": 32,
+              "w": 12,
+              "h": 9
+            }
+          },
+          {
+            "type": "table",
+            "title": "Règles déclenchées",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats by (fw_rule, fw_descr, fw_action) count() as n, count_uniq(fw_src) as sources, max(_time) as dernier | sort by (n desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "sources",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "fw_rule": 0,
+                    "fw_descr": 1,
+                    "fw_action": 2,
+                    "n": 3,
+                    "sources": 4,
+                    "dernier": 5
+                  },
+                  "renameByName": {
+                    "fw_rule": "règle",
+                    "fw_descr": "description",
+                    "fw_action": "action",
+                    "n": "paquets",
+                    "sources": "sources",
+                    "dernier": "dernier"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 16,
+            "gridPos": {
+              "x": 12,
+              "y": 32,
+              "w": 12,
+              "h": 9
+            }
+          },
+          {
+            "type": "row",
+            "title": "UniFi : IPS/IDS et politiques (CEF)",
+            "collapsed": false,
+            "panels": [],
+            "id": 17,
+            "gridPos": {
+              "x": 0,
+              "y": 41,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Événements de sécurité UniFi",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"syslog\"} appname:CEF UNIFIcategory:Security host_name:in($$host_name) $$search | stats by (cef_name) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{cef_name}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 18,
+            "gridPos": {
+              "x": 0,
+              "y": 42,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Événements IPS/IDS",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"syslog\"} appname:CEF host_name:in($$host_name) $$search ((UNIFIcategory:Security -cef_signature_id:203) or cef_name:~\"(?i)threat|intrus|honeypot\") | stats by (cef_name, UNIFIrisk, src, dst, dpt, msg) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "cef_name": 0,
+                    "UNIFIrisk": 1,
+                    "src": 2,
+                    "dst": 3,
+                    "dpt": 4,
+                    "msg": 5,
+                    "n": 6,
+                    "dernier": 7
+                  },
+                  "renameByName": {
+                    "cef_name": "événement",
+                    "UNIFIrisk": "risque",
+                    "src": "source",
+                    "dst": "destination",
+                    "dpt": "port",
+                    "msg": "message",
+                    "n": "nombre",
+                    "dernier": "dernier"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 19,
+            "gridPos": {
+              "x": 12,
+              "y": 42,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Blocages UniFi par politique et client",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"syslog\"} appname:CEF UNIFIcategory:Security host_name:in($$host_name) $$search cef_signature_id:203 | stats by (UNIFIfirewallPolicy, UNIFIsrcClientAlias, UNIFIsrcClientIp, UNIFIdstZone) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "UNIFIfirewallPolicy": 0,
+                    "UNIFIsrcClientAlias": 1,
+                    "UNIFIsrcClientIp": 2,
+                    "UNIFIdstZone": 3,
+                    "n": 4,
+                    "dernier": 5
+                  },
+                  "renameByName": {
+                    "UNIFIfirewallPolicy": "politique",
+                    "UNIFIsrcClientAlias": "client",
+                    "UNIFIsrcClientIp": "IP client",
+                    "UNIFIdstZone": "zone cible",
+                    "n": "nombre",
+                    "dernier": "dernier"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 20,
+            "gridPos": {
+              "x": 0,
+              "y": 50,
+              "w": 24,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Journaux",
+            "collapsed": false,
+            "panels": [],
+            "id": 21,
+            "gridPos": {
+              "x": 0,
+              "y": 58,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "table",
+            "title": "Flux bloqués récents",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats by (fw_rule, fw_src, fw_dst, fw_proto, fw_dpt) count() as n, max(_time) as dernier | sort by (dernier desc) | limit 50",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "dernier": 0,
+                    "fw_rule": 1,
+                    "fw_src": 2,
+                    "fw_dst": 3,
+                    "fw_proto": 4,
+                    "fw_dpt": 5,
+                    "n": 6
+                  },
+                  "renameByName": {
+                    "dernier": "dernier",
+                    "fw_rule": "règle",
+                    "fw_src": "source",
+                    "fw_dst": "destination",
+                    "fw_proto": "protocole",
+                    "fw_dpt": "port",
+                    "n": "paquets"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 22,
+            "gridPos": {
+              "x": 0,
+              "y": 59,
+              "w": 24,
+              "h": 10
+            }
+          },
+          {
+            "type": "logs",
+            "title": "Blocages (200 derniers)",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | sort by (_time desc) | limit 200",
+                "queryType": "instant"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "enableLogDetails": true,
+              "dedupStrategy": "none",
+              "prettifyLogMessage": false,
+              "showCommonLabels": false,
+              "showLabels": false
+            },
+            "id": 23,
+            "gridPos": {
+              "x": 0,
+              "y": 69,
+              "w": 12,
+              "h": 14
+            }
+          },
+          {
+            "type": "logs",
+            "title": "Événements de sécurité UniFi (200 derniers)",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"syslog\"} appname:CEF UNIFIcategory:Security host_name:in($$host_name) $$search | sort by (_time desc) | limit 200",
+                "queryType": "instant"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "enableLogDetails": true,
+              "dedupStrategy": "none",
+              "prettifyLogMessage": false,
+              "showCommonLabels": false,
+              "showLabels": false
+            },
+            "id": 24,
+            "gridPos": {
+              "x": 12,
+              "y": 69,
+              "w": 12,
+              "h": 14
             }
           }
         ]
