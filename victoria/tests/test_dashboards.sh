@@ -8,14 +8,15 @@
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
 # - with the header a new user is created with the Viewer role and sees the
-#   ten provisioned dashboards (Authentik, Proxmox, UniFi, Synology, hosts,
-#   logs, Docker, DNS, firewall, HTTP);
+#   eleven provisioned dashboards (Authentik, Proxmox, UniFi, Synology, hosts,
+#   logs, Docker, DNS, firewall, HTTP, alerts);
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
 # - every VictoriaLogs target of the dashboards, sent as the viewer to
 #   /api/ds/query, answers 200 without error and returns data from records
 #   ingested before (Proxmox, Authentik, Docker, AdGuard Home, UniFi firewall
-#   and CEF, Traefik access logs, with the fields Vector produces);
+#   and CEF, Traefik access logs, alert rule states, with the fields Vector
+#   produces);
 # - the HTTP dashboard returns the exact request count, 4xx and 5xx rates and
 #   p95 latency of the Traefik sample, which holds WebSocket sessions
 #   (status 0) and SSE requests (/user/events) lasting minutes: they count as
@@ -108,7 +109,7 @@ while IFS=$'\t' read -r source target; do
     "$work_dir/compose.json" > "$work_dir/configs/$source"
   mounts+=(-v "$work_dir/configs/$source:$target:ro")
 done < <(jq -r '.services.grafana.configs[] | [.source, .target] | @tsv' "$work_dir/compose.json")
-[[ ${#mounts[@]} -eq 24 ]] || fail "expected 12 Grafana configs, got $((${#mounts[@]} / 2))"
+[[ ${#mounts[@]} -eq 26 ]] || fail "expected 13 Grafana configs, got $((${#mounts[@]} / 2))"
 
 pinned="$(jq -r '.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC' "$work_dir/compose.json")"
 [[ "$pinned" == "$plugin_id@"* ]] || fail "GF_PLUGINS_PREINSTALL_SYNC is '$pinned', expected $plugin_id@<version>"
@@ -264,6 +265,21 @@ records += [{"log_stream": "dns_queries", "_msg": "dns", **r} for r in dns_queri
 records += [{"log_stream": "firewall", "severity": "notice", "level": "info", **r} for r in firewall]
 records += [{"log_stream": "syslog", "facility": "user", **r} for r in cef]
 records += [{"log_stream": "traefik", "_msg": "http", **r} for r in traefik]
+# The rule states Vector polls from vmalert every minute (see alert_rules):
+# the Alertes dashboard reads the last 3 minutes, so they are fresh. One rule
+# per state, and one whose evaluation fails.
+def rule(name, source, state, health, severity, msg, **extra):
+    return {"log_stream": "alerts", "_age": 0, "_msg": msg, "alert_rule": name, "alert_group": source,
+            "alert_source": source, "alert_state": state, "alert_health": health,
+            "alert_severity": severity, "alert_count": int(state != "inactive"), **extra}
+records += [rule("proxmox_backup_failed", "logs", "firing", "ok", "critical",
+                 "Sauvegarde vzdump Proxmox en echec", alert_active_since=at(10)),
+            rule("traefik_5xx_burst", "logs", "pending", "ok", "warning", "15 erreurs 5xx",
+                 alert_active_since=at(1)),
+            rule("oom_kill", "logs", "inactive", "ok", "critical", "Condition non remplie : OOM"),
+            rule("vmalert_rule_errors", "metrics", "inactive", "err", "warning",
+                 "Erreur d'evaluation : cannot parse query"),
+            rule("watchdog", "metrics", "firing", "ok", "none", "Chaine d'alerte vivante")]
 with open(f"{work}/records.jsonl", "w") as f:
     for i, r in enumerate(records):
         age = r.pop("_age", i % 5 + 1)
@@ -348,7 +364,7 @@ def substitute(expr, datasource, variables, variant, all_values):
 
 index = []
 for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
-             "docker", "dns", "firewall", "http"):
+             "docker", "dns", "firewall", "http", "alerts"):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     declared = {v["name"] for v in dash.get("templating", {}).get("list", [])}
     all_values = {v["name"]: v.get("allValue") for v in dash.get("templating", {}).get("list", [])
@@ -408,6 +424,13 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 [[ -n "$ready" ]] || fail "victorialogs, victoriametrics or grafana did not start"
+
+# The Alertes dashboard reads the last 3 minutes: date the rule states now,
+# whatever the time Grafana took to start.
+fresh="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+jq -c --arg t "$fresh" 'if .log_stream == "alerts" then ._time = $t else . end' \
+  "$work_dir/records.jsonl" > "$work_dir/records.tmp" && mv "$work_dir/records.tmp" "$work_dir/records.jsonl"
+chmod a+r "$work_dir/records.jsonl"
 
 client wget -q -O /dev/null --header 'Content-Type: application/stream+json' \
   --post-file /w/records.jsonl 'http://victorialogs:9428/insert/jsonline?_stream_fields=log_stream' \
@@ -492,7 +515,7 @@ orgs = load("orgs.json")
 if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
     errors.append(f"new user roles {orgs}, expected one org with Viewer")
 
-expected_uids = ["victoria-authentik", "victoria-dns", "victoria-docker", "victoria-firewall",
+expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-dns", "victoria-docker", "victoria-firewall",
                  "victoria-hosts", "victoria-http", "victoria-logs", "victoria-proxmox", "victoria-synology",
                  "victoria-unifi"]
 # Targets that must return nothing: test.home.lan is not silent.

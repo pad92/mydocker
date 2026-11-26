@@ -415,6 +415,8 @@ services:
         target: /etc/grafana/dashboards/firewall.json
       - source: grafana_dashboard_http
         target: /etc/grafana/dashboards/http.json
+      - source: grafana_dashboard_alerts
+        target: /etc/grafana/dashboards/alerts.json
     volumes:
       - ${GRAFANA_DATA_DIR:?Set GRAFANA_DATA_DIR}:/var/lib/grafana
     # traefik_gateway for Traefik and to download the plugin; victoria for
@@ -664,25 +666,43 @@ configs:
               annotations:
                 summary: "Plus de log de {{ $$labels.host_name }} depuis 30 minutes"
                 description: "Un hote qui envoyait des logs journald, fichiers ou Docker n'envoie plus rien depuis 30 minutes"
+            # Disk, filesystem and hardware errors, and hung tasks ("task
+            # <name>:<pid> blocked for more than <n> seconds"). The OOM killer
+            # has its own rule, oom_kill, which names the process.
             - alert: kernel_critical
               expr: >-
                 _time:15m {log_stream="journald"} body_syslog_identifier:=kernel
-                ("Out of memory" OR "I/O error" OR "EXT4-fs error" OR "Hardware Error")
+                ("I/O error" OR "EXT4-fs error" OR "Hardware Error" OR "blocked for more than")
                 | stats by (host_name) count() as events | filter events:>=1
               keep_firing_for: 60m
               labels:
                 severity: critical
               annotations:
                 summary: "{{ $$value }} erreurs noyau critiques sur {{ $$labels.host_name }} en 15 minutes"
-                description: "Le noyau signale un manque de memoire (OOM), une erreur d'E/S, une erreur EXT4 ou une erreur materielle"
+                description: "Le noyau signale une erreur d'E/S, une erreur EXT4, une erreur materielle ou une tache bloquee"
+            # The OOM killer, for the whole host ("Out of memory: Killed
+            # process") or for a cgroup such as a container with a memory
+            # limit ("Memory cgroup out of memory: Killed process").
+            - alert: oom_kill
+              expr: >-
+                _time:15m {log_stream="journald"} body_syslog_identifier:=kernel "Killed process"
+                | extract "Killed process <pid> (<process>)" from _msg
+                | stats by (host_name, process) count() as kills | filter kills:>=1
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Processus {{ $$labels.process }} tue par manque de memoire sur {{ $$labels.host_name }} ({{ $$value }} en 15 minutes)"
+                description: "Le noyau a tue un processus faute de memoire (OOM killer), sur l'hote ou dans la limite memoire d'un conteneur"
             # A unit that ends in the failed state ("<unit>: Failed with
             # result '<result>'." from systemd), system or user manager. It
             # covers the timers of the hosts too, such as proxmox-tls-renew.
+            # The message is in _msg: vector names body_message in _msg_field.
             - alert: systemd_unit_failed
               expr: >-
                 _time:15m {log_stream="journald"} body_syslog_identifier:=systemd
-                body_message:"Failed with result"
-                | extract "<systemd_unit>: Failed with result '<unit_result>'" from body_message
+                "Failed with result"
+                | extract "<systemd_unit>: Failed with result '<unit_result>'" from _msg
                 | stats by (host_name, systemd_unit, unit_result) count() as failures
                 | filter failures:>=1
               keep_firing_for: 1440m
@@ -691,6 +711,30 @@ configs:
               annotations:
                 summary: "Unit {{ $$labels.systemd_unit }} en echec ({{ $$labels.unit_result }}) sur {{ $$labels.host_name }}"
                 description: "Une unit systemd se termine en etat failed"
+            # A container that restarts again and again. containerd logs
+            # "connecting to shim <container id>" at each start, and the id
+            # stays the same across the restarts of a restart policy. Docker
+            # waits at most a minute between two restarts, so a crash loop
+            # starts a container well over 5 times in 15 minutes; a stack
+            # redeploy or the Portainer polling that reruns victoria-init
+            # start one 3 times at most. The name comes from the container's
+            # own Docker logs, when it wrote some. The GitLab runner helper
+            # containers (runner-...-predefined) start once per job step, so
+            # they stay out. Only hosts whose containerd logs to journald.
+            - alert: container_restart_loop
+              expr: >-
+                _time:15m {log_stream="journald"} body_syslog_identifier:=containerd "connecting to shim"
+                | extract_regexp "connecting to shim (?P<container_id>[0-9a-f]{64})" from _msg
+                | join by (container_id) (_time:1h {log_stream="docker"} | stats by (container_id, container_name) count() as lines)
+                | filter -container_name:~"^runner-.*-predefined$$"
+                | stats by (host_name, container_id, container_name) count() as starts
+                | filter starts:>=5
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Conteneur {{ with $$labels.container_name }}{{ . }}{{ else }}{{ slice $$labels.container_id 0 12 }}{{ end }} redemarre en boucle sur {{ $$labels.host_name }} ({{ $$value }} demarrages en 15 minutes)"
+                description: "Un conteneur Docker redemarre sans cesse : il s'arrete peu apres chaque demarrage"
         # AdGuard resolvers (querylog shipped as dns_queries). A resolver that
         # logged in the last 24 hours and stopped for an hour fires; the hour
         # covers the quiet nights of the secondary resolver.
@@ -724,6 +768,24 @@ configs:
               annotations:
                 summary: "{{ $$value }} evenements IPS UniFi ({{ $$labels.cef_name }}){{ with $$labels.cef_ext_src }} depuis {{ . }}{{ end }} en 15 minutes"
                 description: "La passerelle UniFi signale une menace detectee (IPS/IDS ou honeypot)"
+        # Traefik access logs. A service that answers 5xx in at least 3 of
+        # the last six 5-minute buckets, 5 or more in each: a redeploy gives
+        # 502s for a minute or two, a broken service goes on.
+        - name: traefik
+          interval: 5m
+          rules:
+            - alert: traefik_5xx_burst
+              expr: >-
+                _time:30m {log_stream="traefik"} app_downstreamstatus:>=500
+                | stats by (app_servicename, _time:5m) count() as errors | filter errors:>=5
+                | stats by (app_servicename) count() as buckets, sum(errors) as errors
+                | filter buckets:>=3 | fields app_servicename, errors
+              keep_firing_for: 30m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$value }} erreurs 5xx de {{ $$labels.app_servicename }} en 30 minutes"
+                description: "Un service derriere Traefik repond en erreur 5xx depuis au moins 15 minutes"
 
   # Alert rules on VictoriaMetrics (MetricsQL), evaluated by vmalert-metrics.
   # Metric and label names as the Proxmox VE OpenTelemetry metric server is
@@ -1039,10 +1101,16 @@ configs:
             repeat_interval: 60m
           - matchers: [alertname="systemd_unit_failed"]
             repeat_interval: 1440m
+          - matchers: [alertname="oom_kill"]
+            repeat_interval: 60m
+          - matchers: [alertname="container_restart_loop"]
+            repeat_interval: 60m
           - matchers: [alertname="dns_resolver_silent"]
             repeat_interval: 120m
           - matchers: [alertname="unifi_ips_event"]
             repeat_interval: 60m
+          - matchers: [alertname="traefik_5xx_burst"]
+            repeat_interval: 30m
           - matchers: [alertname="unifi_device_down"]
             repeat_interval: 60m
           - matchers: [alertname="host_metrics_silent"]
@@ -1134,6 +1202,22 @@ configs:
           decoding:
             codec: json
 
+        # Rule state of both vmalert instances, polled every minute and stored
+        # as log_stream "alerts" (one record per rule, see alert_rules), for
+        # the Alerts dashboard: state, health and the reason for that state.
+        vmalert_logs_rules:
+          type: http_client
+          endpoint: http://vmalert-logs:8880/api/v1/rules?type=alert
+          scrape_interval_secs: 60
+          decoding:
+            codec: json
+        vmalert_metrics_rules:
+          type: http_client
+          endpoint: http://vmalert-metrics:8880/api/v1/rules?type=alert
+          scrape_interval_secs: 60
+          decoding:
+            codec: json
+
         # Vector's own metrics (events, errors per component), scraped by
         # victoriametrics through the prometheus sink below.
         vector_metrics:
@@ -1169,6 +1253,69 @@ configs:
               abort
             }
             . = {"user": user, "pass": pass, "msg": truncate(msg, 900)}
+
+        # One record per vmalert rule. message holds the reason for the state:
+        # the evaluation error, the rendered summary of each active alert (the
+        # SMS text), or the condition that is not met (description).
+        alert_rules:
+          type: remap
+          inputs:
+            - vmalert_logs_rules
+            - vmalert_metrics_rules
+          drop_on_error: true
+          drop_on_abort: true
+          source: |
+            groups = array(.data.groups) ?? []
+            ts = now()
+            records = []
+            for_each(groups) -> |_gi, group| {
+              group_name = string(group.name) ?? ""
+              rules = array(group.rules) ?? []
+              for_each(rules) -> |_ri, rule| {
+                alerts = array(rule.alerts) ?? []
+                health = string(rule.health) ?? "unknown"
+                last_error = string(rule.lastError) ?? ""
+                state = string(rule.state) ?? "unknown"
+                summaries = []
+                # Earliest activeAt of the alerts, in seconds; 0 when none.
+                since = 0
+                for_each(alerts) -> |_ai, alert| {
+                  summaries = push(summaries, string(alert.annotations.summary) ?? string(alert.labels.alertname) ?? "alerte")
+                  active = to_unix_timestamp(parse_timestamp(string(alert.activeAt) ?? "", "%+") ?? t'1970-01-01T00:00:00Z')
+                  if active > 0 && (since == 0 || active < since) {
+                    since = active
+                  }
+                }
+                reason = if health != "ok" || last_error != "" {
+                  "Erreur d'evaluation : " + last_error
+                } else if length(summaries) > 0 {
+                  join(summaries, " | ")
+                } else {
+                  "Condition non remplie : " + (string(rule.annotations.description) ?? "")
+                }
+                source = if (string(rule.datasourceType) ?? "") == "vlogs" { "logs" } else { "metrics" }
+                record = {
+                  "timestamp": ts,
+                  "log_stream": "alerts",
+                  "message": truncate(reason, 2000),
+                  "alert_rule": string(rule.name) ?? "",
+                  "alert_group": group_name,
+                  "alert_source": source,
+                  "alert_state": state,
+                  "alert_health": health,
+                  "alert_severity": string(rule.labels.severity) ?? "",
+                  "alert_count": length(alerts),
+                  "alert_last_evaluation": string(rule.lastEvaluation) ?? "",
+                  "alert_last_samples": int(rule.lastSamples) ?? 0
+                }
+                if since > 0 {
+                  record.alert_active_since = from_unix_timestamp!(since)
+                }
+                records = push(records, record)
+              }
+            }
+            if length(records) == 0 { abort }
+            . = records
 
         # Flat records with stable field names, so that queries, alerts and
         # dashboards can rely on them: resource and record
@@ -1702,6 +1849,7 @@ configs:
           type: http
           inputs:
             - normalize_level
+            - alert_rules
           # _stream_fields: what a stream is (few values each); _msg_field: the
           # first non-empty one becomes _msg; _time_field: the record time.
           uri: "http://victorialogs:9428/insert/jsonline?_stream_fields=log_stream,host_name,container_name&_msg_field=body,body_message,message&_time_field=timestamp"
@@ -12977,6 +13125,864 @@ configs:
               "y": 52,
               "w": 24,
               "h": 14
+            }
+          }
+        ]
+      }
+  grafana_dashboard_alerts:
+    content: |
+      {
+        "uid": "victoria-alerts",
+        "title": "Alertes",
+        "tags": [
+          "alertes",
+          "vmalert",
+          "victoria"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          }
+        ],
+        "templating": {
+          "list": []
+        },
+        "panels": [
+          {
+            "type": "row",
+            "title": "État actuel",
+            "collapsed": false,
+            "panels": [],
+            "id": 1,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Alertes actives",
+            "description": "Règles en état firing, hors watchdog (toujours active tant que la chaîne SMS fonctionne).",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "_time:3m {log_stream=\"alerts\"} | last 1 by (_time) partition by (alert_source, alert_rule) | stats count() if (alert_state:=firing alert_severity:!=none) as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 0,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "En attente",
+            "description": "Règles dont la condition est remplie mais pas encore depuis la durée for.",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "_time:3m {log_stream=\"alerts\"} | last 1 by (_time) partition by (alert_source, alert_rule) | stats count() if (alert_state:=pending) as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 3,
+            "gridPos": {
+              "x": 6,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Règles en erreur",
+            "description": "Règles que vmalert n'arrive pas à évaluer (requête invalide, source injoignable).",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "_time:3m {log_stream=\"alerts\"} | last 1 by (_time) partition by (alert_source, alert_rule) | stats count() if (alert_health:=err) as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 12,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Règles surveillées",
+            "description": "Règles d'alerte de vmalert-logs et vmalert-metrics vues à la dernière minute. 0 : Vector n'interroge plus vmalert.",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "_time:3m {log_stream=\"alerts\"} | last 1 by (_time) partition by (alert_source, alert_rule) | stats count() if (*) as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "blue",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 18,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "table",
+            "title": "État des règles",
+            "description": "Une ligne par règle, état de la dernière évaluation. Raison : le texte de l'alerte (celui du SMS) quand elle est active ou en attente, l'erreur d'évaluation, ou sinon la condition surveillée.",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "_time:3m {log_stream=\"alerts\"} | last 1 by (_time) partition by (alert_source, alert_rule) | format \"3\" as prio | format if (alert_state:=pending) \"2\" as prio | format if (alert_health:=err) \"1\" as prio | format if (alert_state:=firing alert_severity:!=none) \"0\" as prio | sort by (prio, alert_rule) | fields alert_rule, alert_state, alert_health, _msg, alert_active_since, alert_severity, alert_source, alert_group, alert_last_evaluation",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "alert_rule": 0,
+                    "alert_state": 1,
+                    "alert_health": 2,
+                    "_msg": 3,
+                    "alert_active_since": 4,
+                    "alert_severity": 5,
+                    "alert_source": 6,
+                    "alert_group": 7,
+                    "alert_last_evaluation": 8
+                  },
+                  "renameByName": {
+                    "alert_rule": "règle",
+                    "alert_state": "état",
+                    "alert_health": "évaluation",
+                    "_msg": "raison",
+                    "alert_active_since": "depuis",
+                    "alert_severity": "sévérité",
+                    "alert_source": "source",
+                    "alert_group": "groupe",
+                    "alert_last_evaluation": "dernière évaluation"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "état"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "firing": {
+                              "text": "active",
+                              "color": "red",
+                              "index": 0
+                            },
+                            "pending": {
+                              "text": "en attente",
+                              "color": "orange",
+                              "index": 1
+                            },
+                            "inactive": {
+                              "text": "OK",
+                              "color": "green",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "custom.width",
+                      "value": 110
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "évaluation"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "ok": {
+                              "text": "OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "err": {
+                              "text": "erreur",
+                              "color": "red",
+                              "index": 1
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "custom.width",
+                      "value": 110
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "règle"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 220
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "depuis"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 180
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "sévérité"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 90
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "source"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 80
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "groupe"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 130
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "dernière évaluation"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 200
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 6,
+            "gridPos": {
+              "x": 0,
+              "y": 5,
+              "w": 24,
+              "h": 16
+            }
+          },
+          {
+            "type": "row",
+            "title": "Sur la période",
+            "collapsed": false,
+            "panels": [],
+            "id": 7,
+            "gridPos": {
+              "x": 0,
+              "y": 21,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Règles actives, en attente et en erreur",
+            "description": "Nombre de règles distinctes par état, hors watchdog.",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"alerts\"} alert_state:in(firing,pending) alert_severity:!=none | stats by (alert_state) count_uniq(alert_rule) as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{alert_state}}"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"alerts\"} alert_health:=err | stats count_uniq(alert_rule) as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "erreur"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "min": 0,
+                "decimals": 0,
+                "custom": {
+                  "drawStyle": "line",
+                  "lineInterpolation": "stepAfter",
+                  "fillOpacity": 20,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "spanNulls": false
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "firing"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "red"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "pending"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "orange"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "erreur"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "purple"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 8,
+            "gridPos": {
+              "x": 0,
+              "y": 22,
+              "w": 24,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Historique des alertes",
+            "description": "Règles passées par un état actif, en attente ou en erreur sur la période : première et dernière fois vue dans cet état, et la dernière raison.",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"alerts\"} ((alert_state:in(firing,pending) alert_severity:!=none) OR alert_health:=err) | stats by (alert_rule, alert_state, alert_health) min(_time) as debut, max(_time) as fin, row_max(_time, _msg) as dernier | unpack_json from dernier fields (_msg) | delete dernier | sort by (fin desc) | limit 200",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "fin": 0,
+                    "debut": 1,
+                    "alert_rule": 2,
+                    "alert_state": 3,
+                    "alert_health": 4,
+                    "_msg": 5
+                  },
+                  "renameByName": {
+                    "fin": "dernière fois",
+                    "debut": "première fois",
+                    "alert_rule": "règle",
+                    "alert_state": "état",
+                    "alert_health": "évaluation",
+                    "_msg": "dernière raison"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "état"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "firing": {
+                              "text": "active",
+                              "color": "red",
+                              "index": 0
+                            },
+                            "pending": {
+                              "text": "en attente",
+                              "color": "orange",
+                              "index": 1
+                            },
+                            "inactive": {
+                              "text": "OK",
+                              "color": "green",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "custom.width",
+                      "value": 110
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "évaluation"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "ok": {
+                              "text": "OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "err": {
+                              "text": "erreur",
+                              "color": "red",
+                              "index": 1
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-background",
+                        "mode": "basic"
+                      }
+                    },
+                    {
+                      "id": "custom.width",
+                      "value": 110
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "dernière fois"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 180
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "première fois"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 180
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "règle"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 220
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 9,
+            "gridPos": {
+              "x": 0,
+              "y": 30,
+              "w": 24,
+              "h": 12
             }
           }
         ]
