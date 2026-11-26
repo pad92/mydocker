@@ -552,7 +552,7 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "{{ $$value }} echecs de connexion Authentik en 15 minutes, dont {{ $$labels.ak_user }} depuis {{ $$labels.ak_client_ip }}"
+                summary: "{{ $$value }} echecs de connexion Authentik en 15 minutes{{ with $$labels.ak_user }}, dont {{ . }}{{ end }}{{ with $$labels.ak_client_ip }} depuis {{ . }}{{ end }}"
                 description: "Au moins 5 echecs de connexion Authentik en 15 minutes"
             - alert: authentik_sensitive_event
               expr: >-
@@ -564,7 +564,7 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Evenement Authentik sensible {{ $$labels.ak_action }} ({{ $$value }} en 5 minutes) pour {{ $$labels.ak_user }} depuis {{ $$labels.ak_client_ip }}"
+                summary: "Evenement Authentik sensible {{ $$labels.ak_action }} ({{ $$value }} en 5 minutes){{ with $$labels.ak_user }} pour {{ . }}{{ end }}{{ with $$labels.ak_client_ip }} depuis {{ . }}{{ end }}"
                 description: "Evenement Authentik sensible (requete suspecte, impersonation, exception systeme ou de politique, erreur de configuration)"
             - alert: authentik_errors
               expr: >-
@@ -627,7 +627,7 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "{{ $$value }} echecs d'authentification Proxmox en 15 minutes, dont {{ $$labels.pve_user }} depuis {{ $$labels.pve_client_ip }}"
+                summary: "{{ $$value }} echecs d'authentification Proxmox en 15 minutes{{ with $$labels.pve_user }}, dont {{ . }}{{ end }}{{ with $$labels.pve_client_ip }} depuis {{ . }}{{ end }}"
                 description: "Au moins 5 echecs d'authentification Proxmox en 15 minutes"
         - name: proxmox_backup
           interval: 60m
@@ -722,7 +722,7 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "{{ $$value }} evenements IPS UniFi ({{ $$labels.cef_name }}) depuis {{ $$labels.cef_ext_src }} en 15 minutes"
+                summary: "{{ $$value }} evenements IPS UniFi ({{ $$labels.cef_name }}){{ with $$labels.cef_ext_src }} depuis {{ . }}{{ end }} en 15 minutes"
                 description: "La passerelle UniFi signale une menace detectee (IPS/IDS ou honeypot)"
 
   # Alert rules on VictoriaMetrics (MetricsQL), evaluated by vmalert-metrics.

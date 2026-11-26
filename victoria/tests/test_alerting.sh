@@ -309,7 +309,8 @@ done
 [[ -n "$ready" ]] || fail "victorialogs, victoriametrics, alertmanager or vector did not start"
 
 # Records one minute old: inside the 15 minute windows whatever the
-# evaluation delay of vmalert.
+# evaluation delay of vmalert. The Authentik event has no client IP and the
+# UniFi one no source: their SMS must leave out the missing label.
 record_time="$(date -u -d '-1 min' +%Y-%m-%dT%H:%M:%SZ)"
 jq -cn --arg t "$record_time" '
   {_time: $t, _msg: "vzdump job failed", log_stream: "proxmox", pve_backup_event: "job_failed"},
@@ -318,7 +319,11 @@ jq -cn --arg t "$record_time" '
   {_time: $t, _msg: "qmstart failed", log_stream: "proxmox", pve_task_failed: "true", pve_task_type: "qmstart",
     pve_vmid: "101", pve_task_status: "start failed"},
   {_time: $t, _msg: "unit failed", log_stream: "journald", host_name: "pve.test", body_syslog_identifier: "systemd",
-    body_message: "proxmox-tls-renew.service: Failed with result '\''exit-code'\''."}
+    body_message: "proxmox-tls-renew.service: Failed with result '\''exit-code'\''."},
+  {_time: $t, _msg: "suspicious request", log_stream: "authentik", ak_kind: "event", ak_action: "suspicious_request",
+    ak_user: "akadmin"},
+  {_time: $t, _msg: "CEF:0|Ubiquiti|UniFi Network|9.0|1|Threat detected|7|", log_stream: "syslog", appname: "CEF",
+    cef_name: "Threat detected"}
 ' > "$work_dir/records.jsonl"
 chmod a+r "$work_dir/records.jsonl"
 docker run --rm --network "$network" -v "$work_dir/records.jsonl:/records.jsonl:ro" "$client_image" \
@@ -330,11 +335,11 @@ logsql() {
 }
 stored=""
 for _ in $(seq 1 15); do
-  stored="$(logsql 'log_stream:in(proxmox, journald)' | wc -l)"
-  [[ "$stored" -eq 4 ]] && break
+  stored="$(logsql 'log_stream:in(proxmox, journald, authentik, syslog)' | wc -l)"
+  [[ "$stored" -eq 6 ]] && break
   sleep 1
 done
-[[ "$stored" -eq 4 ]] || fail "expected 4 records in VictoriaLogs, got $stored"
+[[ "$stored" -eq 6 ]] || fail "expected 6 records in VictoriaLogs, got $stored"
 
 # vmalert last: its first evaluation finds the records.
 docker run -d --name "$vmalert_name" --network "$network" --network-alias vmalert-logs \
@@ -345,7 +350,8 @@ deadline=$((SECONDS + timeout_s))
 alerts=""
 until [[ $SECONDS -ge $deadline ]]; do
   alerts="$(client wget -q -O - http://alertmanager:9093/api/v2/alerts 2>/dev/null || true)"
-  if jq -e '[.[].labels.alertname] | index("proxmox_backup_failed") and index("proxmox_task_failed") and index("systemd_unit_failed")' \
+  if jq -e '[.[].labels.alertname] | index("proxmox_backup_failed") and index("proxmox_task_failed") and index("systemd_unit_failed")
+    and index("authentik_sensitive_event") and index("unifi_ips_event")' \
     <<<"${alerts:-[]}" >/dev/null 2>&1; then
     break
   fi
@@ -363,7 +369,7 @@ units="$(jq -c '[.[] | select(.labels.alertname == "systemd_unit_failed") | .lab
 # One SMS per alertname (group_by), after group_wait, one line per alert. A
 # task alert that joins its group late comes in a second SMS: compare the
 # distinct lines of all the SMS bodies, sorted.
-expected='["Sauvegarde vzdump Proxmox en echec (job_failed, 1 en 15 minutes)","Tache Proxmox acmerenew en erreur (1 en 15 minutes) : Failed to initialize HTTP daemon","Tache Proxmox qmstart VM 101 en erreur (1 en 15 minutes) : start failed","Unit proxmox-tls-renew.service en echec (exit-code) sur pve.test"]'
+expected='["1 evenements IPS UniFi (Threat detected) en 15 minutes","Evenement Authentik sensible suspicious_request (1 en 5 minutes) pour akadmin","Sauvegarde vzdump Proxmox en echec (job_failed, 1 en 15 minutes)","Tache Proxmox acmerenew en erreur (1 en 15 minutes) : Failed to initialize HTTP daemon","Tache Proxmox qmstart VM 101 en erreur (1 en 15 minutes) : start failed","Unit proxmox-tls-renew.service en echec (exit-code) sur pve.test"]'
 sms=""
 messages=""
 until [[ $SECONDS -ge $deadline ]]; do
