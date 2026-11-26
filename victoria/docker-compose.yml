@@ -1501,7 +1501,9 @@ configs:
             method: newline_delimited
           batch:
             max_events: 1000
-            timeout_secs: 5
+            # At a few events per second a batch never fills, so every OTLP
+            # request waits for this timeout before its answer: keep it short.
+            timeout_secs: 1
           # The OTLP source answers the collector once the batch is written:
           # while VictoriaLogs is down the collectors keep their own queue and
           # retry, instead of Vector losing what it holds in memory.

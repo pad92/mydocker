@@ -116,11 +116,20 @@ PY_EOF
 chmod a+r "$work_dir/request.http"
 
 # The opentelemetry source answers once the sink has written the batch
-# (acknowledgements, batch timeout 5 s): a 200 means VictoriaLogs accepted it.
-# The sleep keeps nc reading until Vector answers and closes.
-response="$(docker run --rm --network "$network" -v "$work_dir/request.http:/request.http:ro" \
-  "$client_image" sh -c '(cat /request.http; sleep 15) | nc vector 4318' | head -n 1 | tr -d '\r')"
+# (acknowledgements, batch timeout 1 s): a 200 means VictoriaLogs accepted it.
+# The sleep keeps nc reading until Vector answers and closes. read returns on
+# the status line, without waiting for the sleep.
+started="$EPOCHREALTIME"
+IFS= read -r response < <(docker run --rm --network "$network" -v "$work_dir/request.http:/request.http:ro" \
+  "$client_image" sh -c '(cat /request.http; sleep 15) | nc vector 4318')
+elapsed_ms=$(( (${EPOCHREALTIME/./} - ${started/./}) / 1000 ))
+response="${response%$'\r'}"
 [[ "$response" == "HTTP/1.1 200 OK" ]] || fail "OTLP request refused by vector: $response"
+# A lone record never fills a batch, so the answer comes after the batch
+# timeout. 3.5 s leaves room for the client container to start; a 5 s timeout
+# fails.
+(( elapsed_ms < 3500 )) || fail "OTLP answer took ${elapsed_ms} ms; is the victorialogs batch timeout above 1 s?"
+echo "OTLP answer in ${elapsed_ms} ms"
 
 query="$(jq -rn --arg q "\"$marker\"" '$q | @uri')"
 result=""
