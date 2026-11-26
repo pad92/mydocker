@@ -528,6 +528,9 @@ configs:
   # Alert rules on VictoriaLogs (LogsQL), evaluated by vmalert-logs. Every
   # query sets its own _time window. A rule returns one series per alert:
   # its labels are the "by" fields, its value the single stats result.
+  # A threshold on a total keeps its "by" fields for the SMS: stats by the
+  # context fields, then total_stats sums the counts over every row, and
+  # fields drops the per-row count. One alert per row, each with the total.
   # keep_firing_for equals the old OpenObserve silence: Alertmanager notifies
   # again an alert that resolves then fires again, so the alert stays firing
   # for the whole silence (see the README). The summary annotation is the SMS
@@ -542,34 +545,38 @@ configs:
               expr: >-
                 _time:15m {log_stream="authentik"} ak_kind:=event
                 ak_action:in(login_failed, invalid_identifier)
-                | stats count() as failures | filter failures:>=5
+                | stats by (ak_user, ak_client_ip) count() as attempts
+                | total_stats sum(attempts) as failures | filter failures:>=5
+                | fields ak_user, ak_client_ip, failures
               keep_firing_for: 60m
               labels:
                 severity: warning
               annotations:
-                summary: "{{ $$value }} echecs de connexion Authentik en 15 minutes"
+                summary: "{{ $$value }} echecs de connexion Authentik en 15 minutes, dont {{ $$labels.ak_user }} depuis {{ $$labels.ak_client_ip }}"
                 description: "Au moins 5 echecs de connexion Authentik en 15 minutes"
             - alert: authentik_sensitive_event
               expr: >-
                 _time:5m {log_stream="authentik"} ak_kind:=event
                 ak_action:in(suspicious_request, impersonation_started,
                 system_exception, policy_exception, configuration_error)
-                | stats by (ak_action) count() as events | filter events:>=1
+                | stats by (ak_action, ak_user, ak_client_ip) count() as events | filter events:>=1
               keep_firing_for: 60m
               labels:
                 severity: critical
               annotations:
-                summary: "Evenement Authentik sensible {{ $$labels.ak_action }} ({{ $$value }} en 5 minutes)"
+                summary: "Evenement Authentik sensible {{ $$labels.ak_action }} ({{ $$value }} en 5 minutes) pour {{ $$labels.ak_user }} depuis {{ $$labels.ak_client_ip }}"
                 description: "Evenement Authentik sensible (requete suspecte, impersonation, exception systeme ou de politique, erreur de configuration)"
             - alert: authentik_errors
               expr: >-
                 _time:15m {log_stream="authentik"} ak_level:in(error, critical)
-                | stats count() as errors | filter errors:>=3
+                | stats by (ak_component) count() as component_errors
+                | total_stats sum(component_errors) as errors | filter errors:>=3
+                | fields ak_component, errors
               keep_firing_for: 60m
               labels:
                 severity: warning
               annotations:
-                summary: "{{ $$value }} erreurs Authentik en 15 minutes"
+                summary: "{{ $$value }} erreurs Authentik en 15 minutes, dont authentik {{ $$labels.ak_component }}"
                 description: "Au moins 3 erreurs Authentik (server, worker ou postgresql) en 15 minutes"
             # Armed only for a component seen in the last 24 hours.
             - alert: authentik_logs_silent
@@ -589,34 +596,38 @@ configs:
             - alert: proxmox_backup_failed
               expr: >-
                 _time:15m {log_stream="proxmox"} pve_backup_event:in(job_failed, vm_failed)
-                | stats count() as failures | filter failures:>=1
+                | stats by (pve_backup_event, pve_vmid) count() as failures | filter failures:>=1
               keep_firing_for: 60m
               labels:
                 severity: critical
               annotations:
-                summary: "{{ $$value }} sauvegardes vzdump Proxmox en echec en 15 minutes"
+                summary: "Sauvegarde vzdump Proxmox en echec ({{ $$labels.pve_backup_event }}{{ with $$labels.pve_vmid }} VM {{ . }}{{ end }}, {{ $$value }} en 15 minutes)"
                 description: "Une sauvegarde vzdump Proxmox echoue (job ou invite)"
-            # acmerenew is left out: the daily ACME renewal fails until the
-            # certificate setup is fixed, and would send an SMS every day.
+            # acmerenew included: the proxmox_tls role of myansible renews the
+            # certificate with step and deletes the ACME settings, so a failed
+            # acmerenew means ACME came back.
             - alert: proxmox_task_failed
               expr: >-
-                _time:15m {log_stream="proxmox"} pve_task_failed:=true -pve_task_type:=acmerenew
-                | stats by (pve_task_type) count() as failures | filter failures:>=1
+                _time:15m {log_stream="proxmox"} pve_task_failed:=true
+                | stats by (pve_task_type, pve_vmid, pve_task_status) count() as failures
+                | filter failures:>=1
               keep_firing_for: 1440m
               labels:
                 severity: warning
               annotations:
-                summary: "Tache Proxmox {{ $$labels.pve_task_type }} en erreur ({{ $$value }} en 15 minutes)"
-                description: "Une tache Proxmox se termine en erreur (hors renouvellement ACME acmerenew)"
+                summary: "Tache Proxmox {{ $$labels.pve_task_type }}{{ with $$labels.pve_vmid }} VM {{ . }}{{ end }} en erreur ({{ $$value }} en 15 minutes){{ with $$labels.pve_task_status }} : {{ . }}{{ end }}"
+                description: "Une tache Proxmox se termine en erreur"
             - alert: proxmox_auth_failed_burst
               expr: >-
                 _time:15m {log_stream="proxmox"} pve_auth_result:=failure
-                | stats count() as failures | filter failures:>=5
+                | stats by (pve_user, pve_client_ip) count() as attempts
+                | total_stats sum(attempts) as failures | filter failures:>=5
+                | fields pve_user, pve_client_ip, failures
               keep_firing_for: 60m
               labels:
                 severity: warning
               annotations:
-                summary: "{{ $$value }} echecs d'authentification Proxmox en 15 minutes"
+                summary: "{{ $$value }} echecs d'authentification Proxmox en 15 minutes, dont {{ $$labels.pve_user }} depuis {{ $$labels.pve_client_ip }}"
                 description: "Au moins 5 echecs d'authentification Proxmox en 15 minutes"
         - name: proxmox_backup
           interval: 60m
@@ -664,6 +675,22 @@ configs:
               annotations:
                 summary: "{{ $$value }} erreurs noyau critiques sur {{ $$labels.host_name }} en 15 minutes"
                 description: "Le noyau signale un manque de memoire (OOM), une erreur d'E/S, une erreur EXT4 ou une erreur materielle"
+            # A unit that ends in the failed state ("<unit>: Failed with
+            # result '<result>'." from systemd), system or user manager. It
+            # covers the timers of the hosts too, such as proxmox-tls-renew.
+            - alert: systemd_unit_failed
+              expr: >-
+                _time:15m {log_stream="journald"} body_syslog_identifier:=systemd
+                body_message:"Failed with result"
+                | extract "<systemd_unit>: Failed with result '<unit_result>'" from body_message
+                | stats by (host_name, systemd_unit, unit_result) count() as failures
+                | filter failures:>=1
+              keep_firing_for: 1440m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Unit {{ $$labels.systemd_unit }} en echec ({{ $$labels.unit_result }}) sur {{ $$labels.host_name }}"
+                description: "Une unit systemd se termine en etat failed"
         # AdGuard resolvers (querylog shipped as dns_queries). A resolver that
         # logged in the last 24 hours and stopped for an hour fires; the hour
         # covers the quiet nights of the secondary resolver.
@@ -1010,6 +1037,8 @@ configs:
             repeat_interval: 120m
           - matchers: [alertname="kernel_critical"]
             repeat_interval: 60m
+          - matchers: [alertname="systemd_unit_failed"]
+            repeat_interval: 1440m
           - matchers: [alertname="dns_resolver_silent"]
             repeat_interval: 120m
           - matchers: [alertname="unifi_ips_event"]
