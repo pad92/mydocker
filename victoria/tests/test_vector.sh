@@ -19,8 +19,10 @@ PUID="${PUID:-1000}" PGID="${PGID:-1000}" docker compose \
 cp "$stack_dir"/tests/*_test.yaml "$work_dir/"
 chmod -R a+rX "$work_dir"
 
+# Dummy Free Mobile credentials: sms_test.yaml checks they reach the body.
 run_vector() {
-  docker run --rm --network none -v "$work_dir:/cfg:ro" "$image" "$@"
+  docker run --rm --network none -e FREE_MOBILE_USER=test-user -e FREE_MOBILE_PASS=test-pass \
+    -v "$work_dir:/cfg:ro" "$image" "$@"
 }
 
 # --no-environment: skips the checks that need the network (sink healthcheck,

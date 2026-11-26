@@ -16,13 +16,15 @@ services:
     command:
       - sh
       - -c
-      - find /logs /metrics \( ! -user "$$PUID" -o ! -group "$$PGID" \) -exec chown -h "$$PUID:$$PGID" {} +
+      - find /logs /metrics /alertmanager /grafana \( ! -user "$$PUID" -o ! -group "$$PGID" \) -exec chown -h "$$PUID:$$PGID" {} +
     environment:
       PUID: "${PUID:?Set PUID}"
       PGID: "${PGID:?Set PGID}"
     volumes:
       - ${VICTORIA_LOGS_DATA_DIR:?Set VICTORIA_LOGS_DATA_DIR}:/logs
       - ${VICTORIA_METRICS_DATA_DIR:?Set VICTORIA_METRICS_DATA_DIR}:/metrics
+      - ${ALERTMANAGER_DATA_DIR:?Set ALERTMANAGER_DATA_DIR}:/alertmanager
+      - ${GRAFANA_DATA_DIR:?Set GRAFANA_DATA_DIR}:/grafana
     security_opt:
       - no-new-privileges:true
     logging: *default-logging
@@ -49,6 +51,7 @@ services:
       - ${VICTORIA_LOGS_DATA_DIR:?Set VICTORIA_LOGS_DATA_DIR}:/data
     networks:
       - traefik_gateway
+      - victoria
     security_opt:
       - no-new-privileges:true
     labels:
@@ -106,6 +109,7 @@ services:
       - ${VICTORIA_METRICS_DATA_DIR:?Set VICTORIA_METRICS_DATA_DIR}:/data
     networks:
       - traefik_gateway
+      - victoria
     security_opt:
       - no-new-privileges:true
     labels:
@@ -154,6 +158,11 @@ services:
       - /var/lib/vector
     ports:
       - "${VECTOR_SYSLOG_PORT:-514}:5514/udp"
+    # Free Mobile SMS API credentials, read by the sms_message transform. Set
+    # them in the .env of the host only. Empty: alerts are dropped with an error.
+    environment:
+      FREE_MOBILE_USER: ${FREE_MOBILE_USER:-}
+      FREE_MOBILE_PASS: ${FREE_MOBILE_PASS:-}
     # Inline config instead of a ./vector.yaml bind mount: Portainer resolves
     # relative paths on its own disk, so Docker created an empty directory on
     # the host and failed with "mkdirat etc/vector/vector.yaml: file exists".
@@ -162,6 +171,7 @@ services:
         target: /etc/vector/vector.yaml
     networks:
       - traefik_gateway
+      - victoria
     depends_on:
       - victorialogs
     security_opt:
@@ -180,10 +190,391 @@ services:
       traefik.http.routers.vector_ingest.middlewares: "victoria-ingest-auth@file"
       traefik.http.routers.vector_ingest.service: "vector"
     logging: *default-logging
+
+  # Alert rules on the logs (LogsQL). One vmalert per datasource: a vmalert
+  # instance queries a single one. Alerts go to alertmanager; the alert state
+  # (ALERTS, ALERTS_FOR_STATE) is written to and restored from victoriametrics.
+  # Internal network only: no route, no published port.
+  vmalert-logs:
+    image: victoriametrics/vmalert:${VMALERT_VERSION:-v1.156.0}
+    container_name: vmalert-logs
+    restart: unless-stopped
+    user: "${PUID:?Set PUID}:${PGID:?Set PGID}"
+    command:
+      - -rule=/etc/vmalert/rules.yml
+      - -rule.defaultRuleType=vlogs
+      - -datasource.url=http://victorialogs:9428
+      - -notifier.url=http://alertmanager:9093
+      - -remoteWrite.url=http://victoriametrics:8428
+      - -remoteRead.url=http://victoriametrics:8428
+      - -httpListenAddr=:8880
+    configs:
+      - source: vmalert_logs_rules
+        target: /etc/vmalert/rules.yml
+    networks:
+      - victoria
+    depends_on:
+      - victorialogs
+      - victoriametrics
+      - alertmanager
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  # Alert rules on the metrics (MetricsQL). Same wiring as vmalert-logs.
+  vmalert-metrics:
+    image: victoriametrics/vmalert:${VMALERT_VERSION:-v1.156.0}
+    container_name: vmalert-metrics
+    restart: unless-stopped
+    user: "${PUID:?Set PUID}:${PGID:?Set PGID}"
+    command:
+      - -rule=/etc/vmalert/rules.yml
+      - -datasource.url=http://victoriametrics:8428
+      - -notifier.url=http://alertmanager:9093
+      - -remoteWrite.url=http://victoriametrics:8428
+      - -remoteRead.url=http://victoriametrics:8428
+      - -httpListenAddr=:8880
+    configs:
+      - source: vmalert_metrics_rules
+        target: /etc/vmalert/rules.yml
+    networks:
+      - victoria
+    depends_on:
+      - victoriametrics
+      - alertmanager
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  # Groups the alerts and sends them to the SMS bridge in vector. The
+  # notification log and the silences persist in ALERTMANAGER_DATA_DIR, so a
+  # restart does not send the SMS of a firing alert again. Single instance:
+  # clustering (gossip) is off. Internal network only.
+  alertmanager:
+    image: prom/alertmanager:${ALERTMANAGER_VERSION:-v0.35.1}
+    container_name: alertmanager
+    restart: unless-stopped
+    user: "${PUID:?Set PUID}:${PGID:?Set PGID}"
+    depends_on:
+      victoria-init:
+        condition: service_completed_successfully
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --cluster.listen-address=
+      - --web.listen-address=:9093
+    configs:
+      - source: alertmanager_config
+        target: /etc/alertmanager/alertmanager.yml
+    volumes:
+      - ${ALERTMANAGER_DATA_DIR:?Set ALERTMANAGER_DATA_DIR}:/alertmanager
+    networks:
+      - victoria
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  # Dashboards on VictoriaLogs and VictoriaMetrics, behind Authentik. Grafana
+  # trusts the X-authentik-username header that the forward auth sets (auth
+  # proxy): no Grafana password exists, login form and basic auth are off.
+  # Port 3000 is not published, but a container on traefik_gateway that sends
+  # the header itself is trusted too (see the README).
+  # Separate from the grafana stack of this repository, hence the names.
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION:-13.2.7}
+    container_name: victoria-grafana
+    restart: unless-stopped
+    user: "${PUID:?Set PUID}:${PGID:?Set PGID}"
+    depends_on:
+      victoria-init:
+        condition: service_completed_successfully
+    environment:
+      GF_SERVER_ROOT_URL: "https://${VICTORIA_GRAFANA_DOMAIN:?Set VICTORIA_GRAFANA_DOMAIN}/"
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: X-authentik-username
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN: "false"
+      # No password login at all: the admin account created at the first
+      # start keeps a default password that must never be usable. The form and
+      # Basic auth off are enough (POST /login answers auth.client.notConfigured);
+      # GF_AUTH_DISABLE_LOGIN would also break auth.proxy (HTTP 500 in 13.2).
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # This Authentik user is the Grafana server admin; the others get
+      # GRAFANA_DEFAULT_ROLE in the main organization when they first log in.
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:?Set GRAFANA_ADMIN_USER}"
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: "${GRAFANA_DEFAULT_ROLE:-Viewer}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # Installed before Grafana starts, so the provisioned datasource exists.
+      GF_PLUGINS_PREINSTALL_SYNC: "victoriametrics-logs-datasource@${GRAFANA_LOGS_PLUGIN_VERSION:-0.34.0}"
+    configs:
+      - source: grafana_datasources
+        target: /etc/grafana/provisioning/datasources/victoria.yaml
+      - source: grafana_dashboard_provider
+        target: /etc/grafana/provisioning/dashboards/victoria.yaml
+      - source: grafana_dashboard_authentik
+        target: /etc/grafana/dashboards/authentik.json
+      - source: grafana_dashboard_proxmox
+        target: /etc/grafana/dashboards/proxmox.json
+    volumes:
+      - ${GRAFANA_DATA_DIR:?Set GRAFANA_DATA_DIR}:/var/lib/grafana
+    # traefik_gateway for Traefik and to download the plugin; victoria for
+    # the datasources.
+    networks:
+      - traefik_gateway
+      - victoria
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.victoria_grafana.loadbalancer.server.port: "3000"
+
+      traefik.http.routers.victoria_grafana_http.rule: "Host(`${VICTORIA_GRAFANA_DOMAIN:?Set VICTORIA_GRAFANA_DOMAIN}`)"
+      traefik.http.routers.victoria_grafana_http.entrypoints: web
+      traefik.http.routers.victoria_grafana_http.middlewares: redirect-https
+
+      traefik.http.routers.victoria_grafana.rule: "Host(`${VICTORIA_GRAFANA_DOMAIN:?Set VICTORIA_GRAFANA_DOMAIN}`)"
+      traefik.http.routers.victoria_grafana.entrypoints: "websecure"
+      traefik.http.routers.victoria_grafana.tls: "true"
+      traefik.http.routers.victoria_grafana.tls.certresolver: "stepca"
+      # authentik@docker first: it fails closed, and it replaces any
+      # X-authentik-username header that the client sent.
+      traefik.http.routers.victoria_grafana.middlewares: "authentik@docker"
+      traefik.http.routers.victoria_grafana.service: "victoria_grafana"
+    logging: *default-logging
 networks:
   traefik_gateway:
     external: true
+  # Alerting and datasource traffic. Internal: no route out, and the
+  # containers of other stacks on traefik_gateway cannot reach vmalert or
+  # alertmanager. Vector is on both networks, so its SMS webhook (8080) is
+  # reachable from traefik_gateway too (see the README).
+  victoria:
+    internal: true
 configs:
+  # Alert rules on VictoriaLogs (LogsQL), evaluated by vmalert-logs. Every
+  # query sets its own _time window. A rule returns one series per alert:
+  # its labels are the "by" fields, its value the single stats result.
+  # keep_firing_for equals the old OpenObserve silence: Alertmanager notifies
+  # again an alert that resolves then fires again, so the alert stays firing
+  # for the whole silence (see the README). The summary annotation is the SMS
+  # text, description says what the rule checks. $$ is a literal $ for Compose.
+  vmalert_logs_rules:
+    content: |
+      groups:
+        - name: authentik
+          interval: 5m
+          rules:
+            - alert: authentik_login_failed_burst
+              expr: >-
+                _time:15m {log_stream="authentik"} ak_kind:=event
+                ak_action:in(login_failed, invalid_identifier)
+                | stats count() as failures | filter failures:>=5
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$value }} echecs de connexion Authentik en 15 minutes"
+                description: "Au moins 5 echecs de connexion Authentik en 15 minutes"
+            - alert: authentik_sensitive_event
+              expr: >-
+                _time:5m {log_stream="authentik"} ak_kind:=event
+                ak_action:in(suspicious_request, impersonation_started,
+                system_exception, policy_exception, configuration_error)
+                | stats by (ak_action) count() as events | filter events:>=1
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Evenement Authentik sensible {{ $$labels.ak_action }} ({{ $$value }} en 5 minutes)"
+                description: "Evenement Authentik sensible (requete suspecte, impersonation, exception systeme ou de politique, erreur de configuration)"
+            - alert: authentik_errors
+              expr: >-
+                _time:15m {log_stream="authentik"} ak_level:in(error, critical)
+                | stats count() as errors | filter errors:>=3
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$value }} erreurs Authentik en 15 minutes"
+                description: "Au moins 3 erreurs Authentik (server, worker ou postgresql) en 15 minutes"
+            # Armed only for a component seen in the last 24 hours.
+            - alert: authentik_logs_silent
+              expr: >-
+                _time:24h {log_stream="authentik"} ak_component:in(server, worker)
+                | stats by (ak_component) count() if (_time:10m) as recent
+                | filter recent:<1
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "authentik {{ $$labels.ak_component }} n'envoie plus de log depuis 10 minutes"
+                description: "authentik_server ou authentik_worker n'a plus envoye de log depuis 10 minutes"
+        - name: proxmox_logs
+          interval: 5m
+          rules:
+            - alert: proxmox_backup_failed
+              expr: >-
+                _time:15m {log_stream="proxmox"} pve_backup_event:in(job_failed, vm_failed)
+                | stats count() as failures | filter failures:>=1
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "{{ $$value }} sauvegardes vzdump Proxmox en echec en 15 minutes"
+                description: "Une sauvegarde vzdump Proxmox echoue (job ou invite)"
+            # acmerenew is left out: the daily ACME renewal fails until the
+            # certificate setup is fixed, and would send an SMS every day.
+            - alert: proxmox_task_failed
+              expr: >-
+                _time:15m {log_stream="proxmox"} pve_task_failed:=true -pve_task_type:=acmerenew
+                | stats by (pve_task_type) count() as failures | filter failures:>=1
+              keep_firing_for: 1440m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Tache Proxmox {{ $$labels.pve_task_type }} en erreur ({{ $$value }} en 15 minutes)"
+                description: "Une tache Proxmox se termine en erreur (hors renouvellement ACME acmerenew)"
+            - alert: proxmox_auth_failed_burst
+              expr: >-
+                _time:15m {log_stream="proxmox"} pve_auth_result:=failure
+                | stats count() as failures | filter failures:>=5
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$value }} echecs d'authentification Proxmox en 15 minutes"
+                description: "Au moins 5 echecs d'authentification Proxmox en 15 minutes"
+        - name: proxmox_backup
+          interval: 60m
+          rules:
+            # No successful vzdump job in 26 hours. Armed only once the
+            # stream holds records older than 24 hours: a new install or a
+            # lost history stays quiet.
+            - alert: proxmox_backup_missing
+              expr: >-
+                _time:26h {log_stream="proxmox"}
+                | stats count() if (pve_backup_event:=job_ok) as ok,
+                count() if (_time:<now-24h) as armed
+                | filter ok:<1 armed:>0 | fields ok
+              keep_firing_for: 720m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Aucune sauvegarde vzdump Proxmox reussie depuis 26 heures"
+                description: "Aucune sauvegarde vzdump Proxmox terminee avec succes depuis 26 heures (ne s'arme qu'apres 24 heures de logs)"
+
+  # Alert rules on VictoriaMetrics (MetricsQL), evaluated by vmalert-metrics.
+  # Metric and label names as the Proxmox VE OpenTelemetry metric server is
+  # expected to send them: check them after the first deployment (README,
+  # post-deploy check).
+  vmalert_metrics_rules:
+    content: |
+      groups:
+        - name: proxmox_metrics
+          interval: 1m
+          rules:
+            # lag() is the age of the last sample in the 24 h window: one
+            # alert per node that sent metrics in the last 24 hours.
+            - alert: proxmox_metrics_silent
+              expr: lag(proxmox_node_uptime[24h]) > 600
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Plus de metrique Proxmox de {{ $$labels.host_name }} depuis 10 minutes"
+                description: "Le serveur de metriques OpenTelemetry de Proxmox n'a plus rien envoye depuis 10 minutes"
+            - alert: proxmox_storage_usage_high
+              expr: proxmox_storage_used / proxmox_storage_total >= 0.85
+              keep_firing_for: 720m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Stockage Proxmox {{ $$labels.storage }} occupe a {{ $$value | humanizePercentage }}"
+                description: "Un stockage Proxmox depasse 85% d'occupation"
+            # ZFS ARC is cache: the kernel gives it back under pressure.
+            - alert: proxmox_node_memory_high
+              expr: >-
+                (proxmox_node_memory_memused - proxmox_node_memory_arcsize)
+                / proxmox_node_memory_memtotal >= 0.9
+              keep_firing_for: 120m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Memoire Proxmox hors ARC a {{ $$value | humanizePercentage }}"
+                description: "La memoire de l'hote Proxmox hors cache ZFS ARC depasse 90%"
+            - alert: proxmox_node_cpu_high
+              expr: avg_over_time(proxmox_node_cpustat_cpu[15m]) > 0.9
+              keep_firing_for: 120m
+              labels:
+                severity: warning
+              annotations:
+                summary: "CPU Proxmox a {{ $$value | humanizePercentage }} en moyenne sur 15 minutes"
+                description: "Le CPU de l'hote Proxmox est en moyenne au-dessus de 90% pendant 15 minutes"
+            # Stopped guests report an uptime of 0 and are ignored.
+            - alert: proxmox_guest_restarted
+              expr: (proxmox_vm_uptime > 0) < 600
+              keep_firing_for: 30m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Invite Proxmox {{ $$labels.name }} ({{ $$labels.vmid }}) redemarre il y a {{ $$value }} s"
+                description: "Une VM ou un conteneur Proxmox a redemarre (uptime sous 10 minutes, les invites arretes sont ignores)"
+
+  # One route per alert, its repeat_interval the old OpenObserve silence:
+  # while an alert stays firing, its SMS comes again once per interval.
+  # group_by alertname: one SMS per rule, listing its firing alerts.
+  # send_resolved false: an SMS only when something goes wrong.
+  alertmanager_config:
+    content: |
+      route:
+        receiver: sms
+        group_by: [alertname]
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 60m
+        routes:
+          - matchers: [alertname="authentik_login_failed_burst"]
+            repeat_interval: 60m
+          - matchers: [alertname="authentik_sensitive_event"]
+            repeat_interval: 60m
+          - matchers: [alertname="authentik_errors"]
+            repeat_interval: 60m
+          - matchers: [alertname="authentik_logs_silent"]
+            repeat_interval: 60m
+          - matchers: [alertname="proxmox_metrics_silent"]
+            repeat_interval: 60m
+          - matchers: [alertname="proxmox_storage_usage_high"]
+            repeat_interval: 720m
+          - matchers: [alertname="proxmox_node_memory_high"]
+            repeat_interval: 120m
+          - matchers: [alertname="proxmox_node_cpu_high"]
+            repeat_interval: 120m
+          - matchers: [alertname="proxmox_guest_restarted"]
+            repeat_interval: 30m
+          - matchers: [alertname="proxmox_backup_failed"]
+            repeat_interval: 60m
+          - matchers: [alertname="proxmox_backup_missing"]
+            repeat_interval: 720m
+          - matchers: [alertname="proxmox_task_failed"]
+            repeat_interval: 1440m
+          - matchers: [alertname="proxmox_auth_failed_burst"]
+            repeat_interval: 60m
+      receivers:
+        - name: sms
+          webhook_configs:
+            # The SMS bridge: the alertmanager source of vector.
+            - url: http://vector:8080/alertmanager
+              send_resolved: false
+              max_alerts: 10
+
   # Vector pipeline. Compose interpolates $ here: write $$ for a literal $.
   vector_config:
     content: |
@@ -220,7 +611,48 @@ configs:
           host_key: source_ip
           port_key: source_port
 
+        # Webhook of alertmanager (receiver sms). Reachable on the victoria and
+        # traefik_gateway networks, never routed by Traefik (see the README).
+        alertmanager_webhook:
+          type: http_server
+          address: 0.0.0.0:8080
+          path: /alertmanager
+          strict_path: true
+          method: POST
+          decoding:
+            codec: json
+
       transforms:
+        # One SMS per webhook. Alertmanager groups by alertname, so a webhook
+        # holds the firing alerts of one rule (max_alerts: 10). The text is the
+        # summary annotation of each alert, one per line.
+        sms_message:
+          type: remap
+          inputs:
+            - alertmanager_webhook
+          # An error or abort drops the webhook instead of passing it on as is.
+          drop_on_error: true
+          drop_on_abort: true
+          source: |
+            alerts = array(.alerts) ?? []
+            firing = filter(alerts) -> |_index, alert| { alert.status == "firing" }
+            lines = map_values(firing) -> |alert| {
+              string(alert.annotations.summary) ?? string(alert.labels.alertname) ?? "alerte"
+            }
+            if length(lines) == 0 { abort }
+            msg = join!(lines, "\n")
+            truncated = int(.truncatedAlerts) ?? 0
+            if truncated > 0 {
+              msg = msg + "\n(+" + to_string(truncated) + " autres alertes)"
+            }
+            user = get_env_var("FREE_MOBILE_USER") ?? ""
+            pass = get_env_var("FREE_MOBILE_PASS") ?? ""
+            if user == "" || pass == "" {
+              log("FREE_MOBILE_USER or FREE_MOBILE_PASS is empty: SMS not sent", level: "error")
+              abort
+            }
+            . = {"user": user, "pass": pass, "msg": truncate(msg, 900)}
+
         # Flat records with stable field names, so that queries, alerts and
         # dashboards can rely on them: resource and record
         # attributes flattened with "_" (container.name -> container_name,
@@ -718,3 +1150,2749 @@ configs:
           # VictoriaLogs may still be starting; events are retried, not lost.
           healthcheck:
             enabled: false
+
+        # Free Mobile SMS API: one POST per SMS with a JSON body {user, pass,
+        # msg}. 200: sent; 400: missing parameter; 402: too many SMS; 403:
+        # option off or wrong credentials; 500: server error (retried).
+        free_mobile:
+          type: http
+          inputs:
+            - sms_message
+          uri: https://smsapi.free-mobile.fr/sendmsg
+          method: post
+          request:
+            headers:
+              Content-Type: application/json
+            retry_attempts: 3
+            timeout_secs: 10
+          encoding:
+            codec: json
+          # One event per request, as a bare JSON object (no array, no newline).
+          framing:
+            method: bytes
+          batch:
+            max_events: 1
+          # alertmanager gets its answer once the SMS is accepted: on a failure
+          # it retries the notification itself.
+          acknowledgements:
+            enabled: true
+          # A GET without parameters answers 400; the first SMS shows errors.
+          healthcheck:
+            enabled: false
+  # Grafana provisioning. The dashboards are generated JSON (one LogsQL or
+  # MetricsQL query per panel, see the README); $$ is a literal $ for Compose.
+  grafana_datasources:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: VictoriaLogs
+          uid: victorialogs
+          type: victoriametrics-logs-datasource
+          access: proxy
+          url: http://victorialogs:9428
+          isDefault: true
+          editable: false
+        - name: VictoriaMetrics
+          uid: victoriametrics
+          type: prometheus
+          access: proxy
+          url: http://victoriametrics:8428
+          editable: false
+          jsonData:
+            prometheusType: Prometheus
+  grafana_dashboard_provider:
+    content: |
+      apiVersion: 1
+      providers:
+        - name: victoria
+          type: file
+          disableDeletion: true
+          allowUiUpdates: false
+          options:
+            path: /etc/grafana/dashboards
+  grafana_dashboard_authentik:
+    content: |
+      {
+        "uid": "victoria-authentik",
+        "title": "Authentik",
+        "tags": [
+          "authentik",
+          "victorialogs"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "templating": {
+          "list": [
+            {
+              "name": "application",
+              "label": "Application",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "ak_app_host",
+                "query": "{log_stream=\"authentik\"}",
+                "refId": "application"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            },
+            {
+              "name": "composant",
+              "label": "Composant",
+              "type": "query",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "query": {
+                "type": "fieldValue",
+                "field": "ak_component",
+                "query": "{log_stream=\"authentik\"}",
+                "refId": "composant"
+              },
+              "multi": true,
+              "includeAll": true,
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            }
+          ]
+        },
+        "annotations": {
+          "list": []
+        },
+        "panels": [
+          {
+            "type": "stat",
+            "title": "Logins réussis",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_kind:=event ak_action:=login | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 1,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Logins échoués",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_kind:=event ak_action:in(login_failed,invalid_identifier) | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 6,
+              "y": 0,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Requêtes forward-auth",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_kind:=forward_auth ak_app_host:in($$application) | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 3,
+            "gridPos": {
+              "x": 12,
+              "y": 0,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Erreurs",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_component:in($$composant) ak_level:in(error,critical) | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 18,
+              "y": 0,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Logins et échecs dans le temps",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_kind:=event | stats count() if (ak_action:=login) as logins, count() if (ak_action:in(login_failed,invalid_identifier)) as echecs, count() if (ak_action:=logout) as logouts",
+                "queryType": "statsRange",
+                "step": "5m"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 0,
+              "y": 4,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "barchart",
+            "title": "Événements par action",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_kind:=event | stats by (ak_action) count() as n | sort by (n desc) | limit 20",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "n",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "ak_action": 0,
+                    "n": 1
+                  },
+                  "renameByName": {
+                    "ak_action": "action",
+                    "n": "n"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "orientation": "horizontal",
+              "xField": "action",
+              "showValue": "auto",
+              "legend": {
+                "showLegend": false
+              }
+            },
+            "id": 6,
+            "gridPos": {
+              "x": 12,
+              "y": 4,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Échecs de connexion par utilisateur et IP",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_kind:=event ak_action:in(login_failed,invalid_identifier) | stats by (ak_user, ak_client_ip) count() as echecs, max(_time) as dernier | sort by (echecs desc) | limit 50",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "echecs",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "dernier",
+                      "destinationType": "time"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "ak_user": 0,
+                    "ak_client_ip": 1,
+                    "echecs": 2,
+                    "dernier": 3
+                  },
+                  "renameByName": {
+                    "ak_user": "utilisateur",
+                    "ak_client_ip": "ip",
+                    "echecs": "échecs",
+                    "dernier": "dernier"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 7,
+            "gridPos": {
+              "x": 0,
+              "y": 12,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Événements récents",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_kind:=event | fields _time, ak_action, ak_user, ak_client_ip, ak_level | sort by (_time desc) | limit 100",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": true
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "Time": 0,
+                    "ak_action": 1,
+                    "ak_user": 2,
+                    "ak_client_ip": 3,
+                    "ak_level": 4
+                  },
+                  "renameByName": {
+                    "Time": "heure",
+                    "ak_action": "action",
+                    "ak_user": "utilisateur",
+                    "ak_client_ip": "ip",
+                    "ak_level": "niveau"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 8,
+            "gridPos": {
+              "x": 12,
+              "y": 12,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Forward-auth par application",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_kind:=forward_auth ak_app_host:in($$application) | stats by (ak_app_host) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{ak_app_host}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 9,
+            "gridPos": {
+              "x": 0,
+              "y": 20,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Forward-auth : volume, refus et latence",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_kind:=forward_auth ak_app_host:in($$application) | stats by (ak_app_host) count() as requetes, count() if (app_status:>=400) as refus, quantile(0.95, ak_runtime_ms) as p95_ms | sort by (requetes desc)",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "requetes",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "refus",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "p95_ms",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "ak_app_host": 0,
+                    "requetes": 1,
+                    "refus": 2,
+                    "p95_ms": 3
+                  },
+                  "renameByName": {
+                    "ak_app_host": "application",
+                    "requetes": "requêtes",
+                    "refus": "statut 4xx/5xx",
+                    "p95_ms": "p95 (ms)"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 10,
+            "gridPos": {
+              "x": 12,
+              "y": 20,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Avertissements et erreurs par composant",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_component:in($$composant) ak_level:in(warning,error,critical) | stats by (ak_component) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{ak_component}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 11,
+            "gridPos": {
+              "x": 0,
+              "y": 28,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Erreurs récentes",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"authentik\"} ak_component:in($$composant) ak_level:in(warning,error,critical) | fields _time, ak_component, ak_level, ak_kind, app_event, _msg | sort by (_time desc) | limit 100",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": true
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "Time": 0,
+                    "ak_component": 1,
+                    "ak_level": 2,
+                    "ak_kind": 3,
+                    "app_event": 4,
+                    "_msg": 5
+                  },
+                  "renameByName": {
+                    "Time": "heure",
+                    "ak_component": "composant",
+                    "ak_level": "niveau",
+                    "ak_kind": "type",
+                    "app_event": "événement",
+                    "_msg": "message"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 12,
+            "gridPos": {
+              "x": 12,
+              "y": 28,
+              "w": 12,
+              "h": 8
+            }
+          }
+        ]
+      }
+  grafana_dashboard_proxmox:
+    content: |
+      {
+        "uid": "victoria-proxmox",
+        "title": "Proxmox VE",
+        "tags": [
+          "proxmox",
+          "victoriametrics",
+          "victorialogs"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "templating": {
+          "list": []
+        },
+        "annotations": {
+          "list": []
+        },
+        "panels": [
+          {
+            "id": 1,
+            "type": "row",
+            "title": "Hôte",
+            "collapsed": false,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 24,
+              "h": 1
+            },
+            "panels": []
+          },
+          {
+            "type": "stat",
+            "title": "CPU hôte",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_node_cpustat_cpu",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                },
+                "decimals": 1
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 0,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Mémoire hôte hors ARC",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "(proxmox_node_memory_memused - proxmox_node_memory_arcsize) / proxmox_node_memory_memtotal",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                },
+                "decimals": 1
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 3,
+            "gridPos": {
+              "x": 6,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Load 5 min",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_node_cpustat_avg5",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                },
+                "decimals": 2
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 12,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Uptime hôte",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_node_uptime",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 18,
+              "y": 1,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "CPU hôte",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_node_cpustat_cpu",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 6,
+            "gridPos": {
+              "x": 0,
+              "y": 5,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Load average",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_node_cpustat_avg1",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_node_cpustat_avg5",
+                "range": true
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_node_cpustat_avg15",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 7,
+            "gridPos": {
+              "x": 12,
+              "y": 5,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Mémoire hôte",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_node_memory_memused",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_node_memory_arcsize",
+                "range": true
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_node_memory_memtotal",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bytes",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 8,
+            "gridPos": {
+              "x": 0,
+              "y": 13,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Réseau ponts (octets/s)",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(proxmox_node_network_receive_total{device=~\"vmbr.*\"}[2m])",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(proxmox_node_network_transmit_total{device=~\"vmbr.*\"}[2m])",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "Bps",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 9,
+            "gridPos": {
+              "x": 12,
+              "y": 13,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Swap hôte",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_node_memory_swapused",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bytes",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 10,
+            "gridPos": {
+              "x": 0,
+              "y": 21,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "id": 11,
+            "type": "row",
+            "title": "Invités",
+            "collapsed": false,
+            "gridPos": {
+              "x": 0,
+              "y": 29,
+              "w": 24,
+              "h": 1
+            },
+            "panels": []
+          },
+          {
+            "type": "timeseries",
+            "title": "CPU par invité",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_vm_cpu",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 12,
+            "gridPos": {
+              "x": 0,
+              "y": 30,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Mémoire par invité",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_vm_mem",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bytes",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 13,
+            "gridPos": {
+              "x": 12,
+              "y": 30,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Réseau par invité (octets/s)",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(proxmox_vm_netin_total[2m])",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(proxmox_vm_netout_total[2m])",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "Bps",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 14,
+            "gridPos": {
+              "x": 0,
+              "y": 38,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "E/S disque par invité (octets/s)",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(proxmox_vm_diskread_total[2m])",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(proxmox_vm_diskwrite_total[2m])",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "Bps",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 15,
+            "gridPos": {
+              "x": 12,
+              "y": 38,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Disque par invité",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_vm_disk / proxmox_vm_maxdisk",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 16,
+            "gridPos": {
+              "x": 0,
+              "y": 46,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Uptime par invité",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_vm_uptime",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 17,
+            "gridPos": {
+              "x": 12,
+              "y": 46,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Pression CPU / IO / mémoire (some)",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_vm_pressurecpusome",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_vm_pressureiosome",
+                "range": true
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_vm_pressurememorysome",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 18,
+            "gridPos": {
+              "x": 0,
+              "y": 54,
+              "w": 24,
+              "h": 8
+            }
+          },
+          {
+            "id": 19,
+            "type": "row",
+            "title": "Stockage",
+            "collapsed": false,
+            "gridPos": {
+              "x": 0,
+              "y": 62,
+              "w": 24,
+              "h": 1
+            },
+            "panels": []
+          },
+          {
+            "type": "timeseries",
+            "title": "Occupation des stockages",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_storage_used / proxmox_storage_total",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 20,
+            "gridPos": {
+              "x": 0,
+              "y": 63,
+              "w": 8,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Espace libre",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_storage_avail",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bytes",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 21,
+            "gridPos": {
+              "x": 8,
+              "y": 63,
+              "w": 8,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Espace utilisé",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "proxmox_storage_used",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bytes",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 22,
+            "gridPos": {
+              "x": 16,
+              "y": 63,
+              "w": 8,
+              "h": 8
+            }
+          },
+          {
+            "id": 23,
+            "type": "row",
+            "title": "Journal PVE",
+            "collapsed": false,
+            "gridPos": {
+              "x": 0,
+              "y": 71,
+              "w": 24,
+              "h": 1
+            },
+            "panels": []
+          },
+          {
+            "type": "stat",
+            "title": "Tâches en échec",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"proxmox\"} pve_task_failed:=true | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 24,
+            "gridPos": {
+              "x": 0,
+              "y": 72,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Sauvegardes en échec",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"proxmox\"} pve_backup_event:in(job_failed,vm_failed) | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 25,
+            "gridPos": {
+              "x": 6,
+              "y": 72,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Sauvegardes réussies",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"proxmox\"} pve_backup_event:=vm_ok | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 26,
+            "gridPos": {
+              "x": 12,
+              "y": 72,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Échecs d'authentification",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"proxmox\"} pve_auth_result:=failure | stats count() as n",
+                "queryType": "stats"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 27,
+            "gridPos": {
+              "x": 18,
+              "y": 72,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Tâches lancées par type",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"proxmox\"} pve_task_event:=start | stats by (pve_task_type) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{pve_task_type}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 28,
+            "gridPos": {
+              "x": 0,
+              "y": 76,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Logs par niveau",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"proxmox\"} | stats by (pve_level) count() as n",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{pve_level}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 29,
+            "gridPos": {
+              "x": 12,
+              "y": 76,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Durée de sauvegarde par invité (s)",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"proxmox\"} pve_backup_event:=vm_ok | stats by (pve_vmid) max(pve_duration_s) as duree",
+                "queryType": "statsRange",
+                "step": "5m",
+                "legendFormat": "{{pve_vmid}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 30,
+            "gridPos": {
+              "x": 0,
+              "y": 84,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Dernières sauvegardes",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"proxmox\"} pve_kind:=backup | fields _time, pve_backup_event, pve_vmid, pve_duration_s, _msg | sort by (_time desc) | limit 100",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": true
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "pve_duration_s",
+                      "destinationType": "number"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "Time": 0,
+                    "pve_backup_event": 1,
+                    "pve_vmid": 2,
+                    "pve_duration_s": 3,
+                    "_msg": 4
+                  },
+                  "renameByName": {
+                    "Time": "heure",
+                    "pve_backup_event": "événement",
+                    "pve_vmid": "vmid",
+                    "pve_duration_s": "durée (s)",
+                    "_msg": "message"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 31,
+            "gridPos": {
+              "x": 12,
+              "y": 84,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Tâches en échec",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"proxmox\"} pve_task_failed:=true | fields _time, pve_component, pve_task_type, pve_vmid, pve_user, pve_task_status | sort by (_time desc) | limit 100",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": true
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "Time": 0,
+                    "pve_component": 1,
+                    "pve_task_type": 2,
+                    "pve_vmid": 3,
+                    "pve_user": 4,
+                    "pve_task_status": 5
+                  },
+                  "renameByName": {
+                    "Time": "heure",
+                    "pve_component": "composant",
+                    "pve_task_type": "type",
+                    "pve_vmid": "id",
+                    "pve_user": "utilisateur",
+                    "pve_task_status": "statut"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 32,
+            "gridPos": {
+              "x": 0,
+              "y": 92,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Authentifications",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"proxmox\"} pve_kind:=auth | fields _time, pve_auth_result, pve_user, pve_client_ip, pve_component | sort by (_time desc) | limit 100",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": true
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "Time": 0,
+                    "pve_auth_result": 1,
+                    "pve_user": 2,
+                    "pve_client_ip": 3,
+                    "pve_component": 4
+                  },
+                  "renameByName": {
+                    "Time": "heure",
+                    "pve_auth_result": "résultat",
+                    "pve_user": "utilisateur",
+                    "pve_client_ip": "ip",
+                    "pve_component": "composant"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 33,
+            "gridPos": {
+              "x": 12,
+              "y": 92,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Avertissements et erreurs",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "expr": "{log_stream=\"proxmox\"} pve_level:in(warning,error,critical) | fields _time, pve_level, pve_component, _msg | sort by (_time desc) | limit 200",
+                "queryType": "instant"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": true
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "Time": 0,
+                    "pve_level": 1,
+                    "pve_component": 2,
+                    "_msg": 3
+                  },
+                  "renameByName": {
+                    "Time": "heure",
+                    "pve_level": "niveau",
+                    "pve_component": "composant",
+                    "_msg": "message"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": true
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 34,
+            "gridPos": {
+              "x": 0,
+              "y": 100,
+              "w": 24,
+              "h": 10
+            }
+          }
+        ]
+      }

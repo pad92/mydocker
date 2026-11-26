@@ -18,7 +18,8 @@
 # - Uptime Kuma is behind forward auth, except its /api/push/ path;
 # - Portainer is behind forward auth, with no bypass router, and mounts the
 #   step-ca root read-only (its OAuth login calls Authentik over HTTPS);
-# - the VictoriaLogs, VictoriaMetrics, Forgejo and Gramps Web host names reach
+# - the VictoriaLogs, VictoriaMetrics, Victoria Grafana, Forgejo and Gramps Web
+#   host names reach
 #   the blueprints (the victoria routers are checked in
 #   victoria/tests/test_stack.sh).
 # Needs Docker Compose 2.23+ and jq. Usage: ./tests/test_stack.sh
@@ -46,6 +47,7 @@ sed -e "s|^ACME_CA_SERVER=.*|ACME_CA_SERVER=https://ca.test/acme/acme/directory|
   -e "s|^PORTAINER_HOST_LOCAL=.*|PORTAINER_HOST_LOCAL=portainer.home.test|" \
   -e "s|^VICTORIA_LOGS_HOST_LOCAL=.*|VICTORIA_LOGS_HOST_LOCAL=logs.home.test|" \
   -e "s|^VICTORIA_METRICS_HOST_LOCAL=.*|VICTORIA_METRICS_HOST_LOCAL=metrics.home.test|" \
+  -e "s|^VICTORIA_GRAFANA_HOST_LOCAL=.*|VICTORIA_GRAFANA_HOST_LOCAL=grafana.home.test|" \
   -e "s|^FORGEJO_HOST_LOCAL=.*|FORGEJO_HOST_LOCAL=git.home.test|" \
   -e "s|^GRAMPSWEB_HOST_LOCAL=.*|GRAMPSWEB_HOST_LOCAL=genealogy.home.test|" \
   -e "s|^IMMICH_HOST_LOCAL=.*|IMMICH_HOST_LOCAL=photos.home.test|" \
@@ -55,7 +57,7 @@ sed -e "s|^ACME_CA_SERVER=.*|ACME_CA_SERVER=https://ca.test/acme/acme/directory|
   -e "s|^PROXMOX_UPSTREAM_URL=.*|PROXMOX_UPSTREAM_URL=https://192.0.2.10:8006|" \
   "$stack_dir/.env.example" > "$work_dir/test.env"
 
-for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS CA_CERT_NAME MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL NG_HOST_LOCAL PORTAINER_HOST_LOCAL VICTORIA_LOGS_HOST_LOCAL VICTORIA_METRICS_HOST_LOCAL FORGEJO_HOST_LOCAL GRAMPSWEB_HOST_LOCAL IMMICH_HOST_LOCAL UNIFI_HOST_LOCAL NAS_HOST_LOCAL SWITCH_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR; do
+for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS CA_CERT_NAME MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL NG_HOST_LOCAL PORTAINER_HOST_LOCAL VICTORIA_LOGS_HOST_LOCAL VICTORIA_METRICS_HOST_LOCAL VICTORIA_GRAFANA_HOST_LOCAL FORGEJO_HOST_LOCAL GRAMPSWEB_HOST_LOCAL IMMICH_HOST_LOCAL UNIFI_HOST_LOCAL NAS_HOST_LOCAL SWITCH_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR; do
   if render "$var=" >/dev/null 2>&1; then fail "$var is not required"; fi
 done
 
@@ -118,6 +120,8 @@ outpost_host="$(render AUTHENTIK_HOST_PUBLIC=auth.example.test \
   || fail "BLUEPRINT_VICTORIA_LOGS_HOST is not VICTORIA_LOGS_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_VICTORIA_METRICS_HOST" <<<"$config")" = metrics.home.test ] \
   || fail "BLUEPRINT_VICTORIA_METRICS_HOST is not VICTORIA_METRICS_HOST_LOCAL"
+[ "$(jq -r "$worker.environment.BLUEPRINT_VICTORIA_GRAFANA_HOST" <<<"$config")" = grafana.home.test ] \
+  || fail "BLUEPRINT_VICTORIA_GRAFANA_HOST is not VICTORIA_GRAFANA_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_FORGEJO_HOST" <<<"$config")" = git.home.test ] \
   || fail "BLUEPRINT_FORGEJO_HOST is not FORGEJO_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_GRAMPSWEB_HOST" <<<"$config")" = genealogy.home.test ] \

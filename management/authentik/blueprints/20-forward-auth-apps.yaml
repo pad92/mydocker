@@ -402,6 +402,42 @@ entries:
     attrs:
       order: 0
 
+  - model: authentik_core.group
+    id: victoria-grafana-group
+    identifiers:
+      name: victoria-grafana-users
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: victoria-grafana-provider
+    identifiers:
+      name: Victoria Grafana
+    attrs:
+      mode: forward_single
+      external_host: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_GRAFANA_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+
+  - model: authentik_core.application
+    id: victoria-grafana-app
+    identifiers:
+      slug: victoria-grafana
+    attrs:
+      name: Victoria Grafana
+      group: Administration
+      meta_icon: homelab/icons/victoria-grafana.svg
+      meta_description: Dashboards
+      provider: !KeyOf victoria-grafana-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_GRAFANA_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf victoria-grafana-app
+      group: !KeyOf victoria-grafana-group
+    attrs:
+      order: 0
+
   # --- Forgejo (OpenID Connect) --------------------------------------------
   # Not a forward-auth provider: not in the outpost list. Authentik generates
   # the client secret on first apply and keeps it; copy it from the admin UI
@@ -668,6 +704,7 @@ entries:
         - !KeyOf portainer-provider
         - !KeyOf victorialogs-provider
         - !KeyOf victoriametrics-provider
+        - !KeyOf victoria-grafana-provider
       config:
         authentik_host: !Format ["https://%s", !Env BLUEPRINT_AUTHENTIK_HOST]
         authentik_host_insecure: false
