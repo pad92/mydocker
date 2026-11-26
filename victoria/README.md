@@ -98,7 +98,7 @@ VictoriaLogs does not store empty fields. A field missing from a record means th
 ## 2. VictoriaMetrics (`victoriametrics`)
 
 ### Role
-Metric database. It receives OTLP metrics over HTTP on `/opentelemetry/v1/metrics` and serves vmui and the PromQL/MetricsQL API on port `8428`, published through Traefik only. A request on `/` is redirected to `/vmui/`.
+Metric database. It receives OTLP metrics over HTTP on `/opentelemetry/v1/metrics`, in protobuf only (it answers `400` to OTLP JSON), and serves vmui and the PromQL/MetricsQL API on port `8428`, published through Traefik only. A request on `/` is redirected to `/vmui/`.
 
 `-opentelemetry.usePrometheusNaming` turns OTLP names into Prometheus names with unit and type suffixes: `system.cpu.time` becomes `system_cpu_time_seconds_total`. Metric names therefore differ from the ones OpenObserve stored. Check the actual names in vmui after the switch before writing queries or alerts.
 
@@ -109,12 +109,16 @@ Metric database. It receives OTLP metrics over HTTP on `/opentelemetry/v1/metric
 - **OpenTelemetry ingestion**: [https://docs.victoriametrics.com/victoriametrics/integrations/opentelemetry/](https://docs.victoriametrics.com/victoriametrics/integrations/opentelemetry/)
 
 ### Proxmox Metric Server Setup
+The OpenTelemetry metric server of Proxmox VE sends OTLP in JSON, which VictoriaMetrics refuses. It therefore sends to the OpenTelemetry collector of the Proxmox host, which forwards the points to VictoriaMetrics in protobuf with the ingestion credentials. myansible deploys this local receiver when `otel_collector_otlp_receiver` is `true` for the host.
+
 In the Proxmox UI, *Datacenter > Metric Server*, edit the OpenTelemetry entry:
 
-- Server `metrics.home.lan`, port `443`, protocol HTTPS, path `/opentelemetry/v1/metrics`. Keep certificate verification on.
-- Header `Authorization: Basic <base64 of collector:password>`, with the password of the `victoria-ingest-auth` middleware. The password is not stored in this repository.
+- Server `127.0.0.1`, port `4318`, protocol HTTP, path `/v1/metrics`.
+- No `Authorization` header: the receiver listens on loopback only and has no authentication. The collector adds the credentials when it forwards to `metrics.<domain>`.
 
-The host pushes node, guest and storage metrics every 10 seconds: `proxmox_node_*` (CPU, memory, ZFS ARC, load, network, uptime), `proxmox_vm_*` (labels `name` and `vmid`) and `proxmox_storage_*` (label `storage`). Their exact names after Prometheus naming are to be read in vmui.
+Do not point the entry at `metrics.<domain>` directly: VictoriaMetrics answers `400` to every push.
+
+The host pushes node, guest and storage metrics every 10 seconds: `proxmox_node_*` (CPU, memory, ZFS ARC, load, network, uptime), `proxmox_vm_*` (labels `name` and `vmid`) and `proxmox_storage_*` (label `storage`). Their names carry unit suffixes; [`tests/check_metric_names.sh`](./tests/check_metric_names.sh) checks the names used by the rules and the dashboard (see [Post-Deployment Check of the Metric Names](#post-deployment-check-of-the-metric-names)).
 
 ## 3. Vector (`vector`)
 
