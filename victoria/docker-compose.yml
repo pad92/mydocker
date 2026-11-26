@@ -586,6 +586,67 @@ configs:
               annotations:
                 summary: "Aucune sauvegarde vzdump Proxmox reussie depuis 26 heures"
                 description: "Aucune sauvegarde vzdump Proxmox terminee avec succes depuis 26 heures (ne s'arme qu'apres 24 heures de logs)"
+        # Hosts that send journald, file or Docker logs through their local
+        # collector. A host that logged in the last 24 hours and stopped for
+        # 30 minutes fires; one retired for more than 24 hours goes quiet.
+        - name: host_logs
+          interval: 5m
+          rules:
+            - alert: host_logs_silent
+              expr: >-
+                _time:24h log_stream:in(journald, files, docker)
+                | stats by (host_name) count() if (_time:30m) as recent
+                | filter recent:<1
+              keep_firing_for: 120m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Plus de log de {{ $$labels.host_name }} depuis 30 minutes"
+                description: "Un hote qui envoyait des logs journald, fichiers ou Docker n'envoie plus rien depuis 30 minutes"
+            - alert: kernel_critical
+              expr: >-
+                _time:15m {log_stream="journald"} body_syslog_identifier:=kernel
+                ("Out of memory" OR "I/O error" OR "EXT4-fs error" OR "Hardware Error")
+                | stats by (host_name) count() as events | filter events:>=1
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "{{ $$value }} erreurs noyau critiques sur {{ $$labels.host_name }} en 15 minutes"
+                description: "Le noyau signale un manque de memoire (OOM), une erreur d'E/S, une erreur EXT4 ou une erreur materielle"
+        # AdGuard resolvers (querylog shipped as dns_queries). A resolver that
+        # logged in the last 24 hours and stopped for an hour fires; the hour
+        # covers the quiet nights of the secondary resolver.
+        - name: dns
+          interval: 5m
+          rules:
+            - alert: dns_resolver_silent
+              expr: >-
+                _time:24h {log_stream="dns_queries"}
+                | stats by (host_name) count() if (_time:1h) as recent
+                | filter recent:<1
+              keep_firing_for: 120m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Plus de requete DNS journalisee par {{ $$labels.host_name }} depuis 1 heure"
+                description: "Le resolveur AdGuard n'envoie plus son journal de requetes: service arrete ou collecte cassee"
+        # UniFi IPS/IDS events (CEF over syslog). Signature 203 is a plain
+        # firewall block and stays on the firewall dashboard.
+        - name: unifi_security
+          interval: 5m
+          rules:
+            - alert: unifi_ips_event
+              expr: >-
+                _time:15m {log_stream="syslog"} appname:CEF
+                ((UNIFIcategory:Security -cef_signature_id:203) or cef_name:~"(?i)threat|intrus|honeypot")
+                | stats by (cef_name, src) count() as events | filter events:>=1
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "{{ $$value }} evenements IPS UniFi ({{ $$labels.cef_name }}) depuis {{ $$labels.src }} en 15 minutes"
+                description: "La passerelle UniFi signale une menace detectee (IPS/IDS ou honeypot)"
 
   # Alert rules on VictoriaMetrics (MetricsQL), evaluated by vmalert-metrics.
   # Metric and label names as the Proxmox VE OpenTelemetry metric server is
@@ -658,6 +719,124 @@ configs:
               annotations:
                 summary: "Aucune donnee UniFi collectee par unpoller depuis 10 minutes"
                 description: "unpoller ne remonte aucun equipement UniFi : URL, compte ou controleur injoignable, ou unpoller arrete"
+            # A device that unpoller listed in the last 24 hours and no
+            # longer reports: offline, or removed from the controller.
+            - alert: unifi_device_down
+              expr: lag(unpoller_device_uptime_seconds[24h]) > 600
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Equipement UniFi {{ $$labels.name }} absent depuis 10 minutes"
+                description: "unpoller ne remonte plus cet equipement UniFi : hors ligne ou retire du controleur"
+        # Host metrics from the local OpenTelemetry collectors.
+        - name: host_metrics
+          interval: 1m
+          rules:
+            - alert: host_metrics_silent
+              expr: max by (host_name) (lag(system_cpu_time_seconds_total[24h])) > 600
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Plus de metrique systeme de {{ $$labels.host_name }} depuis 10 minutes"
+                description: "Le collecteur OpenTelemetry de l'hote n'envoie plus rien depuis 10 minutes : hote ou collecteur arrete"
+            # Several hosts report the same NFS or ZFS dataset: one alert per
+            # device. vfat (EFI) and tmpfs are left out.
+            - alert: filesystem_usage_high
+              expr: >-
+                max by (device, type) (system_filesystem_utilization_ratio{type!~"vfat|tmpfs"}) >= 0.9
+                < 0.95
+              for: 15m
+              keep_firing_for: 720m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Systeme de fichiers {{ $$labels.device }} occupe a {{ $$value | humanizePercentage }}"
+                description: "Un systeme de fichiers depasse 90% d'occupation"
+            - alert: filesystem_usage_critical
+              expr: >-
+                max by (device, type) (system_filesystem_utilization_ratio{type!~"vfat|tmpfs"}) >= 0.95
+              for: 15m
+              keep_firing_for: 120m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Systeme de fichiers {{ $$labels.device }} occupe a {{ $$value | humanizePercentage }}"
+                description: "Un systeme de fichiers depasse 95% d'occupation"
+        - name: zfs
+          interval: 1m
+          rules:
+            # zfs_pool_health: 0 is ONLINE, anything else is degraded,
+            # faulted, offline, removed or unavailable.
+            - alert: zfs_pool_degraded
+              expr: zfs_pool_health != 0
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Pool ZFS {{ $$labels.pool }} pas ONLINE (etat {{ $$value }})"
+                description: "Un pool ZFS est degrade ou en panne : verifier zpool status"
+            - alert: zfs_pool_capacity_high
+              expr: zfs_pool_capacity_ratio >= 0.85
+              for: 15m
+              keep_firing_for: 720m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Pool ZFS {{ $$labels.pool }} rempli a {{ $$value | humanizePercentage }}"
+                description: "Un pool ZFS depasse 85% de remplissage, au-dela les performances chutent"
+        # Synology status OIDs are 1 when normal. diskBadSector is -1 on
+        # cache devices, so only a positive count fires.
+        - name: synology_metrics
+          interval: 1m
+          rules:
+            - alert: synology_system_failed
+              expr: >-
+                {job="synology", __name__=~"systemStatus|powerStatus|systemFanStatus|cpuFanStatus"} != 1
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "NAS Synology : {{ $$labels.__name__ }} en defaut"
+                description: "Le NAS signale une panne systeme, d'alimentation ou de ventilateur"
+            - alert: synology_raid_degraded
+              expr: raidStatus{job="synology"} != 1
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Volume Synology {{ $$labels.raidName }} pas normal (etat {{ $$value }})"
+                description: "Un volume RAID du NAS est degrade, en reconstruction ou en panne"
+            - alert: synology_disk_failed
+              expr: >-
+                {job="synology", __name__=~"diskStatus|diskHealthStatus"} != 1
+                or diskBadSector{job="synology"} > 0
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Disque Synology {{ $$labels.diskID }} : {{ $$labels.__name__ }} = {{ $$value }}"
+                description: "Un disque du NAS est en defaut ou a des secteurs defectueux"
+            - alert: synology_temperature_high
+              expr: >-
+                temperature{job="synology"} > 60 or diskTemperature{job="synology"} > 55
+              for: 10m
+              keep_firing_for: 120m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Temperature du NAS Synology a {{ $$value }} degres"
+                description: "Le NAS depasse 60 degres ou un disque depasse 55 degres"
+            - alert: synology_scrape_down
+              expr: up{job="synology"} == 0
+              for: 10m
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Le NAS Synology ne repond plus en SNMP depuis 10 minutes"
+                description: "snmp_exporter n'interroge plus le NAS : NAS arrete, reseau ou identifiants SNMPv3"
 
   # One route per alert, its repeat_interval the old OpenObserve silence:
   # while an alert stays firing, its SMS comes again once per interval.
@@ -699,6 +878,36 @@ configs:
           - matchers: [alertname="proxmox_auth_failed_burst"]
             repeat_interval: 60m
           - matchers: [alertname="unpoller_no_unifi_data"]
+            repeat_interval: 60m
+          - matchers: [alertname="host_logs_silent"]
+            repeat_interval: 120m
+          - matchers: [alertname="kernel_critical"]
+            repeat_interval: 60m
+          - matchers: [alertname="dns_resolver_silent"]
+            repeat_interval: 120m
+          - matchers: [alertname="unifi_ips_event"]
+            repeat_interval: 60m
+          - matchers: [alertname="unifi_device_down"]
+            repeat_interval: 60m
+          - matchers: [alertname="host_metrics_silent"]
+            repeat_interval: 60m
+          - matchers: [alertname="filesystem_usage_high"]
+            repeat_interval: 720m
+          - matchers: [alertname="filesystem_usage_critical"]
+            repeat_interval: 120m
+          - matchers: [alertname="zfs_pool_degraded"]
+            repeat_interval: 60m
+          - matchers: [alertname="zfs_pool_capacity_high"]
+            repeat_interval: 720m
+          - matchers: [alertname="synology_system_failed"]
+            repeat_interval: 60m
+          - matchers: [alertname="synology_raid_degraded"]
+            repeat_interval: 60m
+          - matchers: [alertname="synology_disk_failed"]
+            repeat_interval: 60m
+          - matchers: [alertname="synology_temperature_high"]
+            repeat_interval: 120m
+          - matchers: [alertname="synology_scrape_down"]
             repeat_interval: 60m
       receivers:
         - name: sms

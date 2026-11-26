@@ -340,7 +340,7 @@ In UniFi Network, *Settings > CyberSecure > Traffic Logging* (or *System > Remot
 
 Two vmalert instances evaluate the rules, both defined in the `configs:` section of the compose file. `vmalert-logs` runs LogsQL rules against VictoriaLogs and `vmalert-metrics` runs MetricsQL rules against VictoriaMetrics. Both send their alerts to `alertmanager`. They keep the alert state (`ALERTS`, `ALERTS_FOR_STATE`) in VictoriaMetrics through `-remoteWrite.url` and read it back at startup through `-remoteRead.url`, so a restart does not reset a pending or firing alert.
 
-The rules carry over the OpenObserve alerts:
+The rules carry over the OpenObserve alerts and add alerts on hosts, DNS, UniFi, ZFS and the Synology NAS:
 
 | Alert | Source | Fires when | Repeat |
 | :--- | :--- | :--- | :--- |
@@ -358,8 +358,25 @@ The rules carry over the OpenObserve alerts:
 | `proxmox_node_cpu_high` | metrics | node CPU above 90% on a 15 minute average | 120m |
 | `proxmox_guest_restarted` | metrics | a running guest with an uptime under 10 minutes | 30m |
 | `unpoller_no_unifi_data` | metrics | no `unpoller_device_info` series from unpoller for 10 minutes | 60m |
+| `host_logs_silent` | logs | no `journald`, `files` or `docker` record from a host for 30 minutes, for a host seen in the last 24 hours | 120m |
+| `kernel_critical` | logs | a kernel message with `Out of memory`, `I/O error`, `EXT4-fs error` or `Hardware Error` in 15 minutes | 60m |
+| `dns_resolver_silent` | logs | no `dns_queries` record from an AdGuard resolver for 1 hour, for a resolver seen in the last 24 hours | 120m |
+| `unifi_ips_event` | logs | a UniFi IPS/IDS or honeypot event (CEF, signature 203 excluded) in 15 minutes | 60m |
+| `unifi_device_down` | metrics | no `unpoller_device_uptime_seconds` sample from a UniFi device for 10 minutes | 60m |
+| `host_metrics_silent` | metrics | no `system_cpu_time_seconds_total` sample from a host for 10 minutes | 60m |
+| `filesystem_usage_high` | metrics | a file system between 90% and 95% for 15 minutes, `vfat` and `tmpfs` excluded | 720m |
+| `filesystem_usage_critical` | metrics | a file system at 95% or more for 15 minutes | 120m |
+| `zfs_pool_degraded` | metrics | a ZFS pool not `ONLINE` | 60m |
+| `zfs_pool_capacity_high` | metrics | a ZFS pool at 85% or more for 15 minutes | 720m |
+| `synology_system_failed` | metrics | a system, power or fan status of the NAS other than normal | 60m |
+| `synology_raid_degraded` | metrics | a NAS RAID not normal | 60m |
+| `synology_disk_failed` | metrics | a NAS disk not normal, or with bad sectors | 60m |
+| `synology_temperature_high` | metrics | the NAS above 60°C or a disk above 55°C for 10 minutes | 120m |
+| `synology_scrape_down` | metrics | the `synology` scrape failing for 10 minutes | 60m |
 
 The repeat column replaces the OpenObserve silence period. Each alert has its own Alertmanager route, and its `repeat_interval` equals the `keep_firing_for` of the rule. While a rule keeps matching, the SMS comes back once per interval. `keep_firing_for` keeps the alert firing for that long after the last match, so an alert that flaps does not send one SMS per flap. Alertmanager groups by `alertname` (one SMS per rule), waits 30 seconds before the first SMS of a group, and sends nothing when an alert resolves. Its notification log and silences live in `ALERTMANAGER_DATA_DIR`, so a restart does not send the SMS of a firing alert again.
+
+The file system alerts group by `device` and `type`, without `host_name`: several hosts mount the same NFS share or ZFS dataset, and one full device sends one SMS. The silence alerts (`host_logs_silent`, `dns_resolver_silent`, `unifi_device_down`, `host_metrics_silent`) only know a source seen in the last 24 hours. A source that stays silent longer leaves the window and the alert resolves without an SMS.
 
 `acmerenew` is left out of `proxmox_task_failed` because the daily ACME renewal of the Proxmox host fails until its certificate setup is fixed, and it would send an SMS every day. Remove the `-pve_task_type:=acmerenew` filter once the renewal works.
 
