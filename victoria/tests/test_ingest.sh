@@ -152,6 +152,7 @@ check host_name srv.example.com
 check container_name web
 check severity WARN
 check app_level warn
+check level warn
 # _msg comes from body (_msg_field), with the URL secret masked by
 # redact_url_secrets on the way.
 check _msg "GET /cb?code=[REDACTED]&x=1 $marker"

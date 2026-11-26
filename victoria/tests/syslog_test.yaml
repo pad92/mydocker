@@ -27,12 +27,12 @@ tests:
               assert_eq!(.cef_name, "Blocked by Firewall")
               assert_eq!(.cef_severity, 4)
               assert!(!exists(.cef_severity_label))
-              assert_eq!(.UNIFIcategory, "Security")
-              assert_eq!(.UNIFIrisk, "low")
-              assert_eq!(.proto, "UDP")
-              assert_eq!(.dpt, "30171")
-              assert_eq!(.UNIFIsrcClientIp, "192.0.2.124")
-              assert_eq!(.msg, "c200 was blocked from accessing gw by the drop-wan-hairpin-nolog Firewall Policy.")
+              assert_eq!(.cef_ext_unificategory, "Security")
+              assert_eq!(.cef_ext_unifirisk, "low")
+              assert_eq!(.cef_ext_proto, "UDP")
+              assert_eq!(.cef_ext_dpt, "30171")
+              assert_eq!(.cef_ext_unifisrcclientip, "192.0.2.124")
+              assert_eq!(.cef_ext_msg, "c200 was blocked from accessing gw by the drop-wan-hairpin-nolog Firewall Policy.")
               assert_eq!(.host_name, "gw.example.com")
               assert_eq!(.device_vendor, "unifi")
 
@@ -52,10 +52,10 @@ tests:
               assert!(exists(.parse_error))
               assert_eq!(.cef_signature_id, "539")
               assert_eq!(.cef_severity, 8)
-              assert_eq!(.UNIFIcategory, "UniFi Devices")
+              assert_eq!(.cef_ext_unificategory, "UniFi Devices")
               assert_eq!(.host_name, "198.51.100.7")
 
-  - name: Extension keys never overwrite fields of the event
+  - name: Extension keys are prefixed and never overwrite fields of the event
     inputs:
       - insert_at: parse_syslog
         type: log
@@ -72,7 +72,10 @@ tests:
               assert_eq!(.host_name, "gw.example.com")
               assert_eq!(.cef_severity, null)
               assert_eq!(.cef_severity_label, "High")
-              assert_eq!(.UNIFIcategory, "Test")
+              assert_eq!(.cef_ext_unificategory, "Test")
+              assert_eq!(.cef_ext_appname, "spoofed")
+              assert_eq!(.cef_ext_hostname, "spoofed")
+              assert!(!exists(.UNIFIcategory))
 
   - name: Malformed CEF keeps the event and flags it
     inputs:
@@ -280,6 +283,8 @@ tests:
           - type: vrl
             source: |
               assert_eq!(.cef_signature_id, "203")
+              assert_eq!(.cef_ext_src, "192.0.2.124")
+              assert!(!exists(.src))
               assert!(!exists(.fw_rule))
               assert_eq!(.log_stream, "syslog")
               # The device time is not the record time.

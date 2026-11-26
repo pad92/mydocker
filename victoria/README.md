@@ -220,6 +220,16 @@ Every OTLP record becomes a flat record with stable field names:
 - The record time falls back to the collector receive time, then to the Vector time.
 - `severity`, `severity_number`, `trace_id` and `span_id` are kept when set. The OTLP bookkeeping fields (scope, flags, dropped counts, observed timestamp) are dropped.
 
+### Common Level (`normalize_level`)
+Records of every stream get a `level` field with one of five values: `debug`, `info`, `warn`, `error` or `crit`. Each source writes its level its own way; `level` lets one query cover all streams (`level:in(error,crit)`). The first source that gives a level wins:
+
+1. `ak_level` (Authentik), then `pve_level` (Proxmox).
+2. The journald priority `body_priority`: 0-2 give `crit`, 3 `error`, 4 `warn`, 5-6 `info`, 7 `debug`.
+3. The `severity` text, syslog keyword or OTLP severity text, case ignored: `emerg`, `alert`, `crit*`, `fatal`, `panic` give `crit`; `err*` gives `error`; `warn*` gives `warn`; `info` and `notice` give `info`; `debug` and `trace` give `debug`.
+4. The OTLP `severity_number`: 21-24 give `crit`, 17-20 `error`, 13-16 `warn`, 9-12 `info`, 1-8 `debug`.
+
+A record with none of these, or with an unknown word, has no `level`. The source fields are kept as they are. Records stored before `level` existed have none; the error panels of the *Logs* and *Docker* dashboards filter on `level`, so errors stored before that change do not show there.
+
 ### Sink Notes
 - The sink sends `Content-Type: application/x-ndjson`. Without it VictoriaLogs answers `200` and stores nothing.
 - End-to-end acknowledgements are on: the OTLP source answers the collector only once VictoriaLogs has accepted the batch, so the collector retries on failure. UDP syslog has no such retry: messages sent while Vector is down are lost.
@@ -305,7 +315,7 @@ UniFi sends its events (firewall, IDS/IPS, Wi-Fi, VPN) as `CEF:0|Ubiquiti|UniFi 
 | `cef_severity_label` | Only set when the severity is a word (`Low`, `High`...); `cef_severity` is then absent. | `High` |
 | `cef_parse_error` | Set when the message contains `CEF:` but cannot be parsed. | |
 
-Each `key=value` extension also becomes a field of its own, as a string: `UNIFIcategory`, `UNIFIrisk`, `src`, `dst`, `proto`, `spt`, `dpt`, `act`, `msg`, and so on depending on the event type. If an extension has the same name as a field already set by the pipeline (`appname`, `hostname`, `host_name`...), the pipeline's value is kept.
+Each `key=value` extension also becomes a field of its own, as a string, named `cef_ext_` followed by the key in lower case: `cef_ext_unificategory`, `cef_ext_unifirisk`, `cef_ext_src`, `cef_ext_dst`, `cef_ext_proto`, `cef_ext_spt`, `cef_ext_dpt`, `cef_ext_act`, `cef_ext_msg`, and so on depending on the event type. Characters outside `[a-z0-9_]` become `_`. The prefix keeps an extension from overwriting a field of the event: a CEF `hostname=` lands in `cef_ext_hostname` and `hostname` keeps the syslog value. Records stored before this naming keep the old names (`UNIFIcategory`, `src`...), so panels and rules that filter on `cef_ext_*` miss them until they age out of retention.
 
 #### Firewall Logs
 The UniFi gateway also sends the iptables log lines of its firewall rules, without CEF:
@@ -314,7 +324,7 @@ The UniFi gateway also sends the iptables log lines of its firewall rules, witho
 [LAN_WAN-D-40001] DESCR="block-dns" IN=br0 OUT=eth6 MAC=... SRC=2001:db8::1 DST=2001:4860:4860::8888 LEN=80 TC=0 HOPLIMIT=63 FLOWLBL=0 PROTO=UDP SPT=41153 DPT=53 LEN=40 MARK=0x21940000
 ```
 
-The pipeline splits them into fields with a `fw_` prefix, so they never mix with the `src`, `dst` and `proto` of the CEF events. `message` is kept as received.
+The pipeline splits them into fields with a `fw_` prefix, so they never mix with the `cef_ext_src`, `cef_ext_dst` and `cef_ext_proto` of the CEF events. `message` is kept as received.
 
 | Field | Content | Example |
 | :--- | :--- | :--- |
@@ -510,7 +520,7 @@ Switch-over order:
 
 [`tests/test_stack.sh`](./tests/test_stack.sh) renders the compose file with `.env.example` and checks the exposure without starting anything: forward auth first on the three UI routers, the ingestion and health routers limited to their method, path, middleware and service, forward auth on every other router of the three hosts, no published port except the UDP syslog port, the Grafana auth proxy settings (no login form, Basic auth, anonymous access or `GF_AUTH_DISABLE_LOGIN`), vmalert on the internal `victoria` network only, Alertmanager on `victoria` and alone on the non-internal `alertmanager` network with the host CA bundle read-only, the `ALERTMANAGER_WATCHDOG_URL` placeholder in `.env.example`, the self-scrape jobs of the six components and the Vector metrics sink on port `9598` (a wrong target makes the check fail), unpoller without route or port, as `65534:65534`, with TLS verification, InfluxDB and DPI off, no password in `.env.example` and alone on the `unpoller` network, the scrape config that targets `unpoller:9130`, snmp-exporter without route or port, as `65534:65534`, alone on the `snmp` network, with SNMPv3 authPriv (SHA, AES), no password in `.env.example` and the `${...}` references that the exporter expands, the `synology` job sent to `snmp-exporter:9116`, and the `victoria-ingest-auth` middleware in `management/traefik_dynamic.toml.example`. It needs Docker Compose 2.23 or later, `jq` and Python 3.11 or later.
 
-[`tests/test_vector.sh`](./tests/test_vector.sh) renders the compose file with `.env.example`, runs `vector validate` on the pipeline, then the Vector unit tests of [`otlp_test.yaml`](./tests/otlp_test.yaml) (normalization, routing, secret masking, HAProxy), [`authentik_test.yaml`](./tests/authentik_test.yaml), [`proxmox_test.yaml`](./tests/proxmox_test.yaml), [`syslog_test.yaml`](./tests/syslog_test.yaml) (syslog, CEF, firewall, Synology byte order mark) and [`sms_test.yaml`](./tests/sms_test.yaml) (SMS text, truncation, missing credentials). It needs Docker, Docker Compose 2.23 or later and `jq`, and makes no network call.
+[`tests/test_vector.sh`](./tests/test_vector.sh) renders the compose file with `.env.example`, runs `vector validate` on the pipeline, then the Vector unit tests of [`otlp_test.yaml`](./tests/otlp_test.yaml) (normalization, routing, secret masking, HAProxy), [`authentik_test.yaml`](./tests/authentik_test.yaml), [`proxmox_test.yaml`](./tests/proxmox_test.yaml), [`syslog_test.yaml`](./tests/syslog_test.yaml) (syslog, CEF, firewall, Synology byte order mark), [`level_test.yaml`](./tests/level_test.yaml) (the common `level` of every source) and [`sms_test.yaml`](./tests/sms_test.yaml) (SMS text, truncation, missing credentials). It needs Docker, Docker Compose 2.23 or later and `jq`, and makes no network call.
 
 [`tests/test_ingest.sh`](./tests/test_ingest.sh) starts VictoriaLogs and Vector on a throwaway internal network, sends one OTLP/HTTP protobuf record to Vector with a `stream-name` header, then queries VictoriaLogs. It checks what the unit tests cannot: the OTLP source, the sink query string (`_stream_fields`, `_msg_field`, `_time_field`), the stored fields and stream, and the masking of a URL secret. It also expects the answer within 3.5 seconds, which fails if the batch timeout goes back to 5 seconds. It needs Docker, Docker Compose 2.23 or later, `jq` and Python 3, uses the local images (`CLIENT_IMAGE` overrides the busybox client, `busybox:1.37` by default), and takes about 20 seconds. The Vector OTLP/HTTP source only accepts protobuf: an OTLP JSON request gets an HTTP 500.
 

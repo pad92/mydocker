@@ -1,0 +1,303 @@
+# Unit tests for the normalize_level transform of the vector_config pipeline:
+# one level field (debug, info, warn, error, crit) from the level of each source.
+# Run with ./test_vector.sh (renders the compose file with .env.example first).
+tests:
+  - name: Authentik warning becomes warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          ak_level: "warning"
+          severity: "INFO"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: Authentik critical becomes crit
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          ak_level: "critical"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: Authentik trace becomes debug
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          ak_level: "trace"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "debug")
+
+  - name: Proxmox error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          pve_level: "error"
+          body_priority: "6"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: journald priority 3 as a string becomes error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: "3"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: journald priority 0 becomes crit
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: 0
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: journald priority 4 becomes warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: "4"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: journald priority 6 becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: "6"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: journald priority 7 becomes debug
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: "7"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "debug")
+
+  - name: journald priority wins over the OTLP severity
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: "3"
+          severity: "INFO"
+          severity_number: 9
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: Docker severity text in any case
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "Error"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: OTLP WARN becomes warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "WARN"
+          severity_number: 13
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: OTLP fatal becomes crit
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "fatal"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: syslog err becomes error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "err"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: syslog notice becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "notice"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: syslog emerg becomes crit
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "emerg"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: OTLP severity number alone
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity_number: 17
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: OTLP severity number 21 becomes crit
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity_number: 21
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: Unknown severity text falls back to the number
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "X"
+          severity_number: 5
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "debug")
+
+  - name: No level without a usable source
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: ""
+          severity_number: 0
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert!(!exists(.level))
+
+  - name: No level for an empty event
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert!(!exists(.level))

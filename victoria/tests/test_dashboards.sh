@@ -156,13 +156,13 @@ authentik = [
 # demo-old logged 3 h ago only: it feeds "Conteneurs sans log depuis 1 h".
 docker = [
     {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "app",
-     "container_name": "demo-app", "log_iostream": "stderr", "severity": "Error",
+     "container_name": "demo-app", "log_iostream": "stderr", "severity": "Error", "level": "error",
      "_msg": "request 42 failed"},
     {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "old",
-     "container_name": "demo-old", "log_iostream": "stderr", "severity": "error",
+     "container_name": "demo-old", "log_iostream": "stderr", "severity": "error", "level": "error",
      "_msg": "worker 7 crashed", "_age": 180},
     {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "old",
-     "container_name": "demo-old", "log_iostream": "stdout", "severity": "info",
+     "container_name": "demo-old", "log_iostream": "stdout", "severity": "info", "level": "info",
      "_msg": "worker started", "_age": 181},
 ]
 # AdGuard Home query log: reason 3 blocked, 9 rewrite, 1 allowlist; cached
@@ -208,14 +208,14 @@ firewall = [
 ]
 # UniFi CEF events: an IPS threat, and a firewall block (signature 203).
 cef = [
-    {"host_name": "gw", "appname": "CEF", "UNIFIcategory": "Security",
+    {"host_name": "gw", "appname": "CEF", "cef_ext_unificategory": "Security",
      "cef_signature_id": "300", "cef_name": "Threat Detected and Blocked",
-     "UNIFIrisk": "high", "src": "203.0.113.9", "dst": "192.168.0.10", "dpt": "445",
-     "msg": "ET SCAN suspicious inbound", "_msg": "0|Ubiquiti|UniFi Network|300"},
-    {"host_name": "gw", "appname": "CEF", "UNIFIcategory": "Security",
+     "cef_ext_unifirisk": "high", "cef_ext_src": "203.0.113.9", "cef_ext_dst": "198.51.100.10", "cef_ext_dpt": "445",
+     "cef_ext_msg": "ET SCAN suspicious inbound", "_msg": "0|Ubiquiti|UniFi Network|300"},
+    {"host_name": "gw", "appname": "CEF", "cef_ext_unificategory": "Security",
      "cef_signature_id": "203", "cef_name": "Blocked by Firewall",
-     "UNIFIfirewallPolicy": "Block IoT", "UNIFIsrcClientAlias": "camera",
-     "UNIFIsrcClientIp": "192.168.0.30", "UNIFIdstZone": "External",
+     "cef_ext_unififirewallpolicy": "Block IoT", "cef_ext_unifisrcclientalias": "camera",
+     "cef_ext_unifisrcclientip": "198.51.100.30", "cef_ext_unifidstzone": "External",
      "_msg": "0|Ubiquiti|UniFi Network|203"},
 ]
 # Traefik access logs (JSON fields prefixed with app_ by Vector). The status
@@ -261,7 +261,7 @@ records = [{"log_stream": "proxmox", "host_name": "pve.home.lan", "_msg": "pve",
 records += [{"log_stream": "authentik", "host_name": "sso.home.lan", "_msg": "ak", **r} for r in authentik]
 records += [{"log_stream": "docker", **r} for r in docker]
 records += [{"log_stream": "dns_queries", "_msg": "dns", **r} for r in dns_queries]
-records += [{"log_stream": "firewall", "severity": "notice", **r} for r in firewall]
+records += [{"log_stream": "firewall", "severity": "notice", "level": "info", **r} for r in firewall]
 records += [{"log_stream": "syslog", "facility": "user", **r} for r in cef]
 records += [{"log_stream": "traefik", "_msg": "http", **r} for r in traefik]
 with open(f"{work}/records.jsonl", "w") as f:

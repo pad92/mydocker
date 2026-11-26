@@ -716,13 +716,13 @@ configs:
             - alert: unifi_ips_event
               expr: >-
                 _time:15m {log_stream="syslog"} appname:CEF
-                ((UNIFIcategory:Security -cef_signature_id:203) or cef_name:~"(?i)threat|intrus|honeypot")
-                | stats by (cef_name, src) count() as events | filter events:>=1
+                ((cef_ext_unificategory:Security -cef_signature_id:203) or cef_name:~"(?i)threat|intrus|honeypot")
+                | stats by (cef_name, cef_ext_src) count() as events | filter events:>=1
               keep_firing_for: 60m
               labels:
                 severity: critical
               annotations:
-                summary: "{{ $$value }} evenements IPS UniFi ({{ $$labels.cef_name }}) depuis {{ $$labels.src }} en 15 minutes"
+                summary: "{{ $$value }} evenements IPS UniFi ({{ $$labels.cef_name }}) depuis {{ $$labels.cef_ext_src }} en 15 minutes"
                 description: "La passerelle UniFi signale une menace detectee (IPS/IDS ou honeypot)"
 
   # Alert rules on VictoriaMetrics (MetricsQL), evaluated by vmalert-metrics.
@@ -1575,9 +1575,12 @@ configs:
                 if .cef_severity == null {
                   .cef_severity_label = cef_severity
                 }
-                # Extension keys (UNIFIcategory, src, msg...) become top-level
-                # fields. An existing field of the event wins over a key of the same name.
-                . = merge(cef, .)
+                # Extension keys become cef_ext_<key in lower case> (UNIFIcategory
+                # -> cef_ext_unificategory, src -> cef_ext_src): they follow the
+                # lower case + prefix convention and never overwrite a field of
+                # the event (src, msg, appname...).
+                ext = map_keys(cef) -> |key| { "cef_ext_" + replace(downcase(key), r'[^a-z0-9_]', "_") }
+                . = merge(., ext)
               } else {
                 .cef_parse_error = cef_err
               }
@@ -1640,15 +1643,65 @@ configs:
             .log_stream = if exists(.fw_rule) { "firewall" } else { "syslog" }
             del(.source_type)
 
-      sinks:
-        victorialogs:
-          type: http
+        # One level field for every stream: debug, info, warn, error or crit.
+        # The sources each have their own (ak_level, pve_level, the journald
+        # priority, the syslog or OTLP severity); the error panels and queries
+        # filter on level instead. An event with no usable source has none.
+        normalize_level:
+          type: remap
           inputs:
             - route_streams._unmatched
             - route_authentik._unmatched
             - parse_authentik
             - parse_proxmox
             - parse_syslog
+          source: |
+            text = ""
+            if is_string(.ak_level) {
+              text = string!(.ak_level)
+            } else if is_string(.pve_level) {
+              text = string!(.pve_level)
+            }
+            # journald priority (0-7), as a number or a string.
+            priority = -1
+            if is_string(.body_priority) || is_integer(.body_priority) {
+              priority = to_int(.body_priority) ?? -1
+            }
+            if text == "" && priority >= 0 && priority <= 7 {
+              text = if priority <= 2 { "crit" } else if priority == 3 { "error" } else if priority == 4 { "warn" } else if priority <= 6 { "info" } else { "debug" }
+            }
+            # Syslog keyword (err, warning, notice...) or OTLP severity text (Error, WARN...).
+            if text == "" && is_string(.severity) {
+              text = string!(.severity)
+            }
+            text = downcase(strip_whitespace(text))
+            level = ""
+            if match(text, r'^(emerg|alert|crit|fatal|panic)') {
+              level = "crit"
+            } else if match(text, r'^err') {
+              level = "error"
+            } else if match(text, r'^warn') {
+              level = "warn"
+            } else if match(text, r'^(info|notice)') {
+              level = "info"
+            } else if match(text, r'^(debug|trace)') {
+              level = "debug"
+            }
+            # OTLP severity number: 1-8 trace/debug, 9-12 info, 13-16 warn,
+            # 17-20 error, 21-24 fatal.
+            if level == "" && is_integer(.severity_number) {
+              number = int!(.severity_number)
+              level = if number >= 21 { "crit" } else if number >= 17 { "error" } else if number >= 13 { "warn" } else if number >= 9 { "info" } else if number >= 1 { "debug" } else { "" }
+            }
+            if level != "" {
+              .level = level
+            }
+
+      sinks:
+        victorialogs:
+          type: http
+          inputs:
+            - normalize_level
           # _stream_fields: what a stream is (few values each); _msg_field: the
           # first non-empty one becomes _msg; _time_field: the record time.
           uri: "http://victorialogs:9428/insert/jsonline?_stream_fields=log_stream,host_name,container_name&_msg_field=body,body_message,message&_time_field=timestamp"
@@ -7015,7 +7068,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats count() as n",
+                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search level:in(error,crit) | stats count() as n",
                 "queryType": "stats"
               }
             ],
@@ -7227,7 +7280,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats by (host_name) count() as n",
+                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search level:in(error,crit) | stats by (host_name) count() as n",
                 "queryType": "statsRange",
                 "step": "5m",
                 "legendFormat": "{{host_name}}"
@@ -7283,7 +7336,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats by (host_name, log_stream) count() as n | sort by (n desc) | limit 30",
+                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search level:in(error,crit) | stats by (host_name, log_stream) count() as n | sort by (n desc) | limit 30",
                 "queryType": "instant"
               }
             ],
@@ -7430,7 +7483,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats by (host_name, container_name) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) $$search level:in(error,crit) | stats by (host_name, container_name) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
                 "queryType": "instant"
               }
             ],
@@ -7755,7 +7808,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats count() as n",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search level:in(error,crit) | stats count() as n",
                 "queryType": "stats"
               }
             ],
@@ -7975,7 +8028,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats by (container_name) count() as n",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search level:in(error,crit) | stats by (container_name) count() as n",
                 "queryType": "statsRange",
                 "step": "5m",
                 "legendFormat": "{{container_name}}"
@@ -8074,7 +8127,7 @@ configs:
           },
           {
             "type": "timeseries",
-            "title": "Logs par sévérité",
+            "title": "Logs par niveau",
             "datasource": {
               "type": "victoriametrics-logs-datasource",
               "uid": "victorialogs"
@@ -8087,10 +8140,10 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search | format if (severity:\"\") \"absent\" as severity | format \"<uc:severity>\" as severity | stats by (severity) count() as n",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search | format if (level:\"\") \"absent\" as level | stats by (level) count() as n",
                 "queryType": "statsRange",
                 "step": "5m",
-                "legendFormat": "{{severity}}"
+                "legendFormat": "{{level}}"
               }
             ],
             "fieldConfig": {
@@ -8156,7 +8209,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | replace_regexp (\"[0-9]+\", \"N\") at _msg | extract_regexp \"^(?P<msg>.{1,200})\" from _msg | stats by (container_name, msg) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search level:in(error,crit) | replace_regexp (\"[0-9]+\", \"N\") at _msg | extract_regexp \"^(?P<msg>.{1,200})\" from _msg | stats by (container_name, msg) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
                 "queryType": "instant"
               }
             ],
@@ -8236,7 +8289,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search severity:~\"(?i)err|crit|alert|emerg|fatal|panic\" | stats by (host_name, container_name) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
+                "expr": "{log_stream=\"docker\"} host_name:in($$host_name) compose_project:in($$compose_project) container_name:in($$container_name) $$search level:in(error,crit) | stats by (host_name, container_name) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
                 "queryType": "instant"
               }
             ],
@@ -10345,7 +10398,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"syslog\"} appname:CEF host_name:in($$host_name) $$search ((UNIFIcategory:Security -cef_signature_id:203) or cef_name:~\"(?i)threat|intrus|honeypot\") | stats count() as n",
+                "expr": "{log_stream=\"syslog\"} appname:CEF host_name:in($$host_name) $$search ((cef_ext_unificategory:Security -cef_signature_id:203) or cef_name:~\"(?i)threat|intrus|honeypot\") | stats count() as n",
                 "queryType": "stats"
               }
             ],
@@ -11156,7 +11209,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"syslog\"} appname:CEF UNIFIcategory:Security host_name:in($$host_name) $$search | stats by (cef_name) count() as n",
+                "expr": "{log_stream=\"syslog\"} appname:CEF cef_ext_unificategory:Security host_name:in($$host_name) $$search | stats by (cef_name) count() as n",
                 "queryType": "statsRange",
                 "step": "5m",
                 "legendFormat": "{{cef_name}}"
@@ -11212,7 +11265,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"syslog\"} appname:CEF host_name:in($$host_name) $$search ((UNIFIcategory:Security -cef_signature_id:203) or cef_name:~\"(?i)threat|intrus|honeypot\") | stats by (cef_name, UNIFIrisk, src, dst, dpt, msg) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
+                "expr": "{log_stream=\"syslog\"} appname:CEF host_name:in($$host_name) $$search ((cef_ext_unificategory:Security -cef_signature_id:203) or cef_name:~\"(?i)threat|intrus|honeypot\") | stats by (cef_name, cef_ext_unifirisk, cef_ext_src, cef_ext_dst, cef_ext_dpt, cef_ext_msg) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
                 "queryType": "instant"
               }
             ],
@@ -11243,21 +11296,21 @@ configs:
                 "options": {
                   "indexByName": {
                     "cef_name": 0,
-                    "UNIFIrisk": 1,
-                    "src": 2,
-                    "dst": 3,
-                    "dpt": 4,
-                    "msg": 5,
+                    "cef_ext_unifirisk": 1,
+                    "cef_ext_src": 2,
+                    "cef_ext_dst": 3,
+                    "cef_ext_dpt": 4,
+                    "cef_ext_msg": 5,
                     "n": 6,
                     "dernier": 7
                   },
                   "renameByName": {
                     "cef_name": "événement",
-                    "UNIFIrisk": "risque",
-                    "src": "source",
-                    "dst": "destination",
-                    "dpt": "port",
-                    "msg": "message",
+                    "cef_ext_unifirisk": "risque",
+                    "cef_ext_src": "source",
+                    "cef_ext_dst": "destination",
+                    "cef_ext_dpt": "port",
+                    "cef_ext_msg": "message",
                     "n": "nombre",
                     "dernier": "dernier"
                   },
@@ -11300,7 +11353,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"syslog\"} appname:CEF UNIFIcategory:Security host_name:in($$host_name) $$search cef_signature_id:203 | stats by (UNIFIfirewallPolicy, UNIFIsrcClientAlias, UNIFIsrcClientIp, UNIFIdstZone) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
+                "expr": "{log_stream=\"syslog\"} appname:CEF cef_ext_unificategory:Security host_name:in($$host_name) $$search cef_signature_id:203 | stats by (cef_ext_unififirewallpolicy, cef_ext_unifisrcclientalias, cef_ext_unifisrcclientip, cef_ext_unifidstzone) count() as n, max(_time) as dernier | sort by (n desc) | limit 30",
                 "queryType": "instant"
               }
             ],
@@ -11330,18 +11383,18 @@ configs:
                 "id": "organize",
                 "options": {
                   "indexByName": {
-                    "UNIFIfirewallPolicy": 0,
-                    "UNIFIsrcClientAlias": 1,
-                    "UNIFIsrcClientIp": 2,
-                    "UNIFIdstZone": 3,
+                    "cef_ext_unififirewallpolicy": 0,
+                    "cef_ext_unifisrcclientalias": 1,
+                    "cef_ext_unifisrcclientip": 2,
+                    "cef_ext_unifidstzone": 3,
                     "n": 4,
                     "dernier": 5
                   },
                   "renameByName": {
-                    "UNIFIfirewallPolicy": "politique",
-                    "UNIFIsrcClientAlias": "client",
-                    "UNIFIsrcClientIp": "IP client",
-                    "UNIFIdstZone": "zone cible",
+                    "cef_ext_unififirewallpolicy": "politique",
+                    "cef_ext_unifisrcclientalias": "client",
+                    "cef_ext_unifisrcclientip": "IP client",
+                    "cef_ext_unifidstzone": "zone cible",
                     "n": "nombre",
                     "dernier": "dernier"
                   },
@@ -11520,7 +11573,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"syslog\"} appname:CEF UNIFIcategory:Security host_name:in($$host_name) $$search | sort by (_time desc) | limit 200",
+                "expr": "{log_stream=\"syslog\"} appname:CEF cef_ext_unificategory:Security host_name:in($$host_name) $$search | sort by (_time desc) | limit 200",
                 "queryType": "instant"
               }
             ],
