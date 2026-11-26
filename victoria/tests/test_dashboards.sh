@@ -21,6 +21,15 @@
 #   (one silent host, one degraded ZFS pool), except "silent hosts" for a host
 #   that still reports, which must return none. There is no Proxmox, UniFi or
 #   Synology metric in the test, so their targets only have to parse;
+# - the IP tables of the DNS and firewall dashboards (two per dashboard) join
+#   their IP with UnPoller client and device series imported before: each
+#   such panel is Mixed, its VictoriaMetrics target is an instant table, an
+#   outer join on the IP field of the logs query keeps only rows with a
+#   count, and the final columns are "nom UniFi" and "MAC". The mapping
+#   query returns one row per IP, and for an IP that changed hands the MAC
+#   seen last. Grafana applies the join in the browser, so the test checks
+#   its definition, not its result. $__range stays in the expression: the
+#   Grafana backend replaces it;
 # - every dashboard contributes at least one target.
 # Each target using a variable is sent twice, as Grafana sends it: once with
 # one value present in the test data, once with the default "All" choice
@@ -245,6 +254,19 @@ for direction in ("receive", "transmit"):
            [(m, (20 - m) * 9000) for m in recent])
 series("zfs_pool_health", {"host_name": "pve.home.lan", "pool": "rpool"}, [(m, 1) for m in recent])
 series("zfs_pool_capacity_ratio", {"host_name": "pve.home.lan", "pool": "rpool"}, [(m, 0.6) for m in recent])
+# UnPoller clients and devices, which name the IPs of the DNS and firewall
+# tables. DHCP gave 192.168.0.10 to "old-pc" until 3 h ago, then to "laptop":
+# the mapping keeps one row per IP, the MAC seen last, although old-pc has the
+# larger value. 192.168.0.99 is in no log.
+unifi = [("unpoller_client_uptime_seconds", "192.168.0.10", "aa:bb:cc:00:00:10", "laptop", 300, recent),
+         ("unpoller_client_uptime_seconds", "192.168.0.10", "aa:bb:cc:00:00:11", "old-pc", 90000,
+          range(200, 179, -1)),
+         ("unpoller_client_uptime_seconds", "192.168.0.57", "aa:bb:cc:00:00:57", "tv", 4000, recent),
+         ("unpoller_client_uptime_seconds", "192.168.0.99", "aa:bb:cc:00:00:99", "phone", 100, recent),
+         ("unpoller_device_info", "192.168.69.254", "aa:bb:cc:00:00:fe", "gateway", 1, recent)]
+for name, ip, mac, label, value, minutes in unifi:
+    series(name, {"ip": ip, "mac": mac, "name": label, "site_name": "default"},
+           [(m, value) for m in minutes])
 with open(f"{work}/metrics.txt", "w") as f:
     f.write("\n".join(lines) + "\n")
 
@@ -255,7 +277,7 @@ with open(f"{work}/metrics.txt", "w") as f:
 # - "all": the default "All" choice; VictoriaLogs turns in($v) into in(*),
 #   Prometheus inserts the allValue the variable declares (required, as
 #   without it Grafana would send every value as an alternation).
-# $search is a text box whose default is *.
+# $search is a text box whose default is *. Grafana replaces $__range itself.
 values = {
     "victoria-authentik": {"application": "app.home.lan", "composant": "worker"},
     "victoria-dns": {"host_name": "ns01.home.lan", "client": "192.168.0.10"},
@@ -291,17 +313,20 @@ for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
         for target in panel.get("targets", []):
             datasource = target["datasource"]["uid"]
             for variant in ("value", "all"):
-                if variant == "all" and "$" not in target["expr"]:
+                if variant == "all" and "$" not in re.sub(r"\$__range\b", "", target["expr"]):
                     continue
                 query = dict(target)
                 query["expr"] = substitute(target["expr"], datasource, variables, variant, all_values)
-                assert "$" not in query["expr"], f'{dash["uid"]} / {panel["title"]}: {query["expr"]}'
+                assert "$" not in re.sub(r"\$__range\b", "", query["expr"]), \
+                    f'{dash["uid"]} / {panel["title"]}: {query["expr"]}'
                 n = len(index) + 1
                 json.dump({"from": "now-24h", "to": "now", "queries": [query]},
                           open(f"{work}/bodies/q{n:03d}.json", "w"))
                 index.append({"file": f"q{n:03d}", "dashboard": dash["uid"],
                               "panel": panel["title"], "refId": query.get("refId", "A"),
-                              "datasource": datasource, "variant": variant})
+                              "datasource": datasource, "variant": variant,
+                              "unifi_map": "unpoller_" in target["expr"]
+                                           and dash["uid"] in ("victoria-dns", "victoria-firewall")})
 json.dump(index, open(f"{work}/bodies/index.json", "w"))
 PY
 chmod -R a+rX "$work_dir"
@@ -387,7 +412,7 @@ SH
 client sh /w/requests.sh "$viewer" "$plugin_id" || true
 
 python3 -I - "$work_dir" "$viewer" "$plugin_id" "$pinned_version" <<'PY' || fail "see above"
-import json, sys
+import json, re, sys
 
 work, viewer, plugin_id, pinned = sys.argv[1:]
 out = f"{work}/out"
@@ -447,6 +472,63 @@ def has_data(frame):
         return True
     return any(x not in (None, 0) for i in numeric for x in values[i])
 
+unifi_ips = ["192.168.0.10", "192.168.0.57", "192.168.0.99", "192.168.69.254"]
+
+# IP tables named from UnPoller. Grafana joins in the browser, so this checks
+# the chain the browser runs: A (VictoriaLogs) and B (the mapping) in a Mixed
+# panel, B renamed to the IP field that A groups by, an outer join on it, rows
+# without a count removed (IPs that UnPoller knows but no log mentions).
+mapped = {"victoria-dns": {"Clients les plus actifs", "Clients les plus bloqués"},
+          "victoria-firewall": {"Top sources bloquées", "Top destinations bloquées"}}
+for name, uid in (("dns", "victoria-dns"), ("firewall", "victoria-firewall")):
+    dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
+    found = set()
+    for panel in dash["panels"]:
+        refs = {t.get("refId"): t for t in panel.get("targets", [])}
+        if "unpoller_" not in refs.get("B", {}).get("expr", ""):
+            continue
+        found.add(panel["title"])
+        where = f'{uid} / {panel["title"]}'
+        steps = panel.get("transformations", [])
+        ids = [s["id"] for s in steps]
+        try:
+            j = ids.index("joinByField")
+            key = steps[j]["options"]["byField"]
+            org_b = next(s for s in steps[:j] if s["id"] == "organize"
+                         and s.get("filter", {}).get("options") == "B")
+            after = steps[j + 1] if j + 1 < len(steps) else {}
+            if after.get("id") != "filterByValue":
+                errors.append(f"{where}: no exclusion of rows without a count after the join")
+                continue
+            count = after["options"]["filters"][0]["fieldName"]
+        except (ValueError, StopIteration, KeyError, IndexError) as exc:
+            errors.append(f"{where}: transformation chain incomplete ({exc!r})")
+            continue
+        by = re.search(r"stats by \(([^)]*)\)", refs["A"]["expr"])
+        checks = [
+            (panel.get("datasource", {}).get("uid") == "-- Mixed --", "panel datasource is not Mixed"),
+            (refs["A"]["datasource"]["uid"] == "victorialogs", "target A is not VictoriaLogs"),
+            (refs["B"]["datasource"]["uid"] == "victoriametrics" and refs["B"].get("instant")
+             and refs["B"].get("format") == "table", "target B is not an instant VictoriaMetrics table"),
+            (steps[j]["options"].get("mode") == "outerTabular", "join is not outerTabular"),
+            (org_b["options"]["renameByName"].get("ip") == key, f"B's ip is not renamed to {key}"),
+            (by is not None and key in [f.strip() for f in by.group(1).split(",")],
+             f"A does not group by {key}"),
+            (re.search(rf"\bas {re.escape(count)}\b", refs["A"]["expr"]) is not None,
+             f"A produces no field {count}"),
+            (steps[j + 1]["id"] == "filterByValue" and steps[j + 1]["options"].get("type") == "exclude"
+             and steps[j + 1]["options"]["filters"][0]["config"]["id"] == "isNull",
+             "no exclusion of rows without a count after the join"),
+            (all(s.get("filter", {}).get("options") == "A" for s in steps[:j]
+                 if s["id"] in ("extractFields", "convertFieldType")),
+             "a transformation of A also applies to B"),
+            ({"unifi_name", "unifi_mac"} <= set(steps[-1]["options"].get("renameByName", {})),
+             "MAC and name not shown"),
+        ]
+        errors += [f"{where}: {msg}" for ok, msg in checks if not ok]
+    if found != mapped[uid]:
+        errors.append(f"{uid}: tables named from UnPoller {sorted(found)}, expected {sorted(mapped[uid])}")
+
 index = json.load(open(f"{work}/bodies/index.json"))
 counts = {}
 for q in index:
@@ -459,6 +541,19 @@ for q in index:
     result = body.get("results", {}).get(q["refId"], {})
     if result.get("status") != 200 or result.get("error"):
         errors.append(f"{label}: status {result.get('status')}, error {result.get('error')!r}")
+        continue
+    if q["unifi_map"]:
+        # One frame per IP, with its MAC and name, for the IPs UnPoller knows.
+        ips = {}
+        for f in result.get("frames", []):
+            for field in f.get("schema", {}).get("fields", []):
+                labels = field.get("labels") or {}
+                if "ip" in labels:
+                    ips.setdefault(labels["ip"], []).append((labels.get("mac"), labels.get("name")))
+        if sorted(ips) != unifi_ips or any(len(v) != 1 or None in v[0] for v in ips.values()):
+            errors.append(f"{label}: IP mapping {ips}, expected one MAC and name for each of {unifi_ips}")
+        elif ips["192.168.0.10"][0] != ("aa:bb:cc:00:00:10", "laptop"):
+            errors.append(f"{label}: 192.168.0.10 maps to {ips['192.168.0.10'][0]}, expected the MAC seen last")
         continue
     if q["datasource"] == "victorialogs" or q["dashboard"] == "victoria-hosts":
         found = any(has_data(f) for f in result.get("frames", []))

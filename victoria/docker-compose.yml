@@ -9173,8 +9173,8 @@ configs:
             "type": "table",
             "title": "Clients les plus actifs",
             "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
+              "type": "datasource",
+              "uid": "-- Mixed --"
             },
             "targets": [
               {
@@ -9186,6 +9186,18 @@ configs:
                 "editorMode": "code",
                 "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search | stats by (body_ip) count() as n, count() if (body_result_isfiltered:true) as bloquees, count_uniq(body_qh) as domaines | sort by (n desc) | limit 30",
                 "queryType": "instant"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "topk by (ip) (1, max by (ip, mac, name) (tlast_over_time(unpoller_client_uptime_seconds{ip!=\"\"}[$$__range])) or max by (ip, mac, name) (tlast_over_time(unpoller_device_info{ip!=\"\"}[$$__range])))",
+                "format": "table",
+                "instant": true,
+                "range": false
               }
             ],
             "transformations": [
@@ -9196,6 +9208,10 @@ configs:
                   "format": "json",
                   "replace": true,
                   "keepTime": false
+                },
+                "filter": {
+                  "id": "byRefId",
+                  "options": "A"
                 }
               },
               {
@@ -9216,6 +9232,64 @@ configs:
                     }
                   ],
                   "fields": {}
+                },
+                "filter": {
+                  "id": "byRefId",
+                  "options": "A"
+                }
+              },
+              {
+                "id": "organize",
+                "filter": {
+                  "id": "byRefId",
+                  "options": "B"
+                },
+                "options": {
+                  "excludeByName": {
+                    "Time": true,
+                    "Value": true,
+                    "Value #B": true
+                  },
+                  "renameByName": {
+                    "ip": "body_ip",
+                    "name": "unifi_name",
+                    "mac": "unifi_mac"
+                  },
+                  "indexByName": {}
+                }
+              },
+              {
+                "id": "joinByField",
+                "options": {
+                  "byField": "body_ip",
+                  "mode": "outerTabular"
+                }
+              },
+              {
+                "id": "filterByValue",
+                "options": {
+                  "type": "exclude",
+                  "match": "any",
+                  "filters": [
+                    {
+                      "fieldName": "n",
+                      "config": {
+                        "id": "isNull",
+                        "options": {}
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "sortBy",
+                "options": {
+                  "sort": [
+                    {
+                      "field": "n",
+                      "desc": true
+                    }
+                  ]
                 }
               },
               {
@@ -9223,15 +9297,19 @@ configs:
                 "options": {
                   "indexByName": {
                     "body_ip": 0,
-                    "n": 1,
-                    "bloquees": 2,
-                    "domaines": 3
+                    "n": 3,
+                    "bloquees": 4,
+                    "domaines": 5,
+                    "unifi_name": 1,
+                    "unifi_mac": 2
                   },
                   "renameByName": {
                     "body_ip": "client",
                     "n": "requêtes",
                     "bloquees": "bloquées",
-                    "domaines": "domaines"
+                    "domaines": "domaines",
+                    "unifi_name": "nom UniFi",
+                    "unifi_mac": "MAC"
                   },
                   "excludeByName": {}
                 }
@@ -9526,8 +9604,8 @@ configs:
             "type": "table",
             "title": "Clients les plus bloqués",
             "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
+              "type": "datasource",
+              "uid": "-- Mixed --"
             },
             "targets": [
               {
@@ -9539,6 +9617,18 @@ configs:
                 "editorMode": "code",
                 "expr": "{log_stream=\"dns_queries\"} host_name:in($$host_name) body_ip:in($$client) $$search body_result_isfiltered:true | stats by (body_ip) count() as n, count_uniq(body_qh) as domaines | sort by (n desc) | limit 30",
                 "queryType": "instant"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "topk by (ip) (1, max by (ip, mac, name) (tlast_over_time(unpoller_client_uptime_seconds{ip!=\"\"}[$$__range])) or max by (ip, mac, name) (tlast_over_time(unpoller_device_info{ip!=\"\"}[$$__range])))",
+                "format": "table",
+                "instant": true,
+                "range": false
               }
             ],
             "transformations": [
@@ -9549,6 +9639,10 @@ configs:
                   "format": "json",
                   "replace": true,
                   "keepTime": false
+                },
+                "filter": {
+                  "id": "byRefId",
+                  "options": "A"
                 }
               },
               {
@@ -9565,6 +9659,64 @@ configs:
                     }
                   ],
                   "fields": {}
+                },
+                "filter": {
+                  "id": "byRefId",
+                  "options": "A"
+                }
+              },
+              {
+                "id": "organize",
+                "filter": {
+                  "id": "byRefId",
+                  "options": "B"
+                },
+                "options": {
+                  "excludeByName": {
+                    "Time": true,
+                    "Value": true,
+                    "Value #B": true
+                  },
+                  "renameByName": {
+                    "ip": "body_ip",
+                    "name": "unifi_name",
+                    "mac": "unifi_mac"
+                  },
+                  "indexByName": {}
+                }
+              },
+              {
+                "id": "joinByField",
+                "options": {
+                  "byField": "body_ip",
+                  "mode": "outerTabular"
+                }
+              },
+              {
+                "id": "filterByValue",
+                "options": {
+                  "type": "exclude",
+                  "match": "any",
+                  "filters": [
+                    {
+                      "fieldName": "n",
+                      "config": {
+                        "id": "isNull",
+                        "options": {}
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "sortBy",
+                "options": {
+                  "sort": [
+                    {
+                      "field": "n",
+                      "desc": true
+                    }
+                  ]
                 }
               },
               {
@@ -9572,13 +9724,17 @@ configs:
                 "options": {
                   "indexByName": {
                     "body_ip": 0,
-                    "n": 1,
-                    "domaines": 2
+                    "n": 3,
+                    "domaines": 4,
+                    "unifi_name": 1,
+                    "unifi_mac": 2
                   },
                   "renameByName": {
                     "body_ip": "client",
                     "n": "bloquées",
-                    "domaines": "domaines"
+                    "domaines": "domaines",
+                    "unifi_name": "nom UniFi",
+                    "unifi_mac": "MAC"
                   },
                   "excludeByName": {}
                 }
@@ -10303,8 +10459,8 @@ configs:
             "type": "table",
             "title": "Top sources bloquées",
             "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
+              "type": "datasource",
+              "uid": "-- Mixed --"
             },
             "targets": [
               {
@@ -10316,6 +10472,18 @@ configs:
                 "editorMode": "code",
                 "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats by (fw_src, fw_in) count() as n, count_uniq(fw_dpt) as ports, max(_time) as dernier | sort by (n desc) | limit 20",
                 "queryType": "instant"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "topk by (ip) (1, max by (ip, mac, name) (tlast_over_time(unpoller_client_uptime_seconds{ip!=\"\"}[$$__range])) or max by (ip, mac, name) (tlast_over_time(unpoller_device_info{ip!=\"\"}[$$__range])))",
+                "format": "table",
+                "instant": true,
+                "range": false
               }
             ],
             "transformations": [
@@ -10326,6 +10494,10 @@ configs:
                   "format": "json",
                   "replace": true,
                   "keepTime": false
+                },
+                "filter": {
+                  "id": "byRefId",
+                  "options": "A"
                 }
               },
               {
@@ -10342,6 +10514,64 @@ configs:
                     }
                   ],
                   "fields": {}
+                },
+                "filter": {
+                  "id": "byRefId",
+                  "options": "A"
+                }
+              },
+              {
+                "id": "organize",
+                "filter": {
+                  "id": "byRefId",
+                  "options": "B"
+                },
+                "options": {
+                  "excludeByName": {
+                    "Time": true,
+                    "Value": true,
+                    "Value #B": true
+                  },
+                  "renameByName": {
+                    "ip": "fw_src",
+                    "name": "unifi_name",
+                    "mac": "unifi_mac"
+                  },
+                  "indexByName": {}
+                }
+              },
+              {
+                "id": "joinByField",
+                "options": {
+                  "byField": "fw_src",
+                  "mode": "outerTabular"
+                }
+              },
+              {
+                "id": "filterByValue",
+                "options": {
+                  "type": "exclude",
+                  "match": "any",
+                  "filters": [
+                    {
+                      "fieldName": "n",
+                      "config": {
+                        "id": "isNull",
+                        "options": {}
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "sortBy",
+                "options": {
+                  "sort": [
+                    {
+                      "field": "n",
+                      "desc": true
+                    }
+                  ]
                 }
               },
               {
@@ -10349,17 +10579,21 @@ configs:
                 "options": {
                   "indexByName": {
                     "fw_src": 0,
-                    "fw_in": 1,
-                    "n": 2,
-                    "ports": 3,
-                    "dernier": 4
+                    "fw_in": 3,
+                    "n": 4,
+                    "ports": 5,
+                    "dernier": 6,
+                    "unifi_name": 1,
+                    "unifi_mac": 2
                   },
                   "renameByName": {
                     "fw_src": "source",
                     "fw_in": "interface",
                     "n": "paquets",
                     "ports": "ports",
-                    "dernier": "dernier"
+                    "dernier": "dernier",
+                    "unifi_name": "nom UniFi",
+                    "unifi_mac": "MAC"
                   },
                   "excludeByName": {}
                 }
@@ -10473,8 +10707,8 @@ configs:
             "type": "table",
             "title": "Top destinations bloquées",
             "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
+              "type": "datasource",
+              "uid": "-- Mixed --"
             },
             "targets": [
               {
@@ -10486,6 +10720,18 @@ configs:
                 "editorMode": "code",
                 "expr": "{log_stream=\"firewall\"} host_name:in($$host_name) fw_action:in($$action) fw_ruleset:in($$ruleset) $$search | stats by (fw_dst, fw_out) count() as n, count_uniq(fw_src) as sources | sort by (n desc) | limit 20",
                 "queryType": "instant"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "topk by (ip) (1, max by (ip, mac, name) (tlast_over_time(unpoller_client_uptime_seconds{ip!=\"\"}[$$__range])) or max by (ip, mac, name) (tlast_over_time(unpoller_device_info{ip!=\"\"}[$$__range])))",
+                "format": "table",
+                "instant": true,
+                "range": false
               }
             ],
             "transformations": [
@@ -10496,6 +10742,10 @@ configs:
                   "format": "json",
                   "replace": true,
                   "keepTime": false
+                },
+                "filter": {
+                  "id": "byRefId",
+                  "options": "A"
                 }
               },
               {
@@ -10512,6 +10762,64 @@ configs:
                     }
                   ],
                   "fields": {}
+                },
+                "filter": {
+                  "id": "byRefId",
+                  "options": "A"
+                }
+              },
+              {
+                "id": "organize",
+                "filter": {
+                  "id": "byRefId",
+                  "options": "B"
+                },
+                "options": {
+                  "excludeByName": {
+                    "Time": true,
+                    "Value": true,
+                    "Value #B": true
+                  },
+                  "renameByName": {
+                    "ip": "fw_dst",
+                    "name": "unifi_name",
+                    "mac": "unifi_mac"
+                  },
+                  "indexByName": {}
+                }
+              },
+              {
+                "id": "joinByField",
+                "options": {
+                  "byField": "fw_dst",
+                  "mode": "outerTabular"
+                }
+              },
+              {
+                "id": "filterByValue",
+                "options": {
+                  "type": "exclude",
+                  "match": "any",
+                  "filters": [
+                    {
+                      "fieldName": "n",
+                      "config": {
+                        "id": "isNull",
+                        "options": {}
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "sortBy",
+                "options": {
+                  "sort": [
+                    {
+                      "field": "n",
+                      "desc": true
+                    }
+                  ]
                 }
               },
               {
@@ -10519,15 +10827,19 @@ configs:
                 "options": {
                   "indexByName": {
                     "fw_dst": 0,
-                    "fw_out": 1,
-                    "n": 2,
-                    "sources": 3
+                    "fw_out": 3,
+                    "n": 4,
+                    "sources": 5,
+                    "unifi_name": 1,
+                    "unifi_mac": 2
                   },
                   "renameByName": {
                     "fw_dst": "destination",
                     "fw_out": "interface de sortie",
                     "n": "paquets",
-                    "sources": "sources"
+                    "sources": "sources",
+                    "unifi_name": "nom UniFi",
+                    "unifi_mac": "MAC"
                   },
                   "excludeByName": {}
                 }
