@@ -295,3 +295,85 @@ All are scheduled SQL alerts, checked every 5 minutes, silenced for 60 minutes a
 ```
 
 After a change, push the function to OpenObserve (UI *Pipelines > Functions*, or the `updateFunction` API) and save the export here.
+
+## 5. Proxmox VE (`proxmox_*` metrics and `proxmox` stream)
+
+### Role
+The Proxmox VE host `chataigne` sends two things to OpenObserve. Its built-in metric server pushes node, guest and storage metrics every 10 seconds. The OpenTelemetry collector already running on the host ships its journald logs to the `journald` stream. A pipeline then moves the PVE daemon logs into a `proxmox` stream and adds `pve_*` fields to them.
+
+The OpenObserve objects are kept in [`proxmox/`](./proxmox/) as exports:
+
+| File | OpenObserve object |
+| :--- | :--- |
+| [`parse_proxmox.vrl`](./proxmox/parse_proxmox.vrl) | Function `parse_proxmox` (VRL). |
+| [`pipeline_journald_http_parse.json`](./proxmox/pipeline_journald_http_parse.json) | Realtime pipeline `journald_http_parse` on the `journald` stream (IDs and version removed). |
+| [`dashboard_proxmox.json`](./proxmox/dashboard_proxmox.json) | Dashboard *Infrastructure — Proxmox*. |
+| [`alerts_proxmox.json`](./proxmox/alerts_proxmox.json) | The nine alerts below, each with the name of its folder. |
+
+### Metric Server Setup
+In the Proxmox UI, *Datacenter > Metric Server > Add > OpenTelemetry*:
+
+- Server `logs.home.lan`, port `443`, protocol HTTPS, path `/api/default/v1/metrics`. Keep certificate verification on.
+- Header `Authorization: Basic <token>`, using the `default` ingestion token (OpenObserve *IAM*). The token is not stored in this repository.
+
+The metrics arrive as one stream per metric: `proxmox_node_*` (CPU, memory, ZFS ARC, load, network, uptime), `proxmox_vm_*` (labels `name` and `vmid`) and `proxmox_storage_*` (label `storage`).
+
+### Routing
+`journald_http_parse` runs `parse_http` on every `journald` record, then `parse_proxmox`. A record that comes out with a `pve_component` is written to `proxmox`. Every other record goes back to `journald`. PVE daemon logs from before the pipeline change stay in `journald`.
+
+`parse_proxmox` recognizes the syslog identifiers `pve*` (pvedaemon, pveproxy, pvescheduler, pveupdate, pvestatd, pve-ha-*, pve-firewall...), `pmxcfs`, `proxmox-*`, `vzdump`, `qmeventd` and `spiceproxy`. Anything else passes through unchanged and gets no `pve_*` field.
+
+### Fields
+As with `ak_*`, every field is written on every Proxmox record, empty or `0` when it does not apply, so that queries never hit `unknown field`.
+
+| Field | Content | Example |
+| :--- | :--- | :--- |
+| `pve_component` | Syslog identifier of the daemon. | `pvedaemon` |
+| `pve_level` | `critical`, `error`, `warning`, `info` or `debug`, from the journald priority. | `error` |
+| `pve_kind` | `task`, `backup`, `auth`, `notification`, `ha` or `log`. | `task` |
+| `pve_task_type` | Task type taken from the UPID. | `vzdump`, `acmerenew`, `qmstart` |
+| `pve_task_event` | `start` or `end`. | `end` |
+| `pve_task_status` | `OK`, or the error message of a finished task. | `OK` |
+| `pve_task_failed` | `true` when a task ended with anything other than `OK`. | `false` |
+| `pve_user` | PVE user. | `root@pam` |
+| `pve_vmid` | VMID from the UPID or the backup line. | `105` |
+| `pve_backup_event` | `job_start`, `vm_start`, `vm_ok`, `vm_failed`, `job_ok` or `job_failed`. | `vm_ok` |
+| `pve_duration_s` | Backup duration of one guest in seconds (`vm_ok` only). | `42` |
+| `pve_auth_result` | `success` or `failure`. | `failure` |
+| `pve_client_ip` | Client IP of a failed login. | `192.0.2.10` |
+
+### Dashboard
+*Infrastructure — Proxmox* (ID `7531599745953824768`) has four tabs:
+
+- *Hôte*: CPU, memory without the ZFS ARC, load, uptime, swap and bridge traffic.
+- *Invités*: CPU, memory, network, disk I/O, disk usage, uptime and pressure per guest.
+- *Stockage*: usage, free and used space per storage.
+- *Journal PVE*: failed tasks, backups, logins, logs by level, backup duration per guest, and the latest warnings and errors.
+
+Panels use OpenObserve's 192-column grid: `w: 192` is full width and `w: 96` is half. An earlier version used a 48-column layout and only filled a quarter of the screen.
+
+### Alerts
+All alerts are scheduled and send to `free_mobile_sms`. They fire when the query returns at least *threshold* rows over the period. The two PromQL alerts fire when a series reaches the value instead.
+
+| Alert | Folder | Fires when | Period | Threshold | Silence |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `proxmox_metrics_silent` | `infra` | `proxmox_node_uptime` has received nothing for 10 minutes | 24 h | 1 | 60 min |
+| `proxmox_storage_usage_high` | `infra` | PromQL `proxmox_storage_used / proxmox_storage_total` reaches 0.85 | 15 min | 1 | 12 h |
+| `proxmox_node_memory_high` | `infra` | PromQL `(memused - arcsize) / memtotal` reaches 0.9 | 15 min | 1 | 2 h |
+| `proxmox_node_cpu_high` | `infra` | average `proxmox_node_cpustat_cpu` above 0.9 | 15 min | 1 | 2 h |
+| `proxmox_guest_restarted` | `infra` | a running guest has an uptime under 10 minutes | 10 min | 1 | 30 min |
+| `proxmox_backup_failed` | `infra` | `pve_backup_event` is `job_failed` or `vm_failed` | 15 min | 1 | 60 min |
+| `proxmox_backup_missing` | `infra` | no `job_ok` in the last 26 hours, checked hourly | 26 h | 1 | 12 h |
+| `proxmox_task_failed` | `infra` | `pve_task_failed = true` | 15 min | 1 | 24 h |
+| `proxmox_auth_failed_burst` | `securite` | `pve_auth_result = 'failure'` | 15 min | 5 | 60 min |
+
+`proxmox_backup_missing` only fires once the `proxmox` stream holds more than 24 hours of logs. Without that guard it would fire on a new stream that has not seen a backup yet.
+
+`proxmox_task_failed` currently fires every day. The daily `acmerenew` task from `pveupdate` fails with `Failed to initialize HTTP daemon` when it renews the certificate against `ca.home.lan`. The 24-hour silence limits this to one SMS a day. Fix the ACME setup on the host and the alert goes quiet.
+
+### Testing the Function
+[`tests/test_parse_proxmox.sh`](./tests/test_parse_proxmox.sh) runs `parse_proxmox.vrl` in a Vector `remap` transform against the cases in [`tests/parse_proxmox_test.yaml`](./tests/parse_proxmox_test.yaml). The cases cover non-Proxmox records, task start and end, failures, guest tasks, backups, logins and plain daemon lines. It needs Docker and makes no network call:
+
+```bash
+./tests/test_parse_proxmox.sh
+```
