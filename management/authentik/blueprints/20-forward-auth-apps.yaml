@@ -326,43 +326,79 @@ entries:
     attrs:
       order: 0
 
-  # --- OpenObserve ---------------------------------------------------------
-  # Web UI behind forward auth. The ingestion endpoints (POST only) bypass it
-  # in Traefik and keep OpenObserve Basic auth. OpenObserve keeps its own
-  # login on top.
+  # --- VictoriaLogs and VictoriaMetrics ----------------------------------
+  # Web UIs behind forward auth. Neither database has a login of its own.
+  # In Traefik, the OTLP ingestion paths (POST only) bypass it with Basic
+  # auth, and GET /health bypasses it without auth (victoria stack).
   - model: authentik_core.group
-    id: openobserve-group
+    id: victorialogs-group
     identifiers:
-      name: openobserve-users
+      name: victorialogs-users
 
   - model: authentik_providers_proxy.proxyprovider
-    id: openobserve-provider
+    id: victorialogs-provider
     identifiers:
-      name: OpenObserve
+      name: VictoriaLogs
     attrs:
       mode: forward_single
-      external_host: !Format ["https://%s", !Env BLUEPRINT_OPENOBSERVE_HOST]
+      external_host: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_LOGS_HOST]
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       access_token_validity: hours=12
 
   - model: authentik_core.application
-    id: openobserve-app
+    id: victorialogs-app
     identifiers:
-      slug: openobserve
+      slug: victorialogs
     attrs:
-      name: OpenObserve
+      name: VictoriaLogs
       group: Administration
-      meta_icon: homelab/icons/openobserve.svg
-      meta_description: Logs and metrics
-      provider: !KeyOf openobserve-provider
-      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_OPENOBSERVE_HOST]
+      meta_icon: homelab/icons/victorialogs.svg
+      meta_description: Logs
+      provider: !KeyOf victorialogs-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_LOGS_HOST]
       policy_engine_mode: any
 
   - model: authentik_policies.policybinding
     identifiers:
-      target: !KeyOf openobserve-app
-      group: !KeyOf openobserve-group
+      target: !KeyOf victorialogs-app
+      group: !KeyOf victorialogs-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.group
+    id: victoriametrics-group
+    identifiers:
+      name: victoriametrics-users
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: victoriametrics-provider
+    identifiers:
+      name: VictoriaMetrics
+    attrs:
+      mode: forward_single
+      external_host: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_METRICS_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+
+  - model: authentik_core.application
+    id: victoriametrics-app
+    identifiers:
+      slug: victoriametrics
+    attrs:
+      name: VictoriaMetrics
+      group: Administration
+      meta_icon: homelab/icons/victoriametrics.svg
+      meta_description: Metrics
+      provider: !KeyOf victoriametrics-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_METRICS_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf victoriametrics-app
+      group: !KeyOf victoriametrics-group
     attrs:
       order: 0
 
@@ -630,7 +666,8 @@ entries:
         - !KeyOf uptime-kuma-provider
         - !KeyOf media-provider
         - !KeyOf portainer-provider
-        - !KeyOf openobserve-provider
+        - !KeyOf victorialogs-provider
+        - !KeyOf victoriametrics-provider
       config:
         authentik_host: !Format ["https://%s", !Env BLUEPRINT_AUTHENTIK_HOST]
         authentik_host_insecure: false

@@ -320,8 +320,10 @@ services:
       # Must equal TRAEFIK_FQDN of the ng stack (host of the *arr paths).
       BLUEPRINT_NG_HOST: ${NG_HOST_LOCAL:?Set NG_HOST_LOCAL in .env}
       BLUEPRINT_PORTAINER_HOST: ${PORTAINER_HOST_LOCAL:?Set PORTAINER_HOST_LOCAL in .env}
-      # Must equal OPENOBSERVE_DOMAIN of the openobserve stack.
-      BLUEPRINT_OPENOBSERVE_HOST: ${OPENOBSERVE_HOST_LOCAL:?Set OPENOBSERVE_HOST_LOCAL in .env}
+      # Must equal VICTORIA_LOGS_DOMAIN / VICTORIA_METRICS_DOMAIN of the
+      # victoria stack.
+      BLUEPRINT_VICTORIA_LOGS_HOST: ${VICTORIA_LOGS_HOST_LOCAL:?Set VICTORIA_LOGS_HOST_LOCAL in .env}
+      BLUEPRINT_VICTORIA_METRICS_HOST: ${VICTORIA_METRICS_HOST_LOCAL:?Set VICTORIA_METRICS_HOST_LOCAL in .env}
       # Must equal FORGEJO_DOMAIN of the forgejo stack (OIDC redirect URI).
       BLUEPRINT_FORGEJO_HOST: ${FORGEJO_HOST_LOCAL:?Set FORGEJO_HOST_LOCAL in .env}
       # Must equal GRAMPSWEB_DOMAIN of the grampsweb stack (OIDC redirect URI).

@@ -215,35 +215,39 @@ tests:
               assert!(!exists(.fw_rule))
               assert!(!exists(.fw_action))
 
-  - name: Firewall logs are routed to the firewall stream only
+  - name: Firewall logs go to the firewall stream
     inputs:
       - insert_at: parse_syslog
         type: log
         log_fields:
           source_ip: 192.0.2.1
+          source_type: socket
           message: '<13>Nov 11 20:06:41 gw kernel: [LAN_WAN-D-40001] DESCR="block-dns" IN=br0 OUT=eth6 SRC=192.0.2.20 DST=192.0.2.53 LEN=60 TOS=00 PREC=0x00 TTL=63 ID=1 PROTO=UDP SPT=41153 DPT=53 LEN=40'
     outputs:
-      - extract_from: split_streams.firewall
+      - extract_from: parse_syslog
         conditions:
           - type: vrl
             source: |
               assert_eq!(.fw_rule, "LAN_WAN-D-40001")
-    no_outputs_from:
-      - split_streams._unmatched
+              assert_eq!(.log_stream, "firewall")
+              assert!(!exists(.source_type))
 
-  - name: Other syslog events stay in the syslog stream
+  - name: Other syslog events go to the syslog stream, receive time kept
     inputs:
       - insert_at: parse_syslog
         type: log
         log_fields:
           source_ip: 192.0.2.1
+          timestamp: "2026-11-26T08:00:00Z"
           message: "<14>Nov 11 18:39:10 gw CEF:0|Ubiquiti|UniFi Network|11.0.99|203|Blocked by Firewall|4|UNIFIcategory=Security proto=UDP src=192.0.2.124 dpt=53"
     outputs:
-      - extract_from: split_streams._unmatched
+      - extract_from: parse_syslog
         conditions:
           - type: vrl
             source: |
               assert_eq!(.cef_signature_id, "203")
               assert!(!exists(.fw_rule))
-    no_outputs_from:
-      - split_streams.firewall
+              assert_eq!(.log_stream, "syslog")
+              # The device time is not the record time.
+              assert_eq!(.timestamp, "2026-11-26T08:00:00Z")
+              assert!(exists(.syslog_timestamp))

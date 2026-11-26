@@ -1,20 +1,5 @@
-# Unit tests for authentik/parse_authentik.vrl, run by test_parse_authentik.sh.
-# The source and sink only make the config valid: the tests inject records
-# straight into the remap transform.
-sources:
-  unused:
-    type: demo_logs
-    format: json
-transforms:
-  parse_authentik:
-    type: remap
-    inputs: [unused]
-    file: /cfg/parse_authentik.vrl
-sinks:
-  discard:
-    type: blackhole
-    inputs: [parse_authentik]
-
+# Unit tests for the parse_authentik transform of the vector_config pipeline.
+# Run with ./test_vector.sh (renders the compose file with .env.example first).
 tests:
   - name: postgresql LOG line tagged WARN by the collector is info
     inputs:
@@ -29,6 +14,7 @@ tests:
         conditions:
           - type: vrl
             source: |
+              assert_eq!(.log_stream, "authentik")
               assert_eq!(.ak_component, "postgresql")
               assert_eq!(.ak_level, "info")
               assert_eq!(.ak_kind, "log")

@@ -22,6 +22,17 @@
     serverName = "chataigne.home.lan"
     rootCAs = ["/etc/ssl/certs/home-lan-root-ca.crt"]
 
+  # Basic auth des routes d'ingestion de la stack victoria (logs OTLP vers
+  # vector, métriques OTLP vers victoriametrics) : les collecteurs ne suivent
+  # pas un login Authentik. Une entrée htpasswd bcrypt par collecteur, générée
+  # avec `htpasswd -nB collector`, et le même mot de passe dans myansible
+  # (vault). La valeur ci-dessous n'est pas un hash valide : elle refuse tout
+  # tant qu'elle n'est pas remplacée dans traefik_dynamic.toml.
+  # removeHeader : l'en-tête Authorization ne part pas vers les backends.
+  [http.middlewares.victoria-ingest-auth.basicAuth]
+    users = ["collector:REPLACE_WITH_HTPASSWD_BCRYPT_HASH"]
+    removeHeader = true
+
   [http.middlewares.compression.compress]
     excludedContentTypes = ["text/event-stream"]
 

@@ -1,21 +1,6 @@
-# Unit tests for proxmox/parse_proxmox.vrl, run by test_parse_proxmox.sh.
-# Samples come from the journald stream of the Proxmox host. The source and
-# sink only make the config valid: the tests inject records straight into the
-# remap transform.
-sources:
-  unused:
-    type: demo_logs
-    format: json
-transforms:
-  parse_proxmox:
-    type: remap
-    inputs: [unused]
-    file: /cfg/parse_proxmox.vrl
-sinks:
-  discard:
-    type: blackhole
-    inputs: [parse_proxmox]
-
+# Unit tests for the parse_proxmox transform of the vector_config pipeline.
+# Samples come from the journald stream of the Proxmox host.
+# Run with ./test_vector.sh (renders the compose file with .env.example first).
 tests:
   - name: non Proxmox record is left untouched
     inputs:
@@ -33,6 +18,7 @@ tests:
               assert!(!exists(.pve_component))
               assert!(!exists(.pve_kind))
               assert_eq!(.body_syslog_identifier, "sshd-session")
+              assert!(!exists(.log_stream))
 
   - name: record without identifier is left untouched
     inputs:
@@ -60,6 +46,7 @@ tests:
         conditions:
           - type: vrl
             source: |
+              assert_eq!(.log_stream, "proxmox")
               assert_eq!(.pve_component, "pvescheduler")
               assert_eq!(.pve_kind, "task")
               assert_eq!(.pve_task_event, "start")

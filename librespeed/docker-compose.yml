@@ -71,7 +71,7 @@ networks:
     external: true
 configs:
   # Inline rather than a ./config.json bind mount, which Portainer would resolve
-  # on its own disk (see openobserve/README.md). Needs Docker Compose 2.23+.
+  # on its own disk (see victoria/README.md). Needs Docker Compose 2.23+.
   design_config:
     content: |
       {

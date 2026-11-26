@@ -50,7 +50,6 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 | [**ng**](./ng/README.md) | Media servers and downloaders suite (Radarr, Sonarr, etc.) | Arr Stack |
 | [**ollama**](./ollama/README.md) | Hardware-accelerated local LLM models inference engine | Ollama |
 | [**omni-tools**](./omni-tools/README.md) | A collection of handy daily utilities | Omni-Tools |
-| [**openobserve**](./openobserve/README.md) | Observability platform for logs, metrics, and traces | OpenObserve |
 | [**openproject**](./openproject/README.md) | Collaborative project management and tracking tool | OpenProject |
 | [**overleaf**](./overleaf/README.md) | Collaborative browser-based LaTeX compiler and editor | Overleaf (ShareLaTeX) |
 | [**papermerge**](./papermerge/README.md) | Open source document management system for digital archives | Papermerge DMS |
@@ -63,6 +62,7 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 | [**trilium**](./trilium/README.md) | Hierarchical personal note-taking application focusing on large personal knowledge bases | Trilium Notes |
 | [**tududi**](./tududi/README.md) | Minimal personal task manager interface | Tududi |
 | [**vaultwarden**](./vaultwarden/README.md) | Alternative lightweight Bitwarden password vault server in Rust | Vaultwarden |
+| [**victoria**](./victoria/README.md) | Log and metric databases with a Vector ingestion pipeline (OTLP, syslog, Docker logs) | VictoriaLogs, VictoriaMetrics, Vector |
 | [**watchtower**](./watchtower/README.md) | Automated helper daemon to keep running docker container images up to date | Watchtower |
 
 ---
