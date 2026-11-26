@@ -484,7 +484,7 @@ configs:
             # lag() is the age of the last sample in the 24 h window: one
             # alert per node that sent metrics in the last 24 hours.
             - alert: proxmox_metrics_silent
-              expr: lag(proxmox_node_uptime[24h]) > 600
+              expr: lag(proxmox_node_uptime_seconds[24h]) > 600
               keep_firing_for: 60m
               labels:
                 severity: critical
@@ -492,7 +492,7 @@ configs:
                 summary: "Plus de metrique Proxmox de {{ $$labels.host_name }} depuis 10 minutes"
                 description: "Le serveur de metriques OpenTelemetry de Proxmox n'a plus rien envoye depuis 10 minutes"
             - alert: proxmox_storage_usage_high
-              expr: proxmox_storage_used / proxmox_storage_total >= 0.85
+              expr: proxmox_storage_used_bytes / proxmox_storage_total_bytes >= 0.85
               keep_firing_for: 720m
               labels:
                 severity: warning
@@ -502,8 +502,8 @@ configs:
             # ZFS ARC is cache: the kernel gives it back under pressure.
             - alert: proxmox_node_memory_high
               expr: >-
-                (proxmox_node_memory_memused - proxmox_node_memory_arcsize)
-                / proxmox_node_memory_memtotal >= 0.9
+                (proxmox_node_memory_memused_bytes - proxmox_node_memory_arcsize_bytes)
+                / proxmox_node_memory_memtotal_bytes >= 0.9
               keep_firing_for: 120m
               labels:
                 severity: warning
@@ -511,7 +511,7 @@ configs:
                 summary: "Memoire Proxmox hors ARC a {{ $$value | humanizePercentage }}"
                 description: "La memoire de l'hote Proxmox hors cache ZFS ARC depasse 90%"
             - alert: proxmox_node_cpu_high
-              expr: avg_over_time(proxmox_node_cpustat_cpu[15m]) > 0.9
+              expr: avg_over_time(proxmox_node_cpustat_cpu_percent[15m]) > 0.9
               keep_firing_for: 120m
               labels:
                 severity: warning
@@ -520,7 +520,7 @@ configs:
                 description: "Le CPU de l'hote Proxmox est en moyenne au-dessus de 90% pendant 15 minutes"
             # Stopped guests report an uptime of 0 and are ignored.
             - alert: proxmox_guest_restarted
-              expr: (proxmox_vm_uptime > 0) < 600
+              expr: (proxmox_vm_uptime_seconds > 0) < 600
               keep_firing_for: 30m
               labels:
                 severity: warning
@@ -2107,7 +2107,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_node_cpustat_cpu",
+                "expr": "proxmox_node_cpustat_cpu_percent",
+                "legendFormat": "{{host_name}}",
                 "range": true
               }
             ],
@@ -2158,7 +2159,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "(proxmox_node_memory_memused - proxmox_node_memory_arcsize) / proxmox_node_memory_memtotal",
+                "expr": "(proxmox_node_memory_memused_bytes - proxmox_node_memory_arcsize_bytes) / proxmox_node_memory_memtotal_bytes",
+                "legendFormat": "{{host_name}}",
                 "range": true
               }
             ],
@@ -2209,7 +2211,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_node_cpustat_avg5",
+                "expr": "proxmox_node_cpustat_avg5_ratio",
+                "legendFormat": "{{host_name}} 5m",
                 "range": true
               }
             ],
@@ -2260,7 +2263,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_node_uptime",
+                "expr": "proxmox_node_uptime_seconds",
+                "legendFormat": "{{host_name}}",
                 "range": true
               }
             ],
@@ -2310,7 +2314,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_node_cpustat_cpu",
+                "expr": "proxmox_node_cpustat_cpu_percent",
+                "legendFormat": "{{host_name}}",
                 "range": true
               }
             ],
@@ -2364,7 +2369,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_node_cpustat_avg1",
+                "expr": "proxmox_node_cpustat_avg1_ratio",
+                "legendFormat": "{{host_name}} 1m",
                 "range": true
               },
               {
@@ -2374,7 +2380,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_node_cpustat_avg5",
+                "expr": "proxmox_node_cpustat_avg5_ratio",
+                "legendFormat": "{{host_name}} 5m",
                 "range": true
               },
               {
@@ -2384,7 +2391,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_node_cpustat_avg15",
+                "expr": "proxmox_node_cpustat_avg15_ratio",
+                "legendFormat": "{{host_name}} 15m",
                 "range": true
               }
             ],
@@ -2438,7 +2446,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_node_memory_memused",
+                "expr": "proxmox_node_memory_memused_bytes",
+                "legendFormat": "{{host_name}} used",
                 "range": true
               },
               {
@@ -2448,7 +2457,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_node_memory_arcsize",
+                "expr": "proxmox_node_memory_arcsize_bytes",
+                "legendFormat": "{{host_name}} ARC",
                 "range": true
               },
               {
@@ -2458,7 +2468,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_node_memory_memtotal",
+                "expr": "proxmox_node_memory_memtotal_bytes",
+                "legendFormat": "{{host_name}} total",
                 "range": true
               }
             ],
@@ -2512,7 +2523,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_node_network_receive_total{device=~\"vmbr.*\"}[2m])",
+                "expr": "rate(proxmox_node_network_receive_bytes_total{device=~\"vmbr.*\"}[2m])",
+                "legendFormat": "{{device}} rx",
                 "range": true
               },
               {
@@ -2522,7 +2534,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_node_network_transmit_total{device=~\"vmbr.*\"}[2m])",
+                "expr": "rate(proxmox_node_network_transmit_bytes_total{device=~\"vmbr.*\"}[2m])",
+                "legendFormat": "{{device}} tx",
                 "range": true
               }
             ],
@@ -2576,7 +2589,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_node_memory_swapused",
+                "expr": "proxmox_node_memory_swapused_bytes",
+                "legendFormat": "{{host_name}}",
                 "range": true
               }
             ],
@@ -2643,7 +2657,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_cpu",
+                "expr": "proxmox_vm_cpu_percent",
+                "legendFormat": "{{name}}",
                 "range": true
               }
             ],
@@ -2697,7 +2712,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_mem",
+                "expr": "proxmox_vm_mem_bytes",
+                "legendFormat": "{{name}}",
                 "range": true
               }
             ],
@@ -2751,7 +2767,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_netin_total[2m])",
+                "expr": "rate(proxmox_vm_netin_bytes_total[2m])",
+                "legendFormat": "{{name}} in",
                 "range": true
               },
               {
@@ -2761,7 +2778,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_netout_total[2m])",
+                "expr": "rate(proxmox_vm_netout_bytes_total[2m])",
+                "legendFormat": "{{name}} out",
                 "range": true
               }
             ],
@@ -2815,7 +2833,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_diskread_total[2m])",
+                "expr": "rate(proxmox_vm_diskread_bytes_total[2m])",
+                "legendFormat": "{{name}} read",
                 "range": true
               },
               {
@@ -2825,7 +2844,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_diskwrite_total[2m])",
+                "expr": "rate(proxmox_vm_diskwrite_bytes_total[2m])",
+                "legendFormat": "{{name}} write",
                 "range": true
               }
             ],
@@ -2879,7 +2899,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_disk / proxmox_vm_maxdisk",
+                "expr": "proxmox_vm_disk_bytes / proxmox_vm_maxdisk_bytes",
+                "legendFormat": "{{name}}",
                 "range": true
               }
             ],
@@ -2933,7 +2954,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_uptime",
+                "expr": "proxmox_vm_uptime_seconds",
+                "legendFormat": "{{name}}",
                 "range": true
               }
             ],
@@ -2987,7 +3009,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_pressurecpusome",
+                "expr": "max by (vmid, name, type) ({__name__=~\"proxmox_vm_pressurecpusome_(percent|ratio)\"})",
+                "legendFormat": "{{name}} cpu",
                 "range": true
               },
               {
@@ -2997,7 +3020,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_pressureiosome",
+                "expr": "proxmox_vm_pressureiosome_ratio",
+                "legendFormat": "{{name}} io",
                 "range": true
               },
               {
@@ -3007,13 +3031,14 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_pressurememorysome",
+                "expr": "proxmox_vm_pressurememorysome_bytes",
+                "legendFormat": "{{name}} mem",
                 "range": true
               }
             ],
             "fieldConfig": {
               "defaults": {
-                "unit": "short",
+                "unit": "percent",
                 "custom": {
                   "drawStyle": "line",
                   "fillOpacity": 10,
@@ -3074,7 +3099,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_storage_used / proxmox_storage_total",
+                "expr": "proxmox_storage_used_bytes / proxmox_storage_total_bytes",
+                "legendFormat": "{{storage}}",
                 "range": true
               }
             ],
@@ -3128,7 +3154,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_storage_avail",
+                "expr": "proxmox_storage_avail_bytes",
+                "legendFormat": "{{storage}}",
                 "range": true
               }
             ],
@@ -3182,7 +3209,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_storage_used",
+                "expr": "proxmox_storage_used_bytes",
+                "legendFormat": "{{storage}}",
                 "range": true
               }
             ],

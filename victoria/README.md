@@ -285,7 +285,7 @@ The rules carry over the OpenObserve alerts:
 | `proxmox_task_failed` | logs | a failed task in 15 minutes, `acmerenew` excluded | 1440m |
 | `proxmox_auth_failed_burst` | logs | 5 or more failed Proxmox logins in 15 minutes | 60m |
 | `proxmox_backup_missing` | logs | no successful vzdump job for 26 hours, once the stream holds records older than 24 hours (checked every hour) | 720m |
-| `proxmox_metrics_silent` | metrics | no `proxmox_node_uptime` sample from a node for 10 minutes | 60m |
+| `proxmox_metrics_silent` | metrics | no `proxmox_node_uptime_seconds` sample from a node for 10 minutes | 60m |
 | `proxmox_storage_usage_high` | metrics | a storage at 85% or more | 720m |
 | `proxmox_node_memory_high` | metrics | node memory at 90% or more, ZFS ARC excluded | 120m |
 | `proxmox_node_cpu_high` | metrics | node CPU above 90% on a 15 minute average | 120m |
@@ -311,7 +311,17 @@ With `FREE_MOBILE_USER` or `FREE_MOBILE_PASS` empty, Vector logs `SMS not sent` 
 
 ### Post-Deployment Check of the Metric Names
 
-The metric rules and the Proxmox dashboard use the names that the Proxmox VE OpenTelemetry metric server is expected to send (`proxmox_node_uptime`, `proxmox_storage_used`, `proxmox_node_memory_arcsize`, `proxmox_vm_uptime`...). No test can confirm them before Proxmox sends real data. After the first deployment, open the VictoriaMetrics UI, run `{__name__=~"proxmox_.*"}` and compare the names and labels (`host_name`, `storage`, `name`, `vmid`) with the `vmalert_metrics_rules` config and the dashboard queries. A wrong name gives a rule that never fires and an empty panel, with no error.
+The metric rules and the Proxmox dashboard use the names that VictoriaMetrics holds for the Proxmox VE OpenTelemetry metric server (`proxmox_node_uptime_seconds`, `proxmox_storage_used_bytes`, `proxmox_node_memory_arcsize_bytes`, `proxmox_vm_uptime_seconds`...). They were checked against live data. The unit suffixes come from `-opentelemetry.usePrometheusNaming`: `bytes` adds `_bytes` (`_bytes_total` on a counter), `seconds` adds `_seconds`, `percent` adds `_percent` and `1` adds `_ratio`. CPU values are fractions from 0 to 1 despite the `_percent` suffix. Labels are `host_name` (node), `storage`, `type`, `vmid` and `name` (guest), and `device` (network).
+
+The Proxmox VE plugin picks the unit of `pressurecpusome` at random: the name matches two entries of its unit table (`cpu` in percent, `cpus` in ratio), and the plugin walks that table in Perl hash order, which changes with each process. The series lands as `proxmox_vm_pressurecpusome_percent` or `proxmox_vm_pressurecpusome_ratio`, with the same 0 to 100 values, so the dashboard reads `{__name__=~"proxmox_vm_pressurecpusome_(percent|ratio)"}`.
+
+A wrong name gives a rule that never fires and an empty panel, with no error. After a deployment or a Proxmox VE upgrade, run [`tests/check_metric_names.sh`](./tests/check_metric_names.sh) from `victoria/`:
+
+```bash
+ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- http://victoriametrics:8428/api/v1/label/__name__/values" | ./tests/check_metric_names.sh
+```
+
+It extracts every `proxmox_node_*`, `proxmox_vm_*` and `proxmox_storage_*` name from `docker-compose.yml` (alert names left out) and fails on each name that VictoriaMetrics does not hold, and on each `__name__=~` regex that matches no name. It needs Python 3.
 
 ## Grafana
 
@@ -374,7 +384,7 @@ Switch-over order:
 
 [`tests/test_alerting.sh`](./tests/test_alerting.sh) first checks the rules and the routing without starting anything: `vmalert -dryRun` on both rule sets, `amtool check-config`, one Alertmanager route per alert with a `repeat_interval` equal to the `keep_firing_for` of the rule, no route without a rule, and a receiver that targets the Vector webhook. It then starts VictoriaLogs, VictoriaMetrics, vmalert-logs, Alertmanager and Vector on a throwaway internal network, with 5 second rule intervals and the `free_mobile` sink pointed at VictoriaLogs. It sends a failed vzdump, a failed `acmerenew` task and a failed `qmstart` task, and expects one SMS body for `proxmox_backup_failed` and one for `proxmox_task_failed` that names `qmstart` only. It does not cover the Proxmox parsing (see `proxmox_test.yaml`), the metric rules on real data or the Free Mobile API. It needs Docker, Docker Compose 2.23 or later, `jq` and Python 3 with PyYAML, makes no Internet call, and waits at most `ALERTING_TIMEOUT` seconds (120 by default).
 
-[`tests/test_dashboards.sh`](./tests/test_dashboards.sh) starts VictoriaLogs, VictoriaMetrics and Grafana with sample data. It checks that the Grafana API answers `401` without the `X-authentik-username` header, refuses Basic auth and the `admin/admin` login form, and gives a new user the Viewer role and both dashboards. Every query of the two dashboards then goes through the Grafana datasource API, template variables replaced by a test value: each VictoriaLogs query must return data and each VictoriaMetrics query must answer `200`. It also checks the version of the loaded plugin. The plugin is read from `GRAFANA_PLUGIN_DIR` (a `plugins` directory that holds `victoriametrics-logs-datasource`, for example the one of a Grafana that ran this stack) and the test makes no Internet call. It does not cover the browser rendering, the Authentik outpost or the real Proxmox metric names.
+[`tests/test_dashboards.sh`](./tests/test_dashboards.sh) starts VictoriaLogs, VictoriaMetrics and Grafana with sample data. It checks that the Grafana API answers `401` without the `X-authentik-username` header, refuses Basic auth and the `admin/admin` login form, and gives a new user the Viewer role and both dashboards. Every query of the two dashboards then goes through the Grafana datasource API, template variables replaced by a test value: each VictoriaLogs query must return data and each VictoriaMetrics query must answer `200`. It also checks the version of the loaded plugin. The plugin is read from `GRAFANA_PLUGIN_DIR` (a `plugins` directory that holds `victoriametrics-logs-datasource`, for example the one of a Grafana that ran this stack) and the test makes no Internet call. It does not cover the browser rendering, the Authentik outpost or the real Proxmox metric names, which [`tests/check_metric_names.sh`](./tests/check_metric_names.sh) checks against a running VictoriaMetrics (see [Post-Deployment Check of the Metric Names](#post-deployment-check-of-the-metric-names)).
 
 ```bash
 ./tests/test_stack.sh
