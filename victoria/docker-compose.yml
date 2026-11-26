@@ -13795,7 +13795,7 @@ configs:
           {
             "type": "table",
             "title": "Historique des alertes",
-            "description": "Règles passées par un état actif, en attente ou en erreur sur la période : première et dernière fois vue dans cet état, et la dernière raison.",
+            "description": "Règles passées par un état actif, en attente ou en erreur sur la période, une ligne par épisode : actif depuis (début réel de l'alerte, même avant la période), première et dernière fois vue dans cet état, et la dernière raison. Les erreurs d'évaluation n'ont pas de début d'alerte et restent regroupées.",
             "datasource": {
               "type": "victoriametrics-logs-datasource",
               "uid": "victorialogs"
@@ -13808,7 +13808,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"alerts\"} ((alert_state:in(firing,pending) alert_severity:!=none) OR alert_health:=err) | stats by (alert_rule, alert_state, alert_health) min(_time) as debut, max(_time) as fin, row_max(_time, _msg) as dernier | unpack_json from dernier fields (_msg) | delete dernier | sort by (fin desc) | limit 200",
+                "expr": "{log_stream=\"alerts\"} ((alert_state:in(firing,pending) alert_severity:!=none) OR alert_health:=err) | stats by (alert_rule, alert_state, alert_health, alert_active_since) min(_time) as debut, max(_time) as fin, row_max(_time, _msg) as dernier | unpack_json from dernier fields (_msg) | delete dernier | sort by (fin desc) | limit 200",
                 "queryType": "instant"
               }
             ],
@@ -13831,7 +13831,8 @@ configs:
                     "alert_rule": 2,
                     "alert_state": 3,
                     "alert_health": 4,
-                    "_msg": 5
+                    "alert_active_since": 5,
+                    "_msg": 6
                   },
                   "renameByName": {
                     "fin": "dernière fois",
@@ -13839,6 +13840,7 @@ configs:
                     "alert_rule": "règle",
                     "alert_state": "état",
                     "alert_health": "évaluation",
+                    "alert_active_since": "actif depuis",
                     "_msg": "dernière raison"
                   },
                   "excludeByName": {}
