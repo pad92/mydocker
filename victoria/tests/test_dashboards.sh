@@ -7,15 +7,16 @@
 # - without the X-authentik-username header the API answers 401 (no anonymous
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
-# - with the header a new user is created with the Viewer role and sees both
-#   provisioned dashboards;
+# - with the header a new user is created with the Viewer role and sees the
+#   four provisioned dashboards (Authentik, Proxmox, UniFi, Synology);
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
-# - every VictoriaLogs target of both dashboards, sent as the viewer to
+# - every VictoriaLogs target of the dashboards, sent as the viewer to
 #   /api/ds/query, answers 200 without error and returns data from parsed
 #   Proxmox and Authentik records ingested before;
 # - every VictoriaMetrics target answers 200 without error (the expression
-#   parses; there is no Proxmox metric in the test, so no data is expected).
+#   parses; there is no Proxmox, UniFi or Synology metric in the test, so no
+#   data is expected), and every dashboard contributes at least one target.
 # Template variables are replaced by one value present in the test data, as
 # Grafana does before sending a query; the "All" choice is not tested.
 #
@@ -26,7 +27,7 @@
 # plugins/ directory of a Grafana that installed it once). The test refuses
 # another version.
 # Not covered: the rendering in a browser, the Authentik outpost in front of
-# Grafana, the real Proxmox metric names (see the README).
+# Grafana, the real Proxmox, UniFi and Synology metric names (see the README).
 #
 # Needs Docker, Docker Compose 2.23+, jq and python3; no published port, no
 # Internet. Usage: GRAFANA_PLUGIN_DIR=/path/to/plugins ./tests/test_dashboards.sh
@@ -85,7 +86,7 @@ while IFS=$'\t' read -r source target; do
     "$work_dir/compose.json" > "$work_dir/configs/$source"
   mounts+=(-v "$work_dir/configs/$source:$target:ro")
 done < <(jq -r '.services.grafana.configs[] | [.source, .target] | @tsv' "$work_dir/compose.json")
-[[ ${#mounts[@]} -eq 8 ]] || fail "expected 4 Grafana configs, got $((${#mounts[@]} / 2))"
+[[ ${#mounts[@]} -eq 12 ]] || fail "expected 6 Grafana configs, got $((${#mounts[@]} / 2))"
 
 pinned="$(jq -r '.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC' "$work_dir/compose.json")"
 [[ "$pinned" == "$plugin_id@"* ]] || fail "GF_PLUGINS_PREINSTALL_SYNC is '$pinned', expected $plugin_id@<version>"
@@ -142,7 +143,8 @@ with open(f"{work}/records.count", "w") as f:
 # the records above.
 values = {"application": "app.home.lan", "composant": "worker"}
 index = []
-for name in ("grafana_dashboard_authentik", "grafana_dashboard_proxmox"):
+for name in ("grafana_dashboard_authentik", "grafana_dashboard_proxmox",
+             "grafana_dashboard_unifi", "grafana_dashboard_synology"):
     dash = json.load(open(f"{work}/configs/{name}"))
     for panel in dash["panels"]:
         for target in panel.get("targets", []):
@@ -256,10 +258,11 @@ orgs = load("orgs.json")
 if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
     errors.append(f"new user roles {orgs}, expected one org with Viewer")
 
+expected_uids = ["victoria-authentik", "victoria-proxmox", "victoria-synology", "victoria-unifi"]
 search = load("search.json")
 if search is not None:
     uids = sorted(d.get("uid") for d in search)
-    if uids != ["victoria-authentik", "victoria-proxmox"]:
+    if uids != expected_uids:
         errors.append(f"dashboards visible to the viewer: {uids}")
 
 plugin = load("plugin.json")
@@ -285,6 +288,9 @@ for q in index:
         if not any(rows):
             errors.append(f"{label}: no data returned")
 
+seen = sorted({q["dashboard"] for q in index})
+if seen != expected_uids:
+    errors.append(f"dashboards with targets: {seen}")
 if counts.get("victorialogs", 0) == 0:
     errors.append("no VictoriaLogs target found in the dashboards")
 

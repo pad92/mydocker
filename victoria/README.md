@@ -7,7 +7,7 @@ This stack replaces OpenObserve. It deploys the following services:
 - `vector`: the only writer of `victorialogs`. It receives OTLP logs from the collectors and UDP syslog from network devices, parses them and sends them on.
 - `vmalert-logs` and `vmalert-metrics`: alert rules on the logs (LogsQL) and on the metrics (MetricsQL).
 - `alertmanager`: groups the alerts and sends them as SMS through Vector and the Free Mobile API.
-- `grafana` (container `victoria-grafana`): Authentik and Proxmox dashboards, UI on `grafana.<domain>`.
+- `grafana` (container `victoria-grafana`): Authentik, Proxmox, UniFi and Synology dashboards, UI on `grafana.<domain>`.
 - `unpoller`: polls the UniFi gateway and exposes its metrics to VictoriaMetrics, which scrapes them.
 - `snmp-exporter`: polls the Synology NAS over SNMPv3 when VictoriaMetrics scrapes it.
 - `victoria-init`: one-shot container that fixes the ownership of the data directories.
@@ -154,6 +154,8 @@ ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- 'http://victoriametri
 
 `up` alone proves nothing: unpoller answers its scrape with `up` at `1` even when it cannot log in to UniFi, and then exports none of these series. The `unpoller_no_unifi_data` alert covers that case. It fires when no `unpoller_device_info` series has reached VictoriaMetrics for 10 minutes, whether the URL, the account or the controller is wrong, or unpoller is down.
 
+The *UniFi* dashboard (uid `victoria-unifi`) shows the scrape state, the device and client counts, the disconnected devices, the pending firmware updates and the Internet latency, then CPU, memory, temperature and clients per device, and the WAN, per-device and top 10 client traffic. Its queries use the names of the unpoller Prometheus exporter source (`unpoller_device_info`, `unpoller_device_cpu_utilization_ratio`, `unpoller_device_wan_receive_bytes_total`, `unpoller_client_receive_bytes_total`, `unpoller_site_disconnected`, `unpoller_site_latency_seconds` and the like). They are not yet checked against real data: when the dashboard was written, unpoller exported only its own `unpoller_prometheus_*` metrics. Once the count above is not zero, check that each panel shows data and fix the names that differ.
+
 ### Synology Metrics (`snmp-exporter`)
 The Synology NAS answers SNMP only, so VictoriaMetrics scrapes it through `snmp-exporter`. The `synology` job of `victoriametrics_scrape` asks `snmp-exporter:9116/snmp` every 60 seconds, with a 30 second timeout, to poll `SYNOLOGY_SNMP_TARGET` with the `system`, `if_mib` and `synology` modules of the default `snmp.yml` and the `synology_v3` auth. The `instance` label is the NAS name.
 
@@ -175,6 +177,8 @@ ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- 'http://victoriametri
 ```
 
 `up` must be `1`. The metric names are the MIB names, without a prefix: `systemStatus` (`1` means normal), `temperature`, `diskStatus`, `diskTemperature`, `raidStatus`, `raidFreeSize`, plus the `ifHCInOctets` family of `if_mib` and `sysUpTime` of `system`. Filter them on `job="synology"`.
+
+The *Synology NAS* dashboard (uid `victoria-synology`) shows the scrape state, the count of failed components (system, power, fans, thermal), failed disks (`diskStatus` or `diskHealthStatus` not `1`) and degraded pools or volumes, the system temperature and the uptime (`sysUpTime` is in hundredths of a second). It then plots CPU and memory use, volume occupancy, disk temperatures, the traffic of the physical interfaces (`eth*` and `bond*`; the loopback and Docker interfaces are left out), the disk I/O per device (`storageIONReadX`, `storageIONWrittenX`) and the UPS battery charge and load. The occupancy panel keeps the volumes only: a storage pool is fully allocated to its volume, so its own free space is always close to zero. These metric names and labels were checked against the NAS in production.
 
 ## 3. Vector (`vector`)
 
@@ -395,7 +399,7 @@ It extracts every `proxmox_node_*`, `proxmox_vm_*` and `proxmox_storage_*` name 
 
 Grafana installs the `victoriametrics-logs-datasource` plugin at the pinned version before it starts (`GF_PLUGINS_PREINSTALL_SYNC`), which needs Internet access from the host at the first start. The plugin then stays in `GRAFANA_DATA_DIR`.
 
-The datasources (`victorialogs`, `victoriametrics`) and the two dashboards are provisioned from the compose file: *Authentik* (uid `victoria-authentik`) and *Proxmox VE* (uid `victoria-proxmox`). The dashboards are read-only in the UI: an edit cannot be saved, and a change goes into the `grafana_dashboard_*` configs. The OpenObserve Authentik dashboard enriched source IPs with their reverse DNS name (ptr). VictoriaLogs has no such lookup, so the panels show the IPs only.
+The datasources (`victorialogs`, `victoriametrics`) and the four dashboards are provisioned from the compose file: *Authentik* (uid `victoria-authentik`), *Proxmox VE* (uid `victoria-proxmox`), *UniFi* (uid `victoria-unifi`, see [UniFi Metrics](#unifi-metrics-unpoller)) and *Synology NAS* (uid `victoria-synology`, see [Synology Metrics](#synology-metrics-snmp-exporter)). The dashboards are read-only in the UI: an edit cannot be saved, and a change goes into the `grafana_dashboard_*` configs. The OpenObserve Authentik dashboard enriched source IPs with their reverse DNS name (ptr). VictoriaLogs has no such lookup, so the panels show the IPs only.
 
 ## 4. Access Control
 
@@ -452,7 +456,7 @@ Switch-over order:
 
 [`tests/test_synology.sh`](./tests/test_synology.sh) checks the SNMP path in two parts, on a throwaway internal network. It first runs the real snmp-exporter image with its rendered command and auth file and test values in its environment: `/config` must show the test user name and no test password, a probe with a wrong module or auth name must get `400`, and a probe with the modules and auth of the `synology` job must get `500` (names known, NAS unreachable). It then runs VictoriaMetrics with its rendered scrape config next to a busybox server that answers as `snmp-exporter:9116` with a fixed metric, and expects `up{job="synology"}` at `1` with the NAS as `instance`, the fixed value stored, and a request to `/snmp` with the NAS as target, the three modules and the `synology_v3` auth. It lowers the interval and timeout to 5 seconds in its copy only. It does not cover SNMPv3 against the NAS; use the post-deployment check of [Synology Metrics](#synology-metrics-snmp-exporter). It needs Docker, Docker Compose 2.23 or later and `jq`, makes no Internet call, and waits at most `SYNOLOGY_TIMEOUT` seconds (60 by default).
 
-[`tests/test_dashboards.sh`](./tests/test_dashboards.sh) starts VictoriaLogs, VictoriaMetrics and Grafana with sample data. It checks that the Grafana API answers `401` without the `X-authentik-username` header, refuses Basic auth and the `admin/admin` login form, and gives a new user the Viewer role and both dashboards. Every query of the two dashboards then goes through the Grafana datasource API, template variables replaced by a test value: each VictoriaLogs query must return data and each VictoriaMetrics query must answer `200`. It also checks the version of the loaded plugin. The plugin is read from `GRAFANA_PLUGIN_DIR` (a `plugins` directory that holds `victoriametrics-logs-datasource`, for example the one of a Grafana that ran this stack) and the test makes no Internet call. It does not cover the browser rendering, the Authentik outpost or the real Proxmox metric names, which [`tests/check_metric_names.sh`](./tests/check_metric_names.sh) checks against a running VictoriaMetrics (see [Post-Deployment Check of the Metric Names](#post-deployment-check-of-the-metric-names)).
+[`tests/test_dashboards.sh`](./tests/test_dashboards.sh) starts VictoriaLogs, VictoriaMetrics and Grafana with sample data. It checks that the Grafana API answers `401` without the `X-authentik-username` header, refuses Basic auth and the `admin/admin` login form, and gives a new user the Viewer role and the four dashboards. Every query of the four dashboards then goes through the Grafana datasource API, template variables replaced by a test value: each VictoriaLogs query must return data, each VictoriaMetrics query must answer `200`, and each dashboard must have at least one query. It also checks the version of the loaded plugin. The plugin is read from `GRAFANA_PLUGIN_DIR` (a `plugins` directory that holds `victoriametrics-logs-datasource`, for example the one of a Grafana that ran this stack) and the test makes no Internet call. It does not cover the browser rendering, the Authentik outpost, the UniFi and Synology data, or the real Proxmox metric names, which [`tests/check_metric_names.sh`](./tests/check_metric_names.sh) checks against a running VictoriaMetrics (see [Post-Deployment Check of the Metric Names](#post-deployment-check-of-the-metric-names)).
 
 ```bash
 ./tests/test_stack.sh
