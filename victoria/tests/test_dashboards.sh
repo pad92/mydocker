@@ -38,14 +38,14 @@
 # - every VictoriaMetrics target answers 200 without error; the targets of
 #   the hosts dashboard also return data from host metrics imported before
 #   (one silent host, one degraded ZFS pool, one GPU with its VRAM per
-#   container), except "silent hosts" for a host
-#   that still reports, which must return none; the services dashboard counts
-#   exactly one silent host. The GPU stats show the exact values imported, and
-#   the VRAM per container names a process with no container "hors conteneur
-#   ou inconnu". The container:nvidia_smi_compute_app_used_memory_bytes record
-#   is imported as vmalert writes it, like the record below. vmalert does not run here: the series of the
-#   host_name:metrics_age_seconds:max record is imported as vmalert would
-#   write it, and the record itself is unit tested in
+#   container), except "silent hosts" for a host that still reports, which
+#   must return none; the services dashboard counts exactly one silent host.
+#   The GPU stats show the exact values imported, and the VRAM per container
+#   names a process with no container "hors conteneur ou inconnu".
+#   vmalert does not run here: the series of the
+#   container:nvidia_smi_compute_app_used_memory_bytes and
+#   host_name:metrics_age_seconds:max records are imported as vmalert would
+#   write them, and the records themselves are unit tested in
 #   metrics_rules_unittest.yaml (test_alerting.sh). The host S.M.A.R.T. targets
 #   of the disks dashboard return data from smartctl_exporter series imported
 #   before. There is no Proxmox, UniFi or Synology metric in the test, so
