@@ -8,14 +8,16 @@
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
 # - with the header a new user is created with the Viewer role and sees the
-#   ten provisioned dashboards (Authentik, Proxmox, UniFi, Synology, hosts,
-#   logs, Docker, DNS, firewall, HTTP);
+#   fifteen provisioned dashboards (services, Authentik, Proxmox, UniFi,
+#   Synology, hosts, logs, Docker, DNS, firewall, HTTP, alerts, disks, stack,
+#   Freebox);
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
 # - every VictoriaLogs target of the dashboards, sent as the viewer to
 #   /api/ds/query, answers 200 without error and returns data from records
 #   ingested before (Proxmox, Authentik, Docker, AdGuard Home, UniFi firewall
-#   and CEF, Traefik access logs, with the fields Vector produces);
+#   and CEF, Traefik access logs, alert rule states, with the fields Vector
+#   produces);
 # - the HTTP dashboard returns the exact request count, 4xx and 5xx rates and
 #   p95 latency of the Traefik sample, which holds WebSocket sessions
 #   (status 0) and SSE requests (/user/events) lasting minutes: they count as
@@ -24,8 +26,10 @@
 # - every VictoriaMetrics target answers 200 without error; the targets of
 #   the hosts dashboard also return data from host metrics imported before
 #   (one silent host, one degraded ZFS pool), except "silent hosts" for a host
-#   that still reports, which must return none. There is no Proxmox, UniFi or
-#   Synology metric in the test, so their targets only have to parse;
+#   that still reports, which must return none. The host S.M.A.R.T. targets
+#   of the disks dashboard return data from smartctl_exporter series imported
+#   before. There is no Proxmox, UniFi or Synology metric in the test, so
+#   their targets only have to parse;
 # - the IP tables of the DNS and firewall dashboards (two per dashboard) and
 #   the client table of the HTTP dashboard join
 #   their IP with UnPoller client and device series imported before: each
@@ -108,7 +112,7 @@ while IFS=$'\t' read -r source target; do
     "$work_dir/compose.json" > "$work_dir/configs/$source"
   mounts+=(-v "$work_dir/configs/$source:$target:ro")
 done < <(jq -r '.services.grafana.configs[] | [.source, .target] | @tsv' "$work_dir/compose.json")
-[[ ${#mounts[@]} -eq 24 ]] || fail "expected 12 Grafana configs, got $((${#mounts[@]} / 2))"
+[[ ${#mounts[@]} -eq 36 ]] || fail "expected 18 Grafana configs, got $((${#mounts[@]} / 2))"
 
 pinned="$(jq -r '.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC' "$work_dir/compose.json")"
 [[ "$pinned" == "$plugin_id@"* ]] || fail "GF_PLUGINS_PREINSTALL_SYNC is '$pinned', expected $plugin_id@<version>"
@@ -155,13 +159,13 @@ authentik = [
 ]
 # demo-old logged 3 h ago only: it feeds "Conteneurs sans log depuis 1 h".
 docker = [
-    {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "app",
+    {"host_name": "test.example", "compose_project": "demo", "compose_service": "app",
      "container_name": "demo-app", "log_iostream": "stderr", "severity": "Error", "level": "error",
      "_msg": "request 42 failed"},
-    {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "old",
+    {"host_name": "test.example", "compose_project": "demo", "compose_service": "old",
      "container_name": "demo-old", "log_iostream": "stderr", "severity": "error", "level": "error",
      "_msg": "worker 7 crashed", "_age": 180},
-    {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "old",
+    {"host_name": "test.example", "compose_project": "demo", "compose_service": "old",
      "container_name": "demo-old", "log_iostream": "stdout", "severity": "info", "level": "info",
      "_msg": "worker started", "_age": 181},
 ]
@@ -225,7 +229,7 @@ cef = [
 # the same path three times. A line without a host (a bare TLS probe) must be
 # excluded; 172.18.0.1 is the Docker bridge, unknown to UniFi.
 def http(host, service, method, client, path, status, duration, origin, size,
-         proto="HTTP/2.0", tls="1.3"):
+         proto="HTTP/2.0", tls="1.3", router=None):
     r = {"host_name": "proxy.home.lan", "app_clienthost": client,
          "app_requestmethod": method, "app_requestpath": path,
          "app_downstreamstatus": status, "app_duration": duration,
@@ -233,6 +237,8 @@ def http(host, service, method, client, path, status, duration, origin, size,
          "app_servicename": service, "app_requestprotocol": proto, "app_tlsversion": tls}
     if host:
         r["app_requesthost"] = host
+    if router:
+        r["app_routername"] = router
     return r
 traefik = [
     http("cloud.home.lan", "nextcloud@docker", "GET", "192.168.0.57", "/status.php", "200.0",
@@ -257,13 +263,45 @@ traefik += [http("grafana.home.lan", "grafana@docker", "GET", "192.168.0.10", "/
 traefik += [http("git.home.lan", "forgejo@docker", "GET", "192.168.0.10", "/user/events",
                  status, 600000000000, 599000000000, 4096)
             for status in ("200.0", 200, "200.0")]
-records = [{"log_stream": "proxmox", "host_name": "pve.home.lan", "_msg": "pve", **r} for r in proxmox]
+# Ingestion routers: the collectors drop their own successful requests from
+# the access log (myansible otel_collector), so only the 502 of a Vector
+# restart remain. Counted, they would show the ingestion as 100 % 5xx: every
+# panel must leave them out, so the expected values below do not move.
+traefik += [http("logs.example", "vector@docker", "POST", "198.51.100.57", "/v1/logs", "502.0",
+                 2000000, 200000, 11, router="vector_ingest@docker")
+            for _ in range(3)]
+traefik += [http("metrics.example", "victoriametrics@docker", "POST", "198.51.100.57",
+                 "/opentelemetry/v1/metrics", 502, 2000000, 200000, 11,
+                 router="victoriametrics_ingest@docker")]
+records = [{"log_stream": "proxmox", "host_name": "pve.example", "_msg": "pve", **r} for r in proxmox]
 records += [{"log_stream": "authentik", "host_name": "sso.home.lan", "_msg": "ak", **r} for r in authentik]
 records += [{"log_stream": "docker", **r} for r in docker]
 records += [{"log_stream": "dns_queries", "_msg": "dns", **r} for r in dns_queries]
 records += [{"log_stream": "firewall", "severity": "notice", "level": "info", **r} for r in firewall]
 records += [{"log_stream": "syslog", "facility": "user", **r} for r in cef]
 records += [{"log_stream": "traefik", "_msg": "http", **r} for r in traefik]
+# Syslog of the UniFi devices, for the Réseau dashboard: one warning from the
+# switch, routine lines from an AP. Another host must stay out of both panels.
+records += [{"log_stream": "syslog", "facility": "daemon", "host_name": h, "level": lvl, "_msg": msg}
+            for h, lvl, msg in (("sw24poe", "warning", "port 21 link down"),
+                                ("wifi-rdc.example", "info", "station associated"),
+                                ("wifi-rdc.example", "info", "station left"),
+                                ("other.example", "error", "not a network device"))]
+# The rule states Vector polls from vmalert every minute (see alert_rules):
+# the Alertes dashboard reads the last 3 minutes, so they are fresh. One rule
+# per state, and one whose evaluation fails.
+def rule(name, source, state, health, severity, msg, **extra):
+    return {"log_stream": "alerts", "_age": 0, "_msg": msg, "alert_rule": name, "alert_group": source,
+            "alert_source": source, "alert_state": state, "alert_health": health,
+            "alert_severity": severity, "alert_count": int(state != "inactive"), **extra}
+records += [rule("proxmox_backup_failed", "logs", "firing", "ok", "critical",
+                 "Sauvegarde vzdump Proxmox en echec", alert_active_since=at(10)),
+            rule("traefik_5xx_burst", "logs", "pending", "ok", "warning", "15 erreurs 5xx",
+                 alert_active_since=at(1)),
+            rule("oom_kill", "logs", "inactive", "ok", "critical", "Condition non remplie : OOM"),
+            rule("vmalert_rule_errors", "metrics", "inactive", "err", "warning",
+                 "Erreur d'evaluation : cannot parse query"),
+            rule("watchdog", "metrics", "firing", "ok", "none", "Chaine d'alerte vivante")]
 with open(f"{work}/records.jsonl", "w") as f:
     for i, r in enumerate(records):
         age = r.pop("_age", i % 5 + 1)
@@ -272,7 +310,7 @@ with open(f"{work}/records.count", "w") as f:
     f.write(str(len(records)))
 
 # Host metrics as the OpenTelemetry collector exports them, one sample a minute
-# over 20 min for test.home.lan; old.home.lan stops 30 min ago (silent host);
+# over 20 min for test.example; old.example stops 30 min ago (silent host);
 # one degraded ZFS pool.
 lines = []
 def series(name, labels, values):
@@ -282,24 +320,59 @@ def series(name, labels, values):
         lines.append(f"{name}{{{lab}}} {value} {ts}")
 recent = range(20, -1, -1)
 for state, step in (("idle", 50), ("user", 10)):
-    series("system_cpu_time_seconds_total", {"host_name": "test.home.lan", "state": state},
+    series("system_cpu_time_seconds_total", {"host_name": "test.example", "state": state},
            [(m, (20 - m) * step) for m in recent])
-series("system_cpu_time_seconds_total", {"host_name": "old.home.lan", "state": "idle"},
+series("system_cpu_time_seconds_total", {"host_name": "old.example", "state": "idle"},
        [(m, (60 - m) * 50) for m in range(60, 29, -1)])
-series("system_memory_utilization_ratio", {"host_name": "test.home.lan", "state": "used"},
+series("system_memory_utilization_ratio", {"host_name": "test.example", "state": "used"},
        [(m, 0.4) for m in recent])
-series("system_cpu_load_average_5m", {"host_name": "test.home.lan"}, [(m, 0.7) for m in recent])
+series("system_cpu_load_average_5m", {"host_name": "test.example"}, [(m, 0.7) for m in recent])
 series("system_filesystem_utilization_ratio",
-       {"host_name": "test.home.lan", "mountpoint": "/", "type": "ext4"}, [(m, 0.55) for m in recent])
+       {"host_name": "test.example", "mountpoint": "/", "type": "ext4"}, [(m, 0.55) for m in recent])
 for direction in ("receive", "transmit"):
     series("system_network_io_bytes_total",
-           {"host_name": "test.home.lan", "device": "eth0", "direction": direction},
+           {"host_name": "test.example", "device": "eth0", "direction": direction},
            [(m, (20 - m) * 6000) for m in recent])
     series("system_disk_io_bytes_total",
-           {"host_name": "test.home.lan", "device": "sda", "direction": direction},
+           {"host_name": "test.example", "device": "sda", "direction": direction},
            [(m, (20 - m) * 9000) for m in recent])
-series("zfs_pool_health", {"host_name": "pve.home.lan", "pool": "rpool"}, [(m, 1) for m in recent])
-series("zfs_pool_capacity_ratio", {"host_name": "pve.home.lan", "pool": "rpool"}, [(m, 0.6) for m in recent])
+# Inodes, interface errors, paging and processes of the hosts "Système" row.
+for state, value in (("used", 2e5), ("free", 8e5)):
+    series("system_filesystem_inodes_usage",
+           {"host_name": "test.example", "mountpoint": "/", "type": "ext4", "state": state},
+           [(m, value) for m in recent])
+for name in ("system_network_errors_total", "system_network_dropped_total"):
+    series(name, {"host_name": "test.example", "device": "eth0", "direction": "receive"},
+           [(m, (20 - m) * 3) for m in recent])
+series("system_paging_faults_total", {"host_name": "test.example", "type": "major"},
+       [(m, (20 - m) * 30) for m in recent])
+series("system_paging_operations_total",
+       {"host_name": "test.example", "type": "major", "direction": "page_in"},
+       [(m, (20 - m) * 12) for m in recent])
+for status, value in (("running", 2), ("blocked", 1)):
+    series("system_processes_count", {"host_name": "test.example", "status": status},
+           [(m, value) for m in recent])
+series("zfs_pool_health", {"host_name": "pve.example", "pool": "rpool"}, [(m, 1) for m in recent])
+series("zfs_pool_capacity_ratio", {"host_name": "pve.example", "pool": "rpool"}, [(m, 0.6) for m in recent])
+# smartctl_exporter on smart-test.example: a hard disk with bad sectors, CRC and
+# logged errors, and an SSD that has used 8 % of its life.
+smart = {"host_name": "smart-test.example", "service_name": "smart"}
+for device, model, protocol in (("sda", "WDC WD40EFRX", "ATA"), ("sdb", "Samsung SSD 870", "ATA")):
+    disk = {**smart, "device": device}
+    series("smartctl_device", {**disk, "model_name": model, "protocol": protocol}, [(m, 1) for m in recent])
+    series("smartctl_device_capacity_bytes", disk, [(m, 4e12) for m in recent])
+    series("smartctl_device_smart_status", disk, [(m, 1) for m in recent])
+    series("smartctl_device_temperature", {**disk, "temperature_type": "current"}, [(m, 38) for m in recent])
+    series("smartctl_device_power_on_seconds_total", disk, [(m, 9e7 + m) for m in recent])
+    series("smartctl_device_power_cycle_count_total", disk, [(m, 120) for m in recent])
+for name, kind, value in (("Reallocated_Sector_Ct", "raw", 8), ("Current_Pending_Sector", "raw", 2),
+                          ("Offline_Uncorrectable", "raw", 1), ("UDMA_CRC_Error_Count", "raw", 3)):
+    series("smartctl_device_attribute", {**smart, "device": "sda", "attribute_name": name,
+                                         "attribute_value_type": kind}, [(m, value) for m in recent])
+series("smartctl_device_error_log_count", {**smart, "device": "sda", "error_log_type": "summary"},
+       [(m, 4) for m in recent])
+series("smartctl_device_attribute", {**smart, "device": "sdb", "attribute_name": "Wear_Leveling_Count",
+                                     "attribute_value_type": "value"}, [(m, 92) for m in recent])
 # UnPoller clients and devices, which name the IPs of the DNS and firewall
 # tables. DHCP gave 192.168.0.10 to "old-pc" until 3 h ago, then to "laptop":
 # the mapping keeps one row per IP, the MAC seen last, although old-pc has the
@@ -313,6 +386,33 @@ unifi = [("unpoller_client_uptime_seconds", "192.168.0.10", "aa:bb:cc:00:00:10",
 for name, ip, mac, label, value, minutes in unifi:
     series(name, {"ip": ip, "mac": mac, "name": label, "site_name": "default"},
            [(m, value) for m in minutes])
+# Réseau dashboard: the Freebox is up, its Synology exporter answers 0, unpoller
+# sees four of the five UniFi devices (wifi-etage-nuit is down) and chataigne
+# sends host metrics. Exporter series carry their job label, like the scrapes.
+fbx = {"job": "freebox"}
+series("up", fbx, [(m, 1) for m in recent])
+series("up", {"job": "synology"}, [(m, 0) for m in recent])
+series("fbx_exporter_connection_state", {**fbx, "state": "up"}, [(m, 1) for m in recent])
+series("fbx_exporter_connection_ftth_link", fbx, [(m, 1) for m in recent])
+series("fbx_exporter_connection_rate_down", fbx, [(m, 125000) for m in recent])
+series("fbx_exporter_connection_rate_up", fbx, [(m, 25000) for m in recent])
+up = {"job": "unpoller", "site_name": "default"}
+for device, kind in (("gw", "udm"), ("sw24poe", "usw"), ("wifi-rdc", "uap"), ("wifi-etage-vie", "uap")):
+    dev = {**up, "name": device}
+    series("unpoller_device_info", {**dev, "type": kind}, [(m, 1) for m in recent])
+    series("unpoller_device_uptime_seconds", dev, [(m, 86400 + 60 * (20 - m)) for m in recent])
+    series("unpoller_device_cpu_utilization_ratio", dev, [(m, 0.1) for m in recent])
+    series("unpoller_device_memory_utilization_ratio", dev, [(m, 0.5) for m in recent])
+    series("unpoller_device_temperature_celsius", dev, [(m, 45) for m in recent])
+    series("unpoller_device_stations", dev, [(m, 3) for m in recent])
+    series("unpoller_device_upgradable", dev, [(m, int(device == "sw24poe")) for m in recent])
+series("unpoller_device_wan_status", {**up, "name": "gw", "status": "online"}, [(m, 1) for m in recent])
+for direction in ("receive", "transmit"):
+    series(f"unpoller_device_wan_{direction}_bytes_total", {**up, "name": "gw"},
+           [(m, (20 - m) * 60000) for m in recent])
+series("unpoller_site_latency_seconds", {**up, "subsystem": "www"}, [(m, 0.012) for m in recent])
+series("system_memory_utilization_ratio", {"host_name": "chataigne.example", "state": "used"},
+       [(m, 0.7) for m in recent])
 with open(f"{work}/metrics.txt", "w") as f:
     f.write("\n".join(lines) + "\n")
 
@@ -327,11 +427,11 @@ with open(f"{work}/metrics.txt", "w") as f:
 values = {
     "victoria-authentik": {"application": "app.home.lan", "composant": "worker"},
     "victoria-dns": {"host_name": "ns01.home.lan", "client": "192.168.0.10"},
-    "victoria-docker": {"host_name": "test.home.lan", "compose_project": "demo",
+    "victoria-docker": {"host_name": "test.example", "compose_project": "demo",
                         "container_name": "demo-old"},
     "victoria-firewall": {"host_name": "gw", "action": "drop", "ruleset": "WAN_LOCAL"},
-    "victoria-logs": {"log_stream": "docker", "host_name": "test.home.lan"},
-    "victoria-hosts": {"host_name": "test.home.lan"},
+    "victoria-logs": {"log_stream": "docker", "host_name": "test.example"},
+    "victoria-hosts": {"host_name": "test.example"},
     "victoria-http": {"requesthost": "cloud.home.lan", "service": "nextcloud@docker",
                       "method": "GET", "client": "192.168.0.57"},
 }
@@ -348,7 +448,8 @@ def substitute(expr, datasource, variables, variant, all_values):
 
 index = []
 for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
-             "docker", "dns", "firewall", "http"):
+             "docker", "dns", "firewall", "http", "alerts", "disks", "services", "stack", "freebox",
+             "network"):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     declared = {v["name"] for v in dash.get("templating", {}).get("list", [])}
     all_values = {v["name"]: v.get("allValue") for v in dash.get("templating", {}).get("list", [])
@@ -365,7 +466,8 @@ for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
                     continue
                 query = dict(target)
                 query["expr"] = substitute(target["expr"], datasource, variables, variant, all_values)
-                assert "$" not in re.sub(r"\$__range\b", "", query["expr"]), \
+                # $__range and a regex end anchor ($ before a closing quote) are not variables.
+                assert "$" not in re.sub(r'\$__range\b|\$(?=")', "", query["expr"]), \
                     f'{dash["uid"]} / {panel["title"]}: {query["expr"]}'
                 n = len(index) + 1
                 json.dump({"from": "now-24h", "to": "now", "queries": [query]},
@@ -408,6 +510,13 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 [[ -n "$ready" ]] || fail "victorialogs, victoriametrics or grafana did not start"
+
+# The Alertes dashboard reads the last 3 minutes: date the rule states now,
+# whatever the time Grafana took to start.
+fresh="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+jq -c --arg t "$fresh" 'if .log_stream == "alerts" then ._time = $t else . end' \
+  "$work_dir/records.jsonl" > "$work_dir/records.tmp" && mv "$work_dir/records.tmp" "$work_dir/records.jsonl"
+chmod a+r "$work_dir/records.jsonl"
 
 client wget -q -O /dev/null --header 'Content-Type: application/stream+json' \
   --post-file /w/records.jsonl 'http://victorialogs:9428/insert/jsonline?_stream_fields=log_stream' \
@@ -492,23 +601,41 @@ orgs = load("orgs.json")
 if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
     errors.append(f"new user roles {orgs}, expected one org with Viewer")
 
-expected_uids = ["victoria-authentik", "victoria-dns", "victoria-docker", "victoria-firewall",
-                 "victoria-hosts", "victoria-http", "victoria-logs", "victoria-proxmox", "victoria-synology",
-                 "victoria-unifi"]
-# Targets that must return nothing: test.home.lan is not silent.
+expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-disks", "victoria-dns", "victoria-docker",
+                 "victoria-firewall", "victoria-freebox",
+                 "victoria-hosts", "victoria-http", "victoria-logs", "victoria-network", "victoria-proxmox", "victoria-services",
+                 "victoria-stack", "victoria-synology", "victoria-unifi"]
+# Host S.M.A.R.T. panels of the disks dashboard, which must return the
+# smartctl_exporter series imported before (the NAS targets only parse).
+smart_panels = {("victoria-disks", title) for title in (
+    "Disques des hôtes", "Température des disques des hôtes",
+    "Secteurs défectueux des disques des hôtes", "Vie restante des SSD des hôtes")}
+# Targets that must return nothing: test.example is not silent.
+# Réseau tree, by refId of the Canvas panel: 1 up, 0 down, -1 no collection.
+# wifi-etage-nuit (I) is down while unpoller answers, pads918 (K) is down by
+# its exporter.
+tree_panel = ("victoria-network", "Internet → Freebox → gw → sw24poe → équipements")
+tree_expected = dict(zip("ABCDEFGHIJK", (1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0)))
 expected_empty = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "value")}
 # Exact values from the Traefik records: 4 lines match the four values (one
 # 404, one 503), 11 lines have a host (the hostless 404 probe must not count,
 # the 6 long-lived streams do). The p95 latency leaves out the streams: 900 ms
 # is the slowest short request, in both variants.
-expected_values = {("victoria-http", "Requêtes", "value"): 4,
+expected_values = {("victoria-network", "Synology", "value"): 0,
+                   ("victoria-network", "UniFi", "value"): 4,
+                   ("victoria-network", "Hôtes OpenTelemetry", "value"): 2,
+                   ("victoria-http", "Requêtes", "value"): 4,
                    ("victoria-http", "Requêtes", "all"): 11,
                    ("victoria-http", "Taux de 4xx", "value"): 25,
                    ("victoria-http", "Taux de 4xx", "all"): 100 / 11,
                    ("victoria-http", "Taux de 5xx", "value"): 25,
                    ("victoria-http", "Taux de 5xx", "all"): 100 / 11,
                    ("victoria-http", "Latence p95", "value"): 900000000,
-                   ("victoria-http", "Latence p95", "all"): 900000000}
+                   ("victoria-http", "Latence p95", "all"): 900000000,
+                   # The global view must agree with the HTTP dashboard.
+                   ("victoria-services", "Requêtes HTTP", "value"): 11,
+                   ("victoria-services", "Taux de 5xx", "value"): 100 / 11,
+                   ("victoria-services", "Latence HTTP p95", "value"): 900000000}
 # No number returned by the HTTP dashboard may come from a stream: the
 # shortest one lasts 599 s, 5.99e11 in ns and 5.99e5 in ms, while the largest
 # legitimate number is the 900 ms p95 in ns.
@@ -628,14 +755,24 @@ for q in index:
         elif ips["192.168.0.10"][0] != ("aa:bb:cc:00:00:10", "laptop"):
             errors.append(f"{label}: 192.168.0.10 maps to {ips['192.168.0.10'][0]}, expected the MAC seen last")
         continue
-    if q["datasource"] == "victorialogs" or q["dashboard"] == "victoria-hosts":
+    if (q["dashboard"], q["panel"]) == tree_panel:
+        got = [float(x) for f in result.get("frames", [])
+               for i, field in enumerate(f.get("schema", {}).get("fields", []))
+               if field.get("type") == "number"
+               for x in f.get("data", {}).get("values", [])[i] if x is not None]
+        if got != [tree_expected[q["refId"]]]:
+            errors.append(f"{label}: {got}, expected [{tree_expected[q['refId']]}]")
+        continue
+    if (q["datasource"] == "victorialogs" or q["dashboard"] in ("victoria-hosts", "victoria-network")
+            or (q["dashboard"], q["panel"]) in smart_panels):
         found = any(has_data(f) for f in result.get("frames", []))
-        if (q["dashboard"], q["panel"], q["variant"]) in expected_empty:
+        key = (q["dashboard"], q["panel"], q["variant"])
+        if key in expected_empty:
             if found:
                 errors.append(f"{label}: data returned, expected none")
-        elif not found:
+        elif not found and expected_values.get(key) != 0:
+            # A value expected to be 0 is checked against expected_values below.
             errors.append(f"{label}: no data returned")
-        key = (q["dashboard"], q["panel"], q["variant"])
         got = [float(x) for f in result.get("frames", [])
                for i, field in enumerate(f.get("schema", {}).get("fields", []))
                if field.get("type") == "number"
@@ -646,11 +783,27 @@ for q in index:
                        if field.get("name") == "labels"
                        for row in f.get("data", {}).get("values", [])[i] if isinstance(row, dict)
                        for v in row.values() if isnumber(v)]
-        if q["dashboard"] == "victoria-http" and any(x >= stream_floor for x in stats):
+        if q["dashboard"] in ("victoria-http", "victoria-services") and any(x >= stream_floor for x in stats):
             errors.append(f"{label}: {max(stats)} counts a long-lived stream")
         if key in expected_values:
             if len(got) != 1 or abs(got[0] - expected_values[key]) > 0.01:
                 errors.append(f"{label}: {got}, expected {expected_values[key]}")
+        if (q["dashboard"], q["panel"]) == ("victoria-alerts", "État des règles"):
+            # The firing watchdog is the healthy state: shown as "veille" (green),
+            # while a real firing rule keeps "firing" (red).
+            states = {}
+            for f in result.get("frames", []):
+                fields = f.get("schema", {}).get("fields", [])
+                columns = f.get("data", {}).get("values", [])
+                for r in range(len(columns[0]) if columns else 0):
+                    row = {}
+                    for i, field in enumerate(fields):
+                        v = columns[i][r]
+                        row.update(v if isinstance(v, dict) else {field.get("name"): v})
+                    states[row.get("alert_rule")] = row.get("alert_state")
+            want = {"watchdog": "veille", "proxmox_backup_failed": "firing"}
+            if any(states.get(k) != v for k, v in want.items()):
+                errors.append(f"{label}: states {states}, expected {want}")
 
 seen = sorted({q["dashboard"] for q in index})
 if seen != expected_uids:

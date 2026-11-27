@@ -311,15 +311,40 @@ done
 # Records one minute old: inside the 15 minute windows whatever the
 # evaluation delay of vmalert. The Authentik event has no client IP and the
 # UniFi one no source: their SMS must leave out the missing label.
+# Inserted with the _msg_field of vector's VictoriaLogs sink, so a journald
+# body_message lands in _msg as in production, and _msg as the last choice
+# for the records written here with _msg already.
+msg_field="$(jq -r '.configs.vector_config.content' "$work_dir/compose.json" \
+  | grep -o 'jsonline?_stream_fields=log_stream[^"]*' | grep -o '_msg_field=[^&]*')" \
+  || fail "no _msg_field in the VictoriaLogs sink of vector"
 record_time="$(date -u -d '-1 min' +%Y-%m-%dT%H:%M:%SZ)"
-jq -cn --arg t "$record_time" '
+# Traefik: 5 errors in each of three 5-minute buckets. containerd: one
+# container in a loop with Docker logs (its name), one without (its short
+# id), and a GitLab runner helper that must not fire.
+shim_a="$(printf 'a%.0s' {1..64})"
+shim_b="$(printf 'b%.0s' {1..64})"
+shim_r="$(printf 'c%.0s' {1..64})"
+jq -cn --arg t "$record_time" --arg a "$shim_a" --arg b "$shim_b" --arg r "$shim_r" '
   {_time: $t, _msg: "vzdump job failed", log_stream: "proxmox", pve_backup_event: "job_failed"},
   {_time: $t, _msg: "acmerenew failed", log_stream: "proxmox", pve_task_failed: "true", pve_task_type: "acmerenew",
     pve_task_status: "Failed to initialize HTTP daemon"},
   {_time: $t, _msg: "qmstart failed", log_stream: "proxmox", pve_task_failed: "true", pve_task_type: "qmstart",
     pve_vmid: "101", pve_task_status: "start failed"},
-  {_time: $t, _msg: "unit failed", log_stream: "journald", host_name: "pve.test", body_syslog_identifier: "systemd",
+  {_time: $t, log_stream: "journald", host_name: "pve.test", body_syslog_identifier: "systemd",
     body_message: "proxmox-tls-renew.service: Failed with result '\''exit-code'\''."},
+  {_time: $t, log_stream: "journald", host_name: "pve.test", body_syslog_identifier: "kernel",
+    body_message: "INFO: task kworker/0:1:123 blocked for more than 122 seconds."},
+  {_time: $t, log_stream: "journald", host_name: "pve.test", body_syslog_identifier: "kernel",
+    body_message: "Memory cgroup out of memory: Killed process 4242 (java) total-vm:1024kB, anon-rss:512kB"},
+  ([$a, $b, $r][] as $id | range(5) | {_time: $t, log_stream: "journald", host_name: "docker.test",
+    body_syslog_identifier: "containerd",
+    body_message: "level=info msg=\"connecting to shim \($id)\" namespace=moby protocol=ttrpc version=3"}),
+  {_time: $t, log_stream: "docker", host_name: "docker.test", container_id: $a, container_name: "app",
+    body: "panic: config missing"},
+  {_time: $t, log_stream: "docker", host_name: "docker.test", container_id: $r,
+    container_name: "runner-x-project-1-concurrent-0-abc-predefined", body: "step"},
+  (0, 5, 10 | . as $m | range(5) | {_time: ($t | fromdateiso8601 - $m * 60 | todateiso8601),
+    log_stream: "traefik", app_servicename: "app@docker", app_downstreamstatus: "502", body: "GET /"}),
   {_time: $t, _msg: "suspicious request", log_stream: "authentik", ak_kind: "event", ak_action: "suspicious_request",
     ak_user: "akadmin"},
   {_time: $t, _msg: "CEF:0|Ubiquiti|UniFi Network|9.0|1|Threat detected|7|", log_stream: "syslog", appname: "CEF",
@@ -328,18 +353,18 @@ jq -cn --arg t "$record_time" '
 chmod a+r "$work_dir/records.jsonl"
 docker run --rm --network "$network" -v "$work_dir/records.jsonl:/records.jsonl:ro" "$client_image" \
   wget -q -O /dev/null --header 'Content-Type: application/stream+json' --post-file /records.jsonl \
-  'http://victorialogs:9428/insert/jsonline?_stream_fields=log_stream' || fail "ingestion refused"
+  'http://victorialogs:9428/insert/jsonline?_stream_fields=log_stream&'"$msg_field" || fail "ingestion refused"
 
 logsql() {
   client wget -q -O - "http://victorialogs:9428/select/logsql/query?query=$(jq -rn --arg q "$1" '$q | @uri')"
 }
 stored=""
 for _ in $(seq 1 15); do
-  stored="$(logsql 'log_stream:in(proxmox, journald, authentik, syslog)' | wc -l)"
-  [[ "$stored" -eq 6 ]] && break
+  stored="$(logsql 'log_stream:in(proxmox, journald, authentik, syslog, docker, traefik)' | wc -l)"
+  [[ "$stored" -eq 40 ]] && break
   sleep 1
 done
-[[ "$stored" -eq 6 ]] || fail "expected 6 records in VictoriaLogs, got $stored"
+[[ "$stored" -eq 40 ]] || fail "expected 40 records in VictoriaLogs, got $stored"
 
 # vmalert last: its first evaluation finds the records.
 docker run -d --name "$vmalert_name" --network "$network" --network-alias vmalert-logs \
@@ -351,7 +376,8 @@ alerts=""
 until [[ $SECONDS -ge $deadline ]]; do
   alerts="$(client wget -q -O - http://alertmanager:9093/api/v2/alerts 2>/dev/null || true)"
   if jq -e '[.[].labels.alertname] | index("proxmox_backup_failed") and index("proxmox_task_failed") and index("systemd_unit_failed")
-    and index("authentik_sensitive_event") and index("unifi_ips_event")' \
+    and index("authentik_sensitive_event") and index("unifi_ips_event") and index("kernel_critical") and index("oom_kill")
+    and index("container_restart_loop") and index("traefik_5xx_burst")' \
     <<<"${alerts:-[]}" >/dev/null 2>&1; then
     break
   fi
@@ -365,11 +391,13 @@ task_types="$(jq -c '[.[] | select(.labels.alertname == "proxmox_task_failed") |
 units="$(jq -c '[.[] | select(.labels.alertname == "systemd_unit_failed") | .labels | [.host_name, .systemd_unit, .unit_result]]' <<<"$alerts")"
 [[ "$units" == '[["pve.test","proxmox-tls-renew.service","exit-code"]]' ]] \
   || fail "systemd_unit_failed labels: $units"
+loops="$(jq -c '[.[] | select(.labels.alertname == "container_restart_loop") | .labels.container_id[0:4]] | sort' <<<"$alerts")"
+[[ "$loops" == '["aaaa","bbbb"]' ]] || fail "container_restart_loop for $loops, expected [\"aaaa\",\"bbbb\"]"
 
 # One SMS per alertname (group_by), after group_wait, one line per alert. A
 # task alert that joins its group late comes in a second SMS: compare the
 # distinct lines of all the SMS bodies, sorted.
-expected='["1 evenements IPS UniFi (Threat detected) en 15 minutes","Evenement Authentik sensible suspicious_request (1 en 5 minutes) pour akadmin","Sauvegarde vzdump Proxmox en echec (job_failed, 1 en 15 minutes)","Tache Proxmox acmerenew en erreur (1 en 15 minutes) : Failed to initialize HTTP daemon","Tache Proxmox qmstart VM 101 en erreur (1 en 15 minutes) : start failed","Unit proxmox-tls-renew.service en echec (exit-code) sur pve.test"]'
+expected='["1 erreurs noyau critiques sur pve.test en 15 minutes","1 evenements IPS UniFi (Threat detected) en 15 minutes","15 erreurs 5xx de app@docker en 30 minutes","Conteneur app redemarre en boucle sur docker.test (5 demarrages en 15 minutes)","Conteneur bbbbbbbbbbbb redemarre en boucle sur docker.test (5 demarrages en 15 minutes)","Evenement Authentik sensible suspicious_request (1 en 5 minutes) pour akadmin","Processus java tue par manque de memoire sur pve.test (1 en 15 minutes)","Sauvegarde vzdump Proxmox en echec (job_failed, 1 en 15 minutes)","Tache Proxmox acmerenew en erreur (1 en 15 minutes) : Failed to initialize HTTP daemon","Tache Proxmox qmstart VM 101 en erreur (1 en 15 minutes) : start failed","Unit proxmox-tls-renew.service en echec (exit-code) sur pve.test"]'
 sms=""
 messages=""
 until [[ $SECONDS -ge $deadline ]]; do
@@ -425,6 +453,27 @@ done
 [[ -n "$pushes" ]] || fail "the watchdog did not reach its receiver"
 jq -e -s 'all(.[]; ._msg == "firing")' <<<"$pushes" >/dev/null || fail "watchdog pushes not firing: $pushes"
 
+# The Alertes dashboard: Vector polls both vmalert and writes one record per
+# rule to log_stream "alerts", with the reason of its state as the message.
+states=""
+until [[ $SECONDS -ge $deadline ]]; do
+  states="$(logsql '{log_stream="alerts"} | last 1 by (_time) partition by (alert_source, alert_rule)' 2>/dev/null || true)"
+  jq -e -s '(map(select(.alert_rule == "proxmox_backup_failed" and .alert_state == "firing")) | length == 1)
+    and (map(select(.alert_rule == "watchdog" and .alert_state == "firing" and .alert_source == "metrics")) | length == 1)' \
+    <<<"${states:-}" >/dev/null 2>&1 && break
+  sleep 2
+done
+jq -e -s 'map(select(.alert_rule == "proxmox_backup_failed"))[0]
+  | .alert_source == "logs" and (._msg | startswith("Sauvegarde vzdump Proxmox en echec")) and .alert_active_since != null' \
+  <<<"${states:-}" >/dev/null 2>&1 || fail "no firing proxmox_backup_failed record with its reason in the alerts stream: $states"
+jq -e -s 'map(select(.alert_rule == "watchdog" and .alert_state == "firing" and .alert_source == "metrics")) | length == 1' \
+  <<<"${states:-}" >/dev/null 2>&1 || fail "no firing watchdog record in the alerts stream: $states"
+jq -e -s 'map(select(.alert_state == "inactive" and (._msg | startswith("Condition non remplie : ")))) | length >= 1' \
+  <<<"$states" >/dev/null || fail "no inactive rule with its condition in the alerts stream"
+rules="$(jq -s 'length' <<<"$states")"
+expected_rules="$(cat "$work_dir/logs_rules.yml" "$work_dir/metrics_rules.yml" | grep -c '^ *- alert:')"
+[[ "$rules" -eq "$expected_rules" ]] || fail "the alerts stream holds $rules rules, expected $expected_rules"
+
 # Vector down: up{job="vector"} drops to 0 and the watchdog resolves.
 docker stop "$vector_name" >/dev/null
 deadline=$((SECONDS + timeout_s))
@@ -442,4 +491,4 @@ pushes_after="$(logsql '{receiver="watchdog"}' 2>/dev/null || true)"
 jq -e -s 'all(.[]; ._msg == "firing")' <<<"$pushes_after" >/dev/null \
   || fail "a resolved watchdog reached the receiver: $pushes_after"
 
-echo "OK: rules parse, routes match the alerts, a Proxmox failure reaches the SMS sink, the watchdog stops with Vector"
+echo "OK: rules parse, routes match the alerts, a Proxmox failure reaches the SMS sink, the Alertes dashboard records give each rule its reason, the watchdog stops with Vector"

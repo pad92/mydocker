@@ -290,3 +290,31 @@ tests:
               # The device time is not the record time.
               assert_eq!(.timestamp, "2026-11-26T08:00:00Z")
               assert!(exists(.syslog_timestamp))
+
+  - name: Short hostname of an unlisted sender gets the syslog domain
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 198.51.100.8
+          message: "<30>Nov 11 18:39:10 SW24POE switch: port 3 link up"
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.host_name, "sw24poe.example.com")
+
+  - name: Full hostname of an unlisted sender is kept
+    inputs:
+      - insert_at: parse_syslog
+        type: log
+        log_fields:
+          source_ip: 198.51.100.9
+          message: "<30>Nov 11 18:39:10 ap1.example.net hostapd: up"
+    outputs:
+      - extract_from: parse_syslog
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.host_name, "ap1.example.net")
