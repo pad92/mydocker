@@ -18,6 +18,9 @@ services:
       - ${CA_CERT_PATH}:/etc/ssl/certs/local-root-ca.pem:ro
     environment:
       - "TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}"     # Pass the Cloudflare Tunnel token from environment variable
+      # IPv4 only: the host has no IPv6 route, every IPv6 dial to the
+      # Cloudflare edge failed (network is unreachable).
+      - "TUNNEL_EDGE_IP_VERSION=4"
     dns:
       - ${DNS_SERVER_1}
       - ${DNS_SERVER_2}
