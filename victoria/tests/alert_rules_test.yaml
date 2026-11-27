@@ -1,0 +1,102 @@
+# Unit tests for the alert_rules transform of the vector_config pipeline: the
+# vmalert /api/v1/rules response becomes one "alerts" record per rule, with the
+# reason for its state in message. A test passes when one output record meets
+# its conditions, so each test sends a single rule.
+tests:
+  - name: a firing rule gives the summaries of its alerts and the earliest start
+    inputs:
+      - insert_at: alert_rules
+        type: vrl
+        source: |
+          . = {"status": "success", "data": {"groups": [
+            {"name": "proxmox", "type": "vlogs", "rules": [
+              {"name": "proxmox_task_failed", "state": "firing", "health": "ok", "lastError": "",
+               "datasourceType": "vlogs", "labels": {"severity": "warning"},
+               "lastEvaluation": "2026-11-26T21:26:36Z", "lastSamples": 2,
+               "annotations": {"description": "Tache Proxmox en erreur", "summary": "template non rendu"},
+               "alerts": [
+                 {"state": "firing", "activeAt": "2026-11-26T21:20:00Z",
+                  "labels": {"alertname": "proxmox_task_failed"},
+                  "annotations": {"summary": "Tache vzdump en erreur sur pve1"}},
+                 {"state": "firing", "activeAt": "2026-11-26T21:10:00Z",
+                  "labels": {"alertname": "proxmox_task_failed"}, "annotations": {}}
+               ]}
+            ]}
+          ]}}
+    outputs:
+      - extract_from: alert_rules
+        conditions:
+          - type: vrl
+            source: |
+              assert!(is_timestamp(.timestamp))
+              assert_eq!(remove!(., ["timestamp"]), {
+                "log_stream": "alerts",
+                "message": "Tache vzdump en erreur sur pve1 | proxmox_task_failed",
+                "alert_rule": "proxmox_task_failed",
+                "alert_group": "proxmox",
+                "alert_source": "logs",
+                "alert_state": "firing",
+                "level": "warn",
+                "alert_health": "ok",
+                "alert_severity": "warning",
+                "alert_count": 2,
+                "alert_active_since": t'2026-11-26T21:10:00Z',
+                "alert_last_evaluation": "2026-11-26T21:26:36Z",
+                "alert_last_samples": 2
+              })
+
+  - name: an inactive rule gives the condition that is not met
+    inputs:
+      - insert_at: alert_rules
+        type: vrl
+        source: |
+          . = {"data": {"groups": [{"name": "proxmox", "rules": [
+            {"name": "proxmox_silent", "state": "inactive", "health": "ok", "lastError": "",
+             "datasourceType": "vlogs", "labels": {"severity": "critical"},
+             "annotations": {"description": "Aucun log Proxmox depuis 30 minutes"}, "alerts": []}
+          ]}]}}
+    outputs:
+      - extract_from: alert_rules
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.alert_rule, "proxmox_silent")
+              assert_eq!(.alert_state, "inactive")
+              assert_eq!(.level, "info")
+              assert_eq!(.alert_count, 0)
+              assert!(!exists(.alert_active_since))
+              assert_eq!(.message, "Condition non remplie : Aucun log Proxmox depuis 30 minutes")
+
+  - name: a rule in error gives the evaluation error, in any group
+    inputs:
+      - insert_at: alert_rules
+        type: vrl
+        source: |
+          . = {"data": {"groups": [
+            {"name": "empty", "rules": []},
+            {"name": "victoria_stack", "type": "prometheus", "rules": [
+              {"name": "disk_full", "state": "inactive", "health": "err",
+               "lastError": "cannot parse query", "datasourceType": "prometheus",
+               "labels": {"severity": "critical"}, "annotations": {"description": "Disque plein"}}
+            ]}
+          ]}}
+    outputs:
+      - extract_from: alert_rules
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.alert_rule, "disk_full")
+              assert_eq!(.alert_group, "victoria_stack")
+              assert_eq!(.alert_source, "metrics")
+              assert_eq!(.alert_health, "err")
+              assert_eq!(.level, "error")
+              assert_eq!(.message, "Erreur d'evaluation : cannot parse query")
+
+  - name: a response without rules gives no record
+    inputs:
+      - insert_at: alert_rules
+        type: vrl
+        source: |
+          . = {"status": "success", "data": {"groups": []}}
+    no_outputs_from:
+      - alert_rules

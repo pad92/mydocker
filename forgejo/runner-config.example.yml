@@ -1,0 +1,45 @@
+# Copy to config.yml in FORGEJO_RUNNER_DATA_DIR (owner FORGEJO_RUNNER_UID,
+# mode 600) and fill in the uuid and token, see "Actions runner" in README.md.
+# Settings left out keep the defaults of `forgejo-runner generate-config`.
+# The other values follow the Gitea runner's config.yaml.
+log:
+  level: info
+runner:
+  capacity: 1
+  timeout: 3h
+  # The labels the Gitea runner declares from its config.yaml (they take
+  # precedence over the ones given at registration).
+  labels:
+    - ubuntu-latest:docker://docker.gitea.com/runner-images:ubuntu-latest
+    - ubuntu-24.04:docker://docker.gitea.com/runner-images:ubuntu-24.04
+    - ubuntu-22.04:docker://docker.gitea.com/runner-images:ubuntu-22.04
+cache:
+  enabled: true
+  # Inside FORGEJO_RUNNER_DATA_DIR, so the cache survives a new container.
+  dir: /data/cache
+container:
+  # Jobs join the stack network, as on Gitea: they reach the runner's cache
+  # server and http://forgejo:3000 directly. "forgejo" is the Compose project
+  # name (the stack directory).
+  network: forgejo_forgejo
+  # Jobs talk to the host's Docker daemon through its socket (docker build,
+  # docker push), as with act_runner's default. Forgejo's default is "-", which
+  # mounts nothing. This gives jobs root-equivalent access to the host.
+  docker_host: automount
+  # Jobs trust the step-ca certificates of the internal hosts (actions/checkout over
+  # HTTPS, pushes to the registry). The path is on the Docker host, which
+  # creates the job containers.
+  options: --volume /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+  valid_volumes:
+    - /etc/ssl/certs/ca-certificates.crt
+  # Always pull the job image, as the Gitea runner does.
+  force_pull: true
+server:
+  connections:
+    forgejo:
+      # Inside the compose network, without Traefik.
+      url: http://forgejo:3000/
+      # Printed by `forgejo forgejo-cli actions register`.
+      uuid: 00000000-0000-0000-0000-000000000000
+      # The 40-character hexadecimal secret given to that command.
+      token: REPLACE_WITH_THE_RUNNER_SECRET

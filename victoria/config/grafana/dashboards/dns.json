@@ -1,0 +1,1567 @@
+{
+  "uid": "victoria-dns",
+  "title": "DNS",
+  "tags": [
+    "dns",
+    "victorialogs",
+    "victoria"
+  ],
+  "editable": false,
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "graphTooltip": 1,
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "victoria"
+      ],
+      "asDropdown": true,
+      "title": "Dashboards",
+      "includeVars": false,
+      "keepTime": true
+    },
+    {
+      "type": "link",
+      "title": "Services rendus",
+      "tooltip": "Vue globale",
+      "icon": "dashboard",
+      "url": "/d/victoria-services/services-rendus",
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "host_name",
+        "label": "Serveur",
+        "type": "query",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "type": "fieldValue",
+          "field": "host_name",
+          "query": "{log_stream=\"dns_queries\"}",
+          "refId": "host_name"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "client",
+        "label": "Client",
+        "type": "query",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "type": "fieldValue",
+          "field": "body_ip",
+          "query": "{log_stream=\"dns_queries\"}",
+          "refId": "client"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "search",
+        "label": "Recherche (LogsQL)",
+        "type": "textbox",
+        "query": "*",
+        "current": {
+          "text": "*",
+          "value": "*"
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Vue d'ensemble",
+      "collapsed": false,
+      "panels": [],
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Requêtes",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search | stats count() as n",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "Requêtes DNS journalisées par les serveurs AdGuard Home, filtres du dashboard appliqués."
+    },
+    {
+      "type": "stat",
+      "title": "Bloquées",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search body_result_isfiltered:true | stats count() as n",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 3,
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "Requêtes bloquées par une liste de filtrage, une règle personnalisée, le contrôle parental ou la navigation sécurisée."
+    },
+    {
+      "type": "stat",
+      "title": "Taux de blocage",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search | stats count() as total, count() if (body_result_isfiltered:true) as bloquees | math bloquees*100/total as pct | fields pct",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "Part des requêtes bloquées. Une hausse soudaine vient souvent d'un appareil qui interroge en boucle un domaine bloqué (télémétrie, publicité)."
+    },
+    {
+      "type": "stat",
+      "title": "Taux de réponses en cache",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search | stats count() as total, count() if (body_cached:true) as cache | math cache*100/total as pct | fields pct",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 5,
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "Part des requêtes servies depuis le cache d'AdGuard, sans interroger un résolveur amont. Plus elle est haute, plus les réponses sont rapides."
+    },
+    {
+      "type": "stat",
+      "title": "Clients distincts",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search | stats count_uniq(body_ip) as n",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "Nombre d'adresses IP clientes différentes ayant fait au moins une requête."
+    },
+    {
+      "type": "stat",
+      "title": "Latence p95 hors cache",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search -body_cached:true -body_upstream:\"\" | stats quantile(0.95, body_elapsed) as p95",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ns",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 7,
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "95e centile du temps de réponse des requêtes résolues par un serveur amont. Les réponses du cache et les requêtes bloquées sont exclues, car quasi instantanées : elles masqueraient la lenteur des résolveurs."
+    },
+    {
+      "type": "row",
+      "title": "Trafic",
+      "collapsed": false,
+      "panels": [],
+      "id": 8,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requêtes par serveur",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search | stats by (host_name) count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "{{host_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Requêtes par serveur AdGuard. Un serveur qui tombe à zéro alors que l'autre monte signale une bascule des clients."
+    },
+    {
+      "type": "timeseries",
+      "title": "Requêtes par type",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search | stats by (body_qt) count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "{{body_qt}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Requêtes par type d'enregistrement (A, AAAA, HTTPS, PTR...). Un afflux de PTR ou de TXT mérite d'identifier le client à l'origine."
+    },
+    {
+      "type": "timeseries",
+      "title": "Requêtes par résultat",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search body_result_isfiltered:true | stats count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "bloquées"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search body_result_reason:~\"^(9|10|11)\" | stats count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "réécrites"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search body_result_reason:in(\"1\", \"1.0\") | stats count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "liste blanche"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search -body_result_isfiltered:true -body_result_reason:~\"^(9|10|11)\" -body_result_reason:in(\"1\", \"1.0\") | stats count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "résolues normalement"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Requêtes par sort : bloquées, réécrites, autorisées par une règle explicite ou traitées normalement."
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache et résolution amont",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search body_cached:true | stats count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "en cache"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search -body_cached:true -body_upstream:\"\" | stats count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "résolues en amont"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Requêtes servies depuis le cache et requêtes résolues en amont. La part amont donne la charge réelle envoyée aux résolveurs."
+    },
+    {
+      "type": "row",
+      "title": "Latence et amont",
+      "collapsed": false,
+      "panels": [],
+      "id": 13,
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Latence p95 hors cache par serveur",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search -body_cached:true -body_upstream:\"\" | stats by (host_name) quantile(0.95, body_elapsed) as p95",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "{{host_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ns",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 14,
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 12,
+        "h": 8
+      },
+      "description": "95e centile du temps de réponse hors cache, par serveur AdGuard. Comparer les serveurs aide à distinguer un problème de résolveur d'un problème local."
+    },
+    {
+      "type": "timeseries",
+      "title": "Requêtes par résolveur amont",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search -body_cached:true -body_upstream:\"\" | stats by (body_upstream) count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "{{body_upstream}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 15,
+      "gridPos": {
+        "x": 12,
+        "y": 23,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Requêtes hors cache par résolveur amont. Un résolveur qui disparaît du graphe ne répond plus ou a été retiré de la configuration."
+    },
+    {
+      "type": "row",
+      "title": "Clients",
+      "collapsed": false,
+      "panels": [],
+      "id": 16,
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requêtes par client",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search | stats by (body_ip) count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "{{body_ip}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 17,
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 9
+      },
+      "description": "Requêtes par IP cliente au fil du temps. Un client qui s'envole est souvent un appareil en boucle."
+    },
+    {
+      "type": "table",
+      "title": "Clients les plus actifs",
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search | stats by (body_ip) count() as n, count() if (body_result_isfiltered:true) as bloquees, count_uniq(body_qh) as domaines | sort by (n desc) | limit 30",
+          "queryType": "instant"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "editorMode": "code",
+          "expr": "topk by (ip) (1, max by (ip, mac, name) (tlast_over_time(unpoller_client_uptime_seconds{ip!=\"\"}[$__range])) or max by (ip, mac, name) (tlast_over_time(unpoller_device_info{ip!=\"\"}[$__range])))",
+          "format": "table",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": false
+          },
+          "filter": {
+            "id": "byRefId",
+            "options": "A"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "n",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "bloquees",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "domaines",
+                "destinationType": "number"
+              }
+            ],
+            "fields": {}
+          },
+          "filter": {
+            "id": "byRefId",
+            "options": "A"
+          }
+        },
+        {
+          "id": "organize",
+          "filter": {
+            "id": "byRefId",
+            "options": "B"
+          },
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "Value #B": true
+            },
+            "renameByName": {
+              "ip": "body_ip",
+              "name": "unifi_name",
+              "mac": "unifi_mac"
+            },
+            "indexByName": {}
+          }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "body_ip",
+            "mode": "outerTabular"
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "exclude",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "n",
+                "config": {
+                  "id": "isNull",
+                  "options": {}
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "n",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "body_ip": 0,
+              "n": 3,
+              "bloquees": 4,
+              "domaines": 5,
+              "unifi_name": 1,
+              "unifi_mac": 2
+            },
+            "renameByName": {
+              "body_ip": "client",
+              "n": "requêtes",
+              "bloquees": "bloquées",
+              "domaines": "domaines",
+              "unifi_name": "nom UniFi",
+              "unifi_mac": "MAC"
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 18,
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 9
+      },
+      "description": "Clients classés par nombre de requêtes. Le nom et la MAC viennent d'UniFi quand l'IP y est connue."
+    },
+    {
+      "type": "row",
+      "title": "Domaines",
+      "collapsed": false,
+      "panels": [],
+      "id": 19,
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "table",
+      "title": "Domaines les plus demandés",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search | stats by (body_qh) count() as n, count_uniq(body_ip) as clients | sort by (n desc) | limit 30",
+          "queryType": "instant"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": false
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "n",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "clients",
+                "destinationType": "number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "body_qh": 0,
+              "n": 1,
+              "clients": 2
+            },
+            "renameByName": {
+              "body_qh": "domaine",
+              "n": "requêtes",
+              "clients": "clients"
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 20,
+      "gridPos": {
+        "x": 0,
+        "y": 42,
+        "w": 12,
+        "h": 10
+      },
+      "description": "Domaines les plus demandés sur la période."
+    },
+    {
+      "type": "table",
+      "title": "Domaines bloqués",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search body_result_isfiltered:true | stats by (body_qh) count() as n, count_uniq(body_ip) as clients | sort by (n desc) | limit 30",
+          "queryType": "instant"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": false
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "n",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "clients",
+                "destinationType": "number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "body_qh": 0,
+              "n": 1,
+              "clients": 2
+            },
+            "renameByName": {
+              "body_qh": "domaine",
+              "n": "requêtes",
+              "clients": "clients"
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 21,
+      "gridPos": {
+        "x": 12,
+        "y": 42,
+        "w": 12,
+        "h": 10
+      },
+      "description": "Domaines les plus bloqués. Un domaine légitime dans cette liste explique souvent un service qui ne fonctionne plus : à autoriser dans AdGuard."
+    },
+    {
+      "type": "table",
+      "title": "Domaines les plus lents (hors cache, au moins 3 requêtes)",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search -body_cached:true -body_upstream:\"\" | stats by (body_qh) count() as n, quantile(0.95, body_elapsed) as p95 | filter n:>=3 | math round(p95/1000000, 0.1) as ms | sort by (ms desc) | limit 30",
+          "queryType": "instant"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": false
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "n",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "p95",
+                "destinationType": "number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "body_qh": 0,
+              "n": 1,
+              "ms": 2,
+              "p95": 3
+            },
+            "renameByName": {
+              "body_qh": "domaine",
+              "n": "requêtes",
+              "ms": "p95 (ms)",
+              "p95": "p95 (ns)"
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 22,
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 12,
+        "h": 10
+      },
+      "description": "Domaines au temps de réponse amont le plus élevé, hors cache, avec au moins 3 requêtes pour écarter les cas isolés."
+    },
+    {
+      "type": "table",
+      "title": "Clients les plus bloqués",
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search body_result_isfiltered:true | stats by (body_ip) count() as n, count_uniq(body_qh) as domaines | sort by (n desc) | limit 30",
+          "queryType": "instant"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "editorMode": "code",
+          "expr": "topk by (ip) (1, max by (ip, mac, name) (tlast_over_time(unpoller_client_uptime_seconds{ip!=\"\"}[$__range])) or max by (ip, mac, name) (tlast_over_time(unpoller_device_info{ip!=\"\"}[$__range])))",
+          "format": "table",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": false
+          },
+          "filter": {
+            "id": "byRefId",
+            "options": "A"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "n",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "domaines",
+                "destinationType": "number"
+              }
+            ],
+            "fields": {}
+          },
+          "filter": {
+            "id": "byRefId",
+            "options": "A"
+          }
+        },
+        {
+          "id": "organize",
+          "filter": {
+            "id": "byRefId",
+            "options": "B"
+          },
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "Value #B": true
+            },
+            "renameByName": {
+              "ip": "body_ip",
+              "name": "unifi_name",
+              "mac": "unifi_mac"
+            },
+            "indexByName": {}
+          }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "body_ip",
+            "mode": "outerTabular"
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "exclude",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "n",
+                "config": {
+                  "id": "isNull",
+                  "options": {}
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "n",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "body_ip": 0,
+              "n": 3,
+              "domaines": 4,
+              "unifi_name": 1,
+              "unifi_mac": 2
+            },
+            "renameByName": {
+              "body_ip": "client",
+              "n": "bloquées",
+              "domaines": "domaines",
+              "unifi_name": "nom UniFi",
+              "unifi_mac": "MAC"
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 23,
+      "gridPos": {
+        "x": 12,
+        "y": 52,
+        "w": 12,
+        "h": 10
+      },
+      "description": "Clients dont le plus de requêtes sont bloquées. Le nom et la MAC viennent d'UniFi quand l'IP y est connue."
+    },
+    {
+      "type": "row",
+      "title": "Requêtes récentes",
+      "collapsed": false,
+      "panels": [],
+      "id": 24,
+      "gridPos": {
+        "x": 0,
+        "y": 62,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Requêtes (200 dernières)",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"dns_queries\"} host_name:in($host_name) body_ip:in($client) $search | format \"<host_name> <body_ip> <body_qt> <body_qh> cache=<body_cached> bloquée=<body_result_isfiltered> amont=<body_upstream>\" as _msg | sort by (_time desc) | limit 200",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false
+      },
+      "id": 25,
+      "gridPos": {
+        "x": 0,
+        "y": 63,
+        "w": 24,
+        "h": 14
+      },
+      "description": "Les 200 dernières requêtes : serveur, client, type, domaine et résultat."
+    }
+  ]
+}

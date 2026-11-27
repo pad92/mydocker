@@ -1,0 +1,807 @@
+# yaml-language-server: $schema=https://goauthentik.io/blueprints/schema.json
+#
+# Applications protected by Traefik forward auth, the embedded outpost that
+# serves them, and Forgejo, which signs in through OpenID Connect instead
+# (forward auth would break git over HTTPS, the API, fj and the runner).
+#
+# No host name is written here: they come from environment variables set on
+# authentik_worker in docker-compose.yml (BLUEPRINT_* values, built from .env).
+#
+# Access is fail-closed: only members of the application group get through.
+# Add users to the group in the admin UI (Directory > Groups).
+#
+# To protect another service: add a group, a provider, an application and a
+# binding like the Uptime Kuma ones, add the provider to the outpost list at
+# the end, then add the "authentik@docker" middleware to its Traefik router.
+version: 1
+metadata:
+  name: Homelab - Forward auth applications
+entries:
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider authorization flow (implicit consent)
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider invalidation flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: System - OAuth2 Provider - Scopes
+      required: true
+
+  # --- Uptime Kuma ---------------------------------------------------------
+  - model: authentik_core.group
+    id: uptime-kuma-group
+    identifiers:
+      name: uptime-kuma-users
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: uptime-kuma-provider
+    identifiers:
+      name: Uptime Kuma
+    attrs:
+      mode: forward_single
+      external_host: !Format ["https://%s", !Env BLUEPRINT_UPTIME_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+
+  - model: authentik_core.application
+    id: uptime-kuma-app
+    identifiers:
+      slug: uptime-kuma
+    attrs:
+      name: Uptime Kuma
+      group: Administration
+      meta_icon: homelab/icons/uptime-kuma.svg
+      meta_description: Uptime monitoring
+      provider: !KeyOf uptime-kuma-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_UPTIME_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf uptime-kuma-app
+      group: !KeyOf uptime-kuma-group
+    attrs:
+      order: 0
+
+  # --- NG media stack ------------------------------------------------------
+  # Radarr, Sonarr, Bazarr, Lidarr, SABnzbd and Prowlarr share one host, each
+  # under its own path: one provider covers all of them. h5ai (root of that
+  # host) and Seerr (own host, own logins) are not behind forward auth.
+  # A forward_single provider is tied to a host, not a path, so the apps
+  # cannot get one provider each on a shared host. The "NG media" application
+  # below is the access gate (hidden from the library); each app then gets a
+  # bookmark application (no provider) that only shows a tile to the group.
+  - model: authentik_core.group
+    id: media-group
+    identifiers:
+      name: media-users
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: media-provider
+    identifiers:
+      name: NG media
+    attrs:
+      mode: forward_single
+      external_host: !Format ["https://%s", !Env BLUEPRINT_NG_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+
+  - model: authentik_core.application
+    id: media-app
+    identifiers:
+      slug: ng-media
+    attrs:
+      name: NG media
+      provider: !KeyOf media-provider
+      # Hidden from the library: the bookmarks below are the tiles.
+      meta_launch_url: blank://blank
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf media-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  # Bookmarks: no provider, so their bindings only decide who sees the tile.
+  # Access stays the "NG media" gate above (same group for every app).
+  - model: authentik_core.application
+    id: radarr-app
+    identifiers:
+      slug: radarr
+    attrs:
+      name: Radarr
+      meta_icon: homelab/icons/radarr.svg
+      meta_description: Movies
+      group: NG media
+      meta_launch_url: !Format ["https://%s/radarr", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf radarr-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: sonarr-app
+    identifiers:
+      slug: sonarr
+    attrs:
+      name: Sonarr
+      meta_icon: homelab/icons/sonarr.svg
+      meta_description: TV series
+      group: NG media
+      meta_launch_url: !Format ["https://%s/sonarr", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf sonarr-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: bazarr-app
+    identifiers:
+      slug: bazarr
+    attrs:
+      name: Bazarr
+      meta_icon: homelab/icons/bazarr.svg
+      meta_description: Subtitles
+      group: NG media
+      meta_launch_url: !Format ["https://%s/bazarr", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf bazarr-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: lidarr-app
+    identifiers:
+      slug: lidarr
+    attrs:
+      name: Lidarr
+      meta_icon: homelab/icons/lidarr.svg
+      meta_description: Music
+      group: NG media
+      meta_launch_url: !Format ["https://%s/lidarr", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf lidarr-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: sabnzbd-app
+    identifiers:
+      slug: sabnzbd
+    attrs:
+      name: SABnzbd
+      meta_icon: homelab/icons/sabnzbd.svg
+      meta_description: Usenet downloads
+      group: NG media
+      meta_launch_url: !Format ["https://%s/sabnzbd", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf sabnzbd-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: prowlarr-app
+    identifiers:
+      slug: prowlarr
+    attrs:
+      name: Prowlarr
+      meta_icon: homelab/icons/prowlarr.svg
+      meta_description: Indexers
+      group: NG media
+      meta_launch_url: !Format ["https://%s/prowlarr", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf prowlarr-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  # h5ai sits at the root of the host, outside the NG media provider paths,
+  # and stays public: the binding only decides who sees the tile.
+  - model: authentik_core.application
+    id: h5ai-app
+    identifiers:
+      slug: h5ai
+    attrs:
+      name: h5ai
+      meta_icon: homelab/icons/h5ai.svg
+      meta_description: File browser
+      group: NG media
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_NG_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf h5ai-app
+      group: !KeyOf media-group
+    attrs:
+      order: 0
+
+  # --- Portainer -----------------------------------------------------------
+  # Whole host behind forward auth, API included: the web UI calls /api with
+  # the browser session. Portainer then signs users in through its own OAuth
+  # client against the "Portainer SSO" OpenID Connect provider below.
+  - model: authentik_core.group
+    id: portainer-group
+    identifiers:
+      name: portainer-users
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: portainer-provider
+    identifiers:
+      name: Portainer
+    attrs:
+      mode: forward_single
+      external_host: !Format ["https://%s", !Env BLUEPRINT_PORTAINER_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+
+  - model: authentik_core.application
+    id: portainer-app
+    identifiers:
+      slug: portainer
+    attrs:
+      name: Portainer
+      group: Administration
+      meta_icon: homelab/icons/portainer.svg
+      meta_description: Docker management
+      provider: !KeyOf portainer-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_PORTAINER_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf portainer-app
+      group: !KeyOf portainer-group
+    attrs:
+      order: 0
+
+  # Portainer OAuth login. Not a forward-auth provider: not in the outpost
+  # list. Its own application, hidden from the library (blank://blank), so the
+  # forward-auth one keeps the tile; same group. Authentik generates the
+  # client secret on first apply and keeps it; copy it from the admin UI
+  # (Applications > Providers > Portainer SSO) into the Portainer OAuth
+  # settings, whose redirect URL must be the same root URL.
+  - model: authentik_providers_oauth2.oauth2provider
+    id: portainer-sso-provider
+    identifiers:
+      name: Portainer SSO
+    attrs:
+      client_type: confidential
+      client_id: portainer
+      # Empty by default on providers created by a blueprint: every
+      # authorization request would fail ("otherwise malformed").
+      grant_types: [authorization_code, refresh_token]
+      redirect_uris:
+        - matching_mode: strict
+          url: !Format ["https://%s/", !Env BLUEPRINT_PORTAINER_HOST]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+
+  - model: authentik_core.application
+    id: portainer-sso-app
+    identifiers:
+      slug: portainer-sso
+    attrs:
+      name: Portainer SSO
+      provider: !KeyOf portainer-sso-provider
+      meta_launch_url: blank://blank
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf portainer-sso-app
+      group: !KeyOf portainer-group
+    attrs:
+      order: 0
+
+  # --- VictoriaLogs and VictoriaMetrics ----------------------------------
+  # Web UIs behind forward auth. Neither database has a login of its own.
+  # In Traefik, the OTLP ingestion paths (POST only) bypass it with Basic
+  # auth, and GET /health bypasses it without auth (victoria stack).
+  - model: authentik_core.group
+    id: victorialogs-group
+    identifiers:
+      name: victorialogs-users
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: victorialogs-provider
+    identifiers:
+      name: VictoriaLogs
+    attrs:
+      mode: forward_single
+      external_host: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_LOGS_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+
+  - model: authentik_core.application
+    id: victorialogs-app
+    identifiers:
+      slug: victorialogs
+    attrs:
+      name: VictoriaLogs
+      group: Administration
+      meta_icon: homelab/icons/victorialogs.svg
+      meta_description: Logs
+      provider: !KeyOf victorialogs-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_LOGS_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf victorialogs-app
+      group: !KeyOf victorialogs-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.group
+    id: victoriametrics-group
+    identifiers:
+      name: victoriametrics-users
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: victoriametrics-provider
+    identifiers:
+      name: VictoriaMetrics
+    attrs:
+      mode: forward_single
+      external_host: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_METRICS_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+
+  - model: authentik_core.application
+    id: victoriametrics-app
+    identifiers:
+      slug: victoriametrics
+    attrs:
+      name: VictoriaMetrics
+      group: Administration
+      meta_icon: homelab/icons/victoriametrics.svg
+      meta_description: Metrics
+      provider: !KeyOf victoriametrics-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_METRICS_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf victoriametrics-app
+      group: !KeyOf victoriametrics-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.group
+    id: victoria-grafana-group
+    identifiers:
+      name: victoria-grafana-users
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: victoria-grafana-provider
+    identifiers:
+      name: Victoria Grafana
+    attrs:
+      mode: forward_single
+      external_host: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_GRAFANA_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+
+  - model: authentik_core.application
+    id: victoria-grafana-app
+    identifiers:
+      slug: victoria-grafana
+    attrs:
+      name: Victoria Grafana
+      group: Administration
+      meta_icon: homelab/icons/victoria-grafana.svg
+      meta_description: Dashboards
+      provider: !KeyOf victoria-grafana-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_VICTORIA_GRAFANA_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf victoria-grafana-app
+      group: !KeyOf victoria-grafana-group
+    attrs:
+      order: 0
+
+  # --- Traefik dashboard -------------------------------------------------
+  # Only the dashboard router (/traefik and /api on this host) carries the
+  # middleware; the other routers on the same host stay open. The provider
+  # cookie is set on that host, which is harmless for apps without the
+  # middleware.
+  - model: authentik_core.group
+    id: traefik-group
+    identifiers:
+      name: traefik-users
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: traefik-provider
+    identifiers:
+      name: Traefik
+    attrs:
+      mode: forward_single
+      external_host: !Format ["https://%s", !Env BLUEPRINT_TRAEFIK_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+
+  - model: authentik_core.application
+    id: traefik-app
+    identifiers:
+      slug: traefik
+    attrs:
+      name: Traefik
+      group: Administration
+      meta_icon: homelab/icons/traefik.svg
+      meta_description: Reverse proxy
+      provider: !KeyOf traefik-provider
+      meta_launch_url: !Format ["https://%s/traefik/dashboard/", !Env BLUEPRINT_TRAEFIK_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf traefik-app
+      group: !KeyOf traefik-group
+    attrs:
+      order: 0
+
+  # --- Forgejo (OpenID Connect) --------------------------------------------
+  # Not a forward-auth provider: not in the outpost list. Authentik generates
+  # the client secret on first apply and keeps it; copy it from the admin UI
+  # (Applications > Providers > Forgejo) into the Forgejo authentication
+  # source. The redirect URI matches a source named "authentik" in Forgejo.
+  - model: authentik_core.group
+    id: forgejo-group
+    identifiers:
+      name: forgejo-users
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: forgejo-provider
+    identifiers:
+      name: Forgejo
+    attrs:
+      client_type: confidential
+      client_id: forgejo
+      # Empty by default on providers created by a blueprint: every
+      # authorization request would fail ("otherwise malformed").
+      grant_types: [authorization_code, refresh_token]
+      redirect_uris:
+        - matching_mode: strict
+          url: !Format ["https://%s/user/oauth2/authentik/callback", !Env BLUEPRINT_FORGEJO_HOST]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+
+  - model: authentik_core.application
+    id: forgejo-app
+    identifiers:
+      slug: forgejo
+    attrs:
+      name: Forgejo
+      group: Administration
+      meta_icon: homelab/icons/forgejo.svg
+      meta_description: Git forge
+      provider: !KeyOf forgejo-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_FORGEJO_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf forgejo-app
+      group: !KeyOf forgejo-group
+    attrs:
+      order: 0
+
+  # --- Gramps Web (OpenID Connect) -----------------------------------------
+  # Not a forward-auth provider: not in the outpost list. Gramps Web maps the
+  # "groups" claim (profile scope) to its roles at every login, the highest
+  # mapped group winning: grampsweb-owners -> Owner, grampsweb-editors ->
+  # Editor, grampsweb-members -> Member. The bindings below refuse a user in
+  # none of them; the Gramps Web account stays as it was until an owner
+  # disables it. Authentik generates the client secret on first apply and
+  # keeps it; copy it into GRAMPSWEB_OIDC_CLIENT_SECRET of the grampsweb
+  # stack. The redirect URI is the one Gramps Web builds from its BASE_URL
+  # for a custom provider.
+  - model: authentik_core.group
+    id: grampsweb-owners-group
+    identifiers:
+      name: grampsweb-owners
+
+  - model: authentik_core.group
+    id: grampsweb-editors-group
+    identifiers:
+      name: grampsweb-editors
+
+  - model: authentik_core.group
+    id: grampsweb-members-group
+    identifiers:
+      name: grampsweb-members
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: grampsweb-provider
+    identifiers:
+      name: Gramps Web
+    attrs:
+      client_type: confidential
+      client_id: grampsweb
+      # Empty by default on providers created by a blueprint (see Forgejo).
+      grant_types: [authorization_code, refresh_token]
+      redirect_uris:
+        - matching_mode: strict
+          url: !Format ["https://%s/api/oidc/callback/custom", !Env BLUEPRINT_GRAMPSWEB_HOST]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+
+  - model: authentik_core.application
+    id: grampsweb-app
+    identifiers:
+      slug: grampsweb
+    attrs:
+      name: Gramps Web
+      group: Genealogy
+      meta_icon: homelab/icons/grampsweb.svg
+      meta_description: Family tree
+      provider: !KeyOf grampsweb-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_GRAMPSWEB_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf grampsweb-app
+      group: !KeyOf grampsweb-owners-group
+    attrs:
+      order: 0
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf grampsweb-app
+      group: !KeyOf grampsweb-editors-group
+    attrs:
+      order: 1
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf grampsweb-app
+      group: !KeyOf grampsweb-members-group
+    attrs:
+      order: 2
+
+  # --- Immich (OpenID Connect) ---------------------------------------------
+  # Not a forward-auth provider: not in the outpost list, since the mobile
+  # app and the public share proxy call the API directly. Immich is set up in
+  # its admin UI (Administration > Settings > OAuth): Authentik generates the
+  # client secret on first apply and keeps it, copy it there. The redirect
+  # URIs are the three Immich documents: the mobile app's custom scheme, the
+  # web login and the manual account linking in the user settings.
+  - model: authentik_core.group
+    id: immich-group
+    identifiers:
+      name: immich-users
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: immich-provider
+    identifiers:
+      name: Immich
+    attrs:
+      client_type: confidential
+      client_id: immich
+      # Empty by default on providers created by a blueprint (see Forgejo).
+      grant_types: [authorization_code, refresh_token]
+      redirect_uris:
+        - matching_mode: strict
+          url: app.immich:///oauth-callback
+        - matching_mode: strict
+          url: !Format ["https://%s/auth/login", !Env BLUEPRINT_IMMICH_HOST]
+        - matching_mode: strict
+          url: !Format ["https://%s/user-settings", !Env BLUEPRINT_IMMICH_HOST]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+
+  - model: authentik_core.application
+    id: immich-app
+    identifiers:
+      slug: immich
+    attrs:
+      name: Immich
+      group: Photos
+      meta_icon: homelab/icons/immich.svg
+      meta_description: Photo library
+      provider: !KeyOf immich-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_IMMICH_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf immich-app
+      group: !KeyOf immich-group
+    attrs:
+      order: 0
+
+  # --- Donetick (OpenID Connect) ------------------------------------------
+  # Not a forward-auth provider: not in the outpost list, since the mobile
+  # app and the external API (/eapi) call Donetick directly. Donetick reads
+  # its OIDC settings from the todo stack's environment: Authentik generates
+  # the client secret on first apply and keeps it, copy it into
+  # DONETICK_OIDC_CLIENT_SECRET there. The redirect URIs are the two the
+  # Donetick front end sends: the web login and the mobile app's scheme.
+  - model: authentik_core.group
+    id: donetick-group
+    identifiers:
+      name: donetick-users
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: donetick-provider
+    identifiers:
+      name: Donetick
+    attrs:
+      client_type: confidential
+      client_id: donetick
+      # Empty by default on providers created by a blueprint (see Forgejo).
+      grant_types: [authorization_code, refresh_token]
+      redirect_uris:
+        - matching_mode: strict
+          url: !Format ["https://%s/auth/oauth2", !Env BLUEPRINT_DONETICK_HOST]
+        - matching_mode: strict
+          url: donetick://auth/oauth2
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+
+  - model: authentik_core.application
+    id: donetick-app
+    identifiers:
+      slug: donetick
+    attrs:
+      name: Donetick
+      group: Home
+      meta_icon: homelab/icons/donetick.svg
+      meta_description: Tasks and chores
+      provider: !KeyOf donetick-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_DONETICK_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf donetick-app
+      group: !KeyOf donetick-group
+    attrs:
+      order: 0
+
+  # --- Infrastructure ------------------------------------------------------
+  # Network devices outside this stack (not routed by its Traefik): bookmarks
+  # only, no provider, so each device keeps its own login and the bindings
+  # only decide who sees the tile. Not in the outpost list.
+  - model: authentik_core.group
+    id: infra-group
+    identifiers:
+      name: infra-users
+
+  - model: authentik_core.application
+    id: unifi-app
+    identifiers:
+      slug: unifi
+    attrs:
+      name: UniFi
+      group: Infrastructure
+      meta_icon: homelab/icons/unifi.svg
+      meta_description: Network controller
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_UNIFI_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf unifi-app
+      group: !KeyOf infra-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: nas-app
+    identifiers:
+      slug: nas
+    attrs:
+      name: Synology NAS
+      group: Infrastructure
+      meta_icon: homelab/icons/synology.svg
+      meta_description: DSM storage
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_NAS_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf nas-app
+      group: !KeyOf infra-group
+    attrs:
+      order: 0
+
+  - model: authentik_core.application
+    id: switch-app
+    identifiers:
+      slug: switch
+    attrs:
+      name: XGS1210-12
+      group: Infrastructure
+      meta_icon: homelab/icons/zyxel.svg
+      meta_description: Zyxel switch
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_SWITCH_HOST]
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf switch-app
+      group: !KeyOf infra-group
+    attrs:
+      order: 0
+
+  # --- Embedded outpost ----------------------------------------------------
+  # The provider list is replaced as a whole: keep every forward-auth provider
+  # here. authentik_host is the URL the browser is sent to for login.
+  - model: authentik_outposts.outpost
+    identifiers:
+      managed: goauthentik.io/outposts/embedded
+    attrs:
+      # Authentik creates this outpost at startup. Name and type are repeated
+      # so the entry also works if the blueprint runs first.
+      name: authentik Embedded Outpost
+      type: proxy
+      providers:
+        - !KeyOf uptime-kuma-provider
+        - !KeyOf media-provider
+        - !KeyOf portainer-provider
+        - !KeyOf victorialogs-provider
+        - !KeyOf victoriametrics-provider
+        - !KeyOf victoria-grafana-provider
+        - !KeyOf traefik-provider
+      config:
+        authentik_host: !Format ["https://%s", !Env BLUEPRINT_AUTHENTIK_HOST]
+        authentik_host_insecure: false
+        log_level: info

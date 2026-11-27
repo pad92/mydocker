@@ -1,0 +1,122 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+# Shared by the web server and the Celery worker, as in the official
+# docker-compose.yml (https://www.grampsweb.org/install_setup/deployment/):
+# both must see the same tree, users, media, caches and /tmp.
+x-grampsweb: &grampsweb
+  image: ghcr.io/gramps-project/grampsweb:${GRAMPSWEB_VERSION:-latest}
+  restart: always
+  environment:
+    # Created on first start if it does not exist.
+    GRAMPSWEB_TREE: "${GRAMPSWEB_TREE:-Gramps Web}"
+    # Address Gramps Web is reached at, used in the links of e-mails.
+    GRAMPSWEB_BASE_URL: "https://${GRAMPSWEB_DOMAIN:?Set GRAMPSWEB_DOMAIN}"
+    GRAMPSWEB_CELERY_CONFIG__broker_url: "redis://grampsweb_redis:6379/0"
+    GRAMPSWEB_CELERY_CONFIG__result_backend: "redis://grampsweb_redis:6379/0"
+    GRAMPSWEB_RATELIMIT_STORAGE_URI: "redis://grampsweb_redis:6379/1"
+    # Traefik is the single proxy in front: take the client IP from its
+    # X-Forwarded-For (rate limits, logs).
+    GRAMPSWEB_PROXY_FIX_X_FOR: "1"
+    GUNICORN_NUM_WORKERS: "${GUNICORN_NUM_WORKERS:-8}"
+    # SMTP for password resets and invitations, read by the worker too.
+    # The defaults fit Proton Mail (port 587, STARTTLS). An empty host
+    # leaves e-mail off. Values: see .env.example.
+    GRAMPSWEB_EMAIL_HOST: "${GRAMPSWEB_EMAIL_HOST:-}"
+    GRAMPSWEB_EMAIL_PORT: "${GRAMPSWEB_EMAIL_PORT:-587}"
+    GRAMPSWEB_EMAIL_USE_STARTTLS: "${GRAMPSWEB_EMAIL_USE_STARTTLS:-true}"
+    GRAMPSWEB_EMAIL_USE_SSL: "${GRAMPSWEB_EMAIL_USE_SSL:-false}"
+    GRAMPSWEB_EMAIL_HOST_USER: "${GRAMPSWEB_EMAIL_HOST_USER:-}"
+    GRAMPSWEB_EMAIL_HOST_PASSWORD: "${GRAMPSWEB_EMAIL_HOST_PASSWORD:-}"
+    GRAMPSWEB_DEFAULT_FROM_EMAIL: "${GRAMPSWEB_DEFAULT_FROM_EMAIL:-}"
+    # Leave GRAMPSWEB_SECRET_KEY unset: the entrypoint generates one in
+    # /app/secret/secret on first start and reuses it afterwards.
+    # Sign-in with Authentik (OpenID Connect), next to the local accounts.
+    # Flask reads GRAMPSWEB_* values as JSON: booleans must be lowercase.
+    # The provider is the "grampsweb" application of the management
+    # blueprint, whose redirect URI is <BASE_URL>/api/oidc/callback/custom.
+    GRAMPSWEB_OIDC_ENABLED: "true"
+    GRAMPSWEB_OIDC_NAME: "Authentik"
+    GRAMPSWEB_OIDC_ISSUER: "https://${AUTHENTIK_DOMAIN:?Set AUTHENTIK_DOMAIN}/application/o/grampsweb/"
+    GRAMPSWEB_OIDC_CLIENT_ID: "grampsweb"
+    # Copied from the Authentik provider; set it in Portainer, not in Git.
+    GRAMPSWEB_OIDC_CLIENT_SECRET: "${GRAMPSWEB_OIDC_CLIENT_SECRET:?Set GRAMPSWEB_OIDC_CLIENT_SECRET}"
+    # Authentik group names in the "groups" claim give the Gramps role (the
+    # highest wins). Authentik refuses a user in none of them; the Gramps
+    # account stays as it was until an owner disables it.
+    GRAMPSWEB_OIDC_ROLE_CLAIM: "groups"
+    GRAMPSWEB_OIDC_GROUP_OWNER: "grampsweb-owners"
+    GRAMPSWEB_OIDC_GROUP_EDITOR: "grampsweb-editors"
+    GRAMPSWEB_OIDC_GROUP_MEMBER: "grampsweb-members"
+    # Authentik's certificate comes from the internal CA: trust the host
+    # bundle (mounted below) instead of the certifi one Python ships.
+    REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
+  volumes:
+    - ${GRAMPSWEB_DATA_DIR:?Set GRAMPSWEB_DATA_DIR}/users:/app/users
+    - ${GRAMPSWEB_DATA_DIR:?Set GRAMPSWEB_DATA_DIR}/indexdir:/app/indexdir
+    - ${GRAMPSWEB_DATA_DIR:?Set GRAMPSWEB_DATA_DIR}/thumbnail_cache:/app/thumbnail_cache
+    - ${GRAMPSWEB_DATA_DIR:?Set GRAMPSWEB_DATA_DIR}/cache:/app/cache
+    # Long syntax: the pre-commit leak scanner reads the short form as a
+    # "secret: value" pair. Only the generated key lives in this directory.
+    - type: bind
+      source: ${GRAMPSWEB_DATA_DIR:?Set GRAMPSWEB_DATA_DIR}/secret
+      target: /app/secret
+      # Created on first start like the short-syntax mounts above.
+      bind:
+        create_host_path: true
+    - ${GRAMPSWEB_DATA_DIR:?Set GRAMPSWEB_DATA_DIR}/grampsdb:/root/.gramps/grampsdb
+    - ${GRAMPSWEB_DATA_DIR:?Set GRAMPSWEB_DATA_DIR}/tmp:/tmp
+    - ${GRAMPSWEB_MEDIA_DIR:?Set GRAMPSWEB_MEDIA_DIR}:/app/media
+    - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+  logging: *default-logging
+services:
+  grampsweb:
+    <<: *grampsweb
+    container_name: grampsweb
+    depends_on:
+      - grampsweb_redis
+    networks:
+      - grampsweb
+      - traefik_gateway
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.grampsweb.loadbalancer.server.port: "5000"
+
+      traefik.http.routers.grampsweb_http.rule: "Host(`${GRAMPSWEB_DOMAIN:?Set GRAMPSWEB_DOMAIN}`)"
+      traefik.http.routers.grampsweb_http.entrypoints: web
+      traefik.http.routers.grampsweb_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.grampsweb.rule: "Host(`${GRAMPSWEB_DOMAIN:?Set GRAMPSWEB_DOMAIN}`)"
+      traefik.http.routers.grampsweb.entrypoints: "websecure"
+      traefik.http.routers.grampsweb.tls: "true"
+      traefik.http.routers.grampsweb.tls.certresolver: "stepca"
+
+  grampsweb_celery:
+    <<: *grampsweb
+    container_name: grampsweb_celery
+    depends_on:
+      - grampsweb
+      - grampsweb_redis
+    networks:
+      - grampsweb
+    command: celery -A gramps_webapi.celery worker --loglevel=INFO --concurrency=${GRAMPSWEB_CELERY_CONCURRENCY:-2}
+
+  grampsweb_redis:
+    image: docker.io/valkey/valkey:${GRAMPSWEB_VALKEY_VERSION:-8-alpine}
+    container_name: grampsweb_redis
+    restart: always
+    networks:
+      - grampsweb
+
+    logging: *default-logging
+networks:
+  grampsweb:
+    name: grampsweb
+  traefik_gateway:
+    external: true

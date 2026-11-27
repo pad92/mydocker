@@ -1,0 +1,58 @@
+scrape_configs:
+  - job_name: victoriametrics
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["victoriametrics:8428"]
+  - job_name: victorialogs
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["victorialogs:9428"]
+  - job_name: vmalert-logs
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["vmalert-logs:8880"]
+  - job_name: vmalert-metrics
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["vmalert-metrics:8880"]
+  - job_name: alertmanager
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["alertmanager:9093"]
+  # The prometheus_exporter sink of vector_config.
+  - job_name: vector
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["vector:9598"]
+    # The histogram buckets are about 85 % of the vector series and no
+    # dashboard or rule reads them (tests/test_stack.sh checks it).
+    # _sum and _count stay, enough for average durations and sizes.
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "vector_.*_bucket"
+        action: drop
+  - job_name: unpoller
+    scrape_interval: 60s
+    static_configs:
+      - targets: ["unpoller:9130"]
+  - job_name: synology
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    metrics_path: /snmp
+    params:
+      module: [system, if_mib, synology]
+      auth: [synology_v3]
+    static_configs:
+      - targets: ["${SYNOLOGY_SNMP_TARGET:?Set SYNOLOGY_SNMP_TARGET}"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: snmp-exporter:9116
+  # freebox-exporter serves the values of its last refresh (30s).
+  - job_name: freebox
+    scrape_interval: 60s
+    static_configs:
+      - targets: ["freebox-exporter:9102"]

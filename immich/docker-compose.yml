@@ -26,6 +26,10 @@ services:
       DB_DATABASE_NAME: ${DB_DATABASE_NAME}
       REDIS_HOSTNAME: redis
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      # Sign-in with Authentik (OAuth, set in Administration > Settings).
+      # Authentik's certificate comes from the internal CA and Node only
+      # trusts its bundled roots: add the host bundle (mounted below).
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
     deploy:
       resources:
         reservations:

@@ -28,6 +28,7 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 | [**code-server**](./code-server/README.md) | VS Code editor accessible inside browser tabs | VS Code Server |
 | [**crowdsec**](./crowdsec/README.md) | Collaborative behavior detection engine blocking scanner IP logs and malicious activities | CrowdSec |
 | [**dockhand**](./dockhand/README.md) | Automated Docker container management and helper tool | Dockhand |
+| [**forgejo**](./forgejo/README.md) | Self-hosted Git forge with Actions and package registry, replacing Gitea | Forgejo |
 | [**freshrss**](./freshrss/README.md) | Self-hosted RSS feed aggregator and reader | FreshRSS |
 | [**frigate**](./frigate/README.md) | Network Video Recorder (NVR) with real-time AI object detection for IP cameras | Frigate |
 | [**gitea**](./gitea/README.md) | Super fast, lightweight, and painless self-hosted Git developer service | Gitea |
@@ -35,6 +36,7 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 | [**gitlab-runner**](./gitlab-runner/README.md) | Local CI/CD pipeline build executor for GitLab projects | GitLab Runner |
 | [**glance**](./glance/README.md) | Personal startpage aggregation dashboard page | Glance Dashboard |
 | [**grafana**](./grafana/README.md) | Advanced monitoring visualization metrics dashboards aggregator | Grafana |
+| [**grampsweb**](./grampsweb/README.md) | Web app for collaborative genealogy built on Gramps | Gramps Web |
 | [**homeassistant**](./homeassistant/README.md) | Central home automation router putting local privacy and local controls first | Home Assistant |
 | [**immich**](./immich/README.md) | High-performance self-hosted photo & video backup solution | Immich |
 | [**karakeep**](./karakeep/README.md) | High-performance bookmarks manager with fast search | Karakeep |
@@ -60,6 +62,7 @@ Here is the complete list of Docker Compose stacks managed in this repository:
 | [**trilium**](./trilium/README.md) | Hierarchical personal note-taking application focusing on large personal knowledge bases | Trilium Notes |
 | [**tududi**](./tududi/README.md) | Minimal personal task manager interface | Tududi |
 | [**vaultwarden**](./vaultwarden/README.md) | Alternative lightweight Bitwarden password vault server in Rust | Vaultwarden |
+| [**victoria**](./victoria/README.md) | Log and metric databases with a Vector ingestion pipeline (OTLP, syslog, Docker logs) | VictoriaLogs, VictoriaMetrics, Vector |
 | [**watchtower**](./watchtower/README.md) | Automated helper daemon to keep running docker container images up to date | Watchtower |
 
 ---
@@ -179,7 +182,7 @@ For each stack to migrate, the script will:
 ./migrate_to_git.py \
   --url "https://portainer.local:9443" \
   --token "ptr_xxx" \
-  --repo-url "https://gitea.local/pascal/mydocker.git" \
+  --repo-url "https://gitea.local/example-user/mydocker.git" \
   --only plex immich grafana \
   --insecure
 ```
@@ -190,7 +193,7 @@ For each stack to migrate, the script will:
 ./migrate_to_git.py \
   --url "https://portainer.local:9443" \
   --token "ptr_xxx" \
-  --repo-url "https://gitea.local/pascal/mydocker.git" \
+  --repo-url "https://gitea.local/example-user/mydocker.git" \
   --exclude management cloudflared \
   --insecure
 ```
@@ -205,7 +208,7 @@ To enable this automatic protection in your local repository, run the following 
 
 ```bash
 # 1. Make hook scripts executable
-chmod +x .githooks/pre-commit .githooks/post-commit .githooks/git-leak-shield.py
+chmod +x .githooks/pre-commit .githooks/post-commit .githooks/git-leak-shield.py .githooks/victoria-build-check.sh
 
 # 2. Configure Git to use the .githooks directory
 git config core.hooksPath .githooks
@@ -214,6 +217,7 @@ git config core.hooksPath .githooks
 ### How It Works
 
 - **`pre-commit`**: Automatically scans your staged changes before each commit. If a `.env` file, secret, API key, or sensitive data is detected, the commit is blocked immediately.
+- **`victoria-build-check.sh`** (called by `pre-commit`): When the commit touches `victoria/`, runs `victoria/build.py --check` on the staged files and blocks the commit if `victoria/docker-compose.yml` does not match its staged sources under `victoria/config/`. Run `python3 victoria/build.py` and stage the compose file.
 - **`post-commit`**: Displays a confirmation message after a commit is successfully and securely validated.
 
 ---
@@ -294,14 +298,14 @@ Use `migrate_to_git.py` to migrate all eligible stacks in one command:
 ./migrate_to_git.py \
   --url "https://portainer.local:9443" \
   --token "ptr_xxx" \
-  --repo-url "https://gitea.home.lan/pascal/stacks.git" \
+  --repo-url "https://git.example.lan/example-user/stacks.git" \
   --insecure --dry-run
 
 # Then migrate
 ./migrate_to_git.py \
   --url "https://portainer.local:9443" \
   --token "ptr_xxx" \
-  --repo-url "https://gitea.home.lan/pascal/stacks.git" \
+  --repo-url "https://git.example.lan/example-user/stacks.git" \
   --insecure
 ```
 
@@ -323,7 +327,7 @@ To convert a single stack from "Web Editor" mode to "Git Repository" mode manual
    - Configure the following fields:
      - **Name**: Enter the **exact same name** as the old stack (e.g., `plex`).
      - **Build method**: Select **Repository**.
-     - **Repository URL**: Enter the HTTP/SSH URL of your Git repository (e.g., `https://gitea.home.lan/pascal/stacks.git`).
+     - **Repository URL**: Enter the HTTP/SSH URL of your Git repository (e.g., `https://git.example.lan/example-user/stacks.git`).
      - **Repository reference**: Enter your branch (e.g., `refs/heads/main`).
      - **Compose path**: Specify the exact path to the compose file (e.g., `plex/docker-compose.yml`).
    - In the **Environment variables** section:

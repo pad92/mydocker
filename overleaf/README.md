@@ -21,7 +21,7 @@ Define these environment variables which are unique to this service:
 | `ENABLED_LINKED_FILE_TYPES` | Configuration settings value for Enabled linked file types. | *None (empty)* |
 | `ENABLE_CONVERSIONS` | Configuration settings value for Enable conversions. | *None (empty)* |
 | `OVERLEAF_APP_NAME` | Configuration settings value for Overleaf app name. | *None (empty)* |
-| `OVERLEAF_DOMAIN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `OVERLEAF_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `OVERLEAF_MONGO_URL` | Configuration settings value for Overleaf mongo url. | *None (empty)* |
 | `OVERLEAF_REDIS_HOST` | Configuration settings value for Overleaf redis host. | *None (empty)* |
 | `OVERLEAF_SHARELATEX_DATA_DIR` | Persistent host directory path for volume mount: OVERLEAF_SHARELATEX_DATA_DIR. | *None (empty)* |

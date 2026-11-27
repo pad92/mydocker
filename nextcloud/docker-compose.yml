@@ -51,13 +51,13 @@ volumes:
     driver_opts:
       type: nfs
       o: addr=${NEXTCLOUD_IP},nolock,soft,rw,vers=4
-      device: :/volume1/homes/pascal/Photos
+      device: :${PHOTO_NAS_PASCAL_PATH:?Set PHOTO_NAS_PASCAL_PATH in .env}
   photo_nas_nath:
     driver: local
     driver_opts:
       type: nfs
       o: addr=${NEXTCLOUD_IP},nolock,soft,rw,vers=4
-      device: :/volume1/homes/nath/Photos
+      device: :${PHOTO_NAS_NATH_PATH:?Set PHOTO_NAS_NATH_PATH in .env}
   media_nas:
     driver: local
     driver_opts:

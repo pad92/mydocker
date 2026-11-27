@@ -17,7 +17,7 @@ Define these environment variables which are unique to this service:
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
 | `BESZEL_DATA_DIR` | Persistent host directory path for volume mount: BESZEL_DATA_DIR. | *None (empty)* |
-| `BESZEL_DOMAIN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `BESZEL_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 
 ---
 

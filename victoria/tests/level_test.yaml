@@ -1,0 +1,850 @@
+# Unit tests for the normalize_level transform of the vector_config pipeline:
+# one level field (debug, info, warn, error, crit) from the level of each source.
+# Run with ./test_vector.sh (renders the compose file with .env.example first).
+tests:
+  - name: Authentik warning becomes warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          ak_level: "warning"
+          severity: "INFO"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: Authentik critical becomes crit
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          ak_level: "critical"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: Authentik trace becomes debug
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          ak_level: "trace"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "debug")
+
+  - name: Proxmox error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          pve_level: "error"
+          body_priority: "6"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: journald priority 3 as a string becomes error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: "3"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: journald priority 0 becomes crit
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: 0
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: journald priority 4 becomes warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: "4"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: journald priority 6 becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: "6"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: journald priority 7 becomes debug
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: "7"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "debug")
+
+  - name: journald priority wins over the OTLP severity
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          body_priority: "3"
+          severity: "INFO"
+          severity_number: 9
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: Docker severity text in any case
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "Error"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: OTLP WARN becomes warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "WARN"
+          severity_number: 13
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: OTLP fatal becomes crit
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "fatal"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: syslog err becomes error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "err"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: syslog notice becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "notice"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: syslog emerg becomes crit
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "emerg"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: OTLP severity number alone
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity_number: 17
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: OTLP severity number 21 becomes crit
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity_number: 21
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: Unknown severity text falls back to the number
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: "X"
+          severity_number: 5
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "debug")
+
+  - name: Info without a usable source
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          severity: ""
+          severity_number: 0
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: Info for an empty event
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: CEF severity 7 becomes error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          cef_severity: 7
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: CEF severity 5 becomes warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          cef_severity: 5
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: CEF severity 2 becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          cef_severity: 2
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: logfmt level in the line
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: 'time="2026-11-27T01:00:23+01:00" level=warning msg=x'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: JSON level in the line
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '{"time":"x","level":"error","msg":"y"}'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: zerolog console token after colour codes
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: "\e[90m2026-11-27T01:03:12+01:00\e[0m \e[31mERR\e[0m Error calling http://auth.example"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: Go log letter of Forgejo
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '2026/11/27 00:49:22 ...eb/routing/logger.go:109:func1() [W] router: slow'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: NestJS LOG becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: "\e[32m[Nest] 59  - \e[39m11/27/2026, 12:00:00 AM \e[32m    LOG\e[39m \e[33m[Svc]\e[39m done"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: NestJS ERROR becomes error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '[Nest] 59  - 11/27/2026, 12:00:00 AM   ERROR [Svc] failed'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: bracket word after colour codes
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: "2026-11-26T23:58:00.030Z [\e[34mdebug\e[39m][Jobs]: Starting"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "debug")
+
+  - name: upper case word with a colon
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '2026-11-27T02:00:00+01:00 [MONITOR] WARN: Monitor down'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: Redis hash marker becomes warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '1:M 27 Nov 2026 00:00:02.724 # WARNING overcommit_memory is set to 0'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: Redis star marker becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '24770:C 27 Nov 2026 00:00:02.730 * DB saved on disk'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: journald message line
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body_message: 'level=error msg=boom'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: syslog message line
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: '[Nest] 1  - x   FATAL [App] down'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: the severity field wins over the line
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          severity: "INFO"
+          body: 'level=error msg=x'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: a plain line is info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '200 GET /api/setup/status with 155 bytes took 0ms'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: an error word inside the text is not a level
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: 'Sync failed: error while syncing'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  # Known benign messages become info; the same source keeps the level
+  # of any other message.
+  - name: Portainer docker CLI progress becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "portainer"
+          severity: "WARN"
+          severity_number: 13
+          body: "\e[90m2026/11/27 03:56AM\e[0m ??? \e[1mgithub.com/docker/cli@v28.5.1+incompatible/cli/streams/out.go:20\e[0m\e[36m >\e[0m  tautulli Pulling  |"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: Portainer configuration warning stays warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "portainer"
+          severity: "WARN"
+          severity_number: 13
+          body: '2026/11/27 03:56AM INF github.com/portainer/portainer/api/stacks/deployments/logwriter.go:55 > level=warning msg="The \"RUSTFS_S3_HOST\" variable is not set. Defaulting to a blank string."'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: Portainer docker CLI pull failure keeps its level
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "portainer"
+          severity: "WARN"
+          severity_number: 13
+          body: "\e[90m2026/11/27 03:56AM\e[0m ??? \e[1mgithub.com/docker/cli@v28.5.1+incompatible/cli/streams/out.go:20\e[0m\e[36m >\e[0m  tautulli Error  pull access denied for tautulli"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: Portainer error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "portainer"
+          body: '2026/11/27 03:56AM ERR github.com/portainer/portainer/api/http/handler/stacks/create.go:120 > unable to deploy stack'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: UniFi access point kernel warning becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "784558fade31,UAP-nanoHD-6.7.57+15670"
+          facility: "kern"
+          severity: "warning"
+          message: "kernel: [318455.360134] rai0: (CFG80211_OpsStaDel)80211> Delete STA(02:00:00:00:00:01), reason:8 ==>"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: UniFi access point kernel WARN_ON backtrace stays warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "784558fade31,UAP-nanoHD-6.7.57+15670"
+          facility: "kern"
+          severity: "warning"
+          message: "kernel: [318455.360134] WARNING: CPU: 0 PID: 0 at net/sched/sch_generic.c:468 dev_watchdog+0x1f0/0x1f8"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: UniFi access point radio timeout warning stays warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "784558fade31,UAP-nanoHD-6.7.57+15670"
+          facility: "kern"
+          severity: "warning"
+          message: "kernel: [318455.360134] ra0: TX timeout, beacon stuck"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: UniFi access point kernel error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "784558fade31,UAP-nanoHD-6.7.57+15670"
+          facility: "kern"
+          severity: "err"
+          message: "kernel: [318354.438720] ra0: firmware crashed"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: UniFi gateway kernel warning stays warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "gw"
+          facility: "kern"
+          severity: "warning"
+          message: "kernel: [12.345678] eth8: link down"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: UniFi gateway mq-broker DNS helper becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "gw"
+          severity: "warning"
+          message: '/usr/bin/unifi-mq-broker[3652213]: Failed to send request to coredns: Post "http://localhost/api/get_domain_by_ip": dial unix /run/utm/.cd_dl.sock: connect: resource temporarily unavailable'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: UniFi gateway systemd generator notice becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "gw"
+          severity: "warning"
+          message: "systemd-sysv-generator: SysV service '/etc/init.d/stunnel4' lacks a native systemd unit file, automatically generating a unit file for compatibility."
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: inadyn error from a syslog sender stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "inadyn"
+          severity: "err"
+          message: "inadyn[1234]: Failed updating DNS record, zone not found"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: Beszel bad memory stats becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "beszel-agent"
+          severity: "ERROR"
+          severity_number: 17
+          body: '2026/11/27 03:56:01 ERROR Error getting container stats err="watchtower - bad memory stats - see https://github.com/henrygd/beszel/issues/144"'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: Beszel other error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "beszel-agent"
+          severity: "ERROR"
+          severity_number: 17
+          body: '2026/11/27 03:56:01 ERROR WebSocket connection error err="dial tcp: connection refused"'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: Immich ONNX shape notice becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "immich_machine_learning"
+          severity: "ERROR"
+          severity_number: 17
+          body: "\e[0;93m2026-11-27 03:56:01.123 [W:onnxruntime:, graph.cc:3490 MergeShapeInfo] Error merging shape info for output. 'Add.1' source:{1,2,3,4} target:{1,2,3,-1}. Falling back to lenient merge.\e[m"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: Grafana context canceled becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "victoria-grafana"
+          severity: "ERROR"
+          severity_number: 17
+          body: 'logger=cleanup t=2026-11-27T03:56:01Z level=error msg="job cleanup controller failed" error="context canceled"'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: Grafana other error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "victoria-grafana"
+          severity: "ERROR"
+          severity_number: 17
+          body: 'logger=plugin.victoriametrics-logs-datasource level=error msg="Partial data response error" error="dial tcp: connection refused"'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: su pam_wtmpdb read-only database stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          log_stream: "journald"
+          body_syslog_identifier: "su"
+          body_priority: "3"
+          body_message: "pam_wtmpdb(su:session): add_entry: Adding an entry did not return SQLITE_DONE: 8"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: su other error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          log_stream: "journald"
+          body_syslog_identifier: "su"
+          body_priority: "3"
+          body_message: "pam_unix(su:auth): authentication failure; logname=user uid=1000 euid=0 tty=pts/0 ruser=user rhost=  user=root"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")

@@ -18,7 +18,7 @@ Define these environment variables which are unique to this service:
 | :--- | :--- | :--- |
 | `BOOKMARKS_SHAARLI_CACHE_DATA_DIR` | Persistent host directory path for volume mount: BOOKMARKS_SHAARLI_CACHE_DATA_DIR. | *None (empty)* |
 | `BOOKMARKS_SHAARLI_DATA_DIR` | Persistent host directory path for volume mount: BOOKMARKS_SHAARLI_DATA_DIR. | *None (empty)* |
-| `TRAEFIK_HOST_LOCAL` | Internal domain routing host rule (e.g. local.home.lan). | *None (empty)* |
+| `TRAEFIK_HOST_LOCAL` | Internal domain routing host rule (e.g. local.example.lan). | *None (empty)* |
 | `TRAEFIK_HOST_PUBLIC` | External domain routing host rule (e.g. pub.domain.com). | *None (empty)* |
 
 ---

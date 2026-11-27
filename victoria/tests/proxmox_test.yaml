@@ -1,0 +1,255 @@
+# Unit tests for the parse_proxmox transform of the vector_config pipeline.
+# Samples come from the journald stream of the Proxmox host.
+# Run with ./test_vector.sh (renders the compose file with .env.example first).
+tests:
+  - name: non Proxmox record is left untouched
+    inputs:
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: sshd-session
+          body_priority: "6"
+          body_message: "Accepted publickey for root from 192.0.2.10 port 50000 ssh2"
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert!(!exists(.pve_component))
+              assert!(!exists(.pve_kind))
+              assert_eq!(.body_syslog_identifier, "sshd-session")
+              assert!(!exists(.log_stream))
+
+  - name: record without identifier is left untouched
+    inputs:
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_message: "kernel line"
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert!(!exists(.pve_component))
+
+  - name: task start is parsed from the UPID
+    inputs:
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pvescheduler
+          body_priority: "6"
+          body_message: "<root@pam> starting task UPID:chataigne:0002AF94:1DC9C56B:6B07AEC6:vzdump::root@pam:"
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.log_stream, "proxmox")
+              assert_eq!(.pve_component, "pvescheduler")
+              assert_eq!(.pve_kind, "task")
+              assert_eq!(.pve_task_event, "start")
+              assert_eq!(.pve_task_type, "vzdump")
+              assert_eq!(.pve_user, "root@pam")
+              assert_eq!(.pve_vmid, "")
+              assert_eq!(.pve_task_status, "")
+              assert_eq!(.pve_task_failed, false)
+              assert_eq!(.pve_level, "info")
+
+  - name: task end OK is not a failure
+    inputs:
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pveupdate
+          body_priority: "6"
+          body_message: "<root@pam> end task UPID:chataigne:003270DA:1CB57821:6B04EB71:aptupdate::root@pam: OK"
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.pve_kind, "task")
+              assert_eq!(.pve_task_event, "end")
+              assert_eq!(.pve_task_type, "aptupdate")
+              assert_eq!(.pve_task_status, "OK")
+              assert_eq!(.pve_task_failed, false)
+
+  - name: task end with an error is a failure
+    inputs:
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pveupdate
+          body_priority: "3"
+          body_message: "<root@pam> end task UPID:chataigne:0016E087:1D381C52:6B0639E2:acmerenew::root@pam: Failed to initialize HTTP daemon"
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.pve_task_type, "acmerenew")
+              assert_eq!(.pve_task_status, "Failed to initialize HTTP daemon")
+              assert_eq!(.pve_task_failed, true)
+              assert_eq!(.pve_level, "error")
+
+  - name: guest task keeps the VMID
+    inputs:
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pvedaemon
+          body_priority: 6
+          body_message: "<root@pam> starting task UPID:chataigne:00123456:1D000000:6B000000:vzstart:105:root@pam:"
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.pve_task_type, "vzstart")
+              assert_eq!(.pve_vmid, "105")
+              assert_eq!(.pve_level, "info")
+
+  - name: backup lines carry event, VMID and duration
+    inputs:
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pvescheduler
+          body_priority: "6"
+          body_message: "INFO: starting new backup job: vzdump --all 1 --compress zstd --storage local_hdd"
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pvescheduler
+          body_priority: "6"
+          body_message: "INFO: Starting Backup of VM 105 (lxc)"
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pvescheduler
+          body_priority: "6"
+          body_message: "INFO: Finished Backup of VM 100 (01:02:41)"
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pvescheduler
+          body_priority: "6"
+          body_message: "INFO: Backup job finished successfully"
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.pve_kind, "backup")
+              m = string!(.body_message)
+              if starts_with(m, "INFO: starting new") { assert_eq!(.pve_backup_event, "job_start") }
+              if starts_with(m, "INFO: Starting Backup") {
+                assert_eq!(.pve_backup_event, "vm_start")
+                assert_eq!(.pve_vmid, "105")
+                assert_eq!(.pve_duration_s, 0)
+              }
+              if starts_with(m, "INFO: Finished Backup") {
+                assert_eq!(.pve_backup_event, "vm_ok")
+                assert_eq!(.pve_vmid, "100")
+                assert_eq!(.pve_duration_s, 3761)
+              }
+              if contains(m, "finished successfully") { assert_eq!(.pve_backup_event, "job_ok") }
+              true
+
+  - name: backup failures are errors
+    inputs:
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: vzdump
+          body_priority: "6"
+          body_message: "ERROR: Backup of VM 101 failed - unable to create temporary directory"
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pvescheduler
+          body_priority: "6"
+          body_message: "INFO: Backup job finished with errors"
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.pve_kind, "backup")
+              assert_eq!(.pve_level, "error")
+              if starts_with(string!(.body_message), "ERROR") {
+                assert_eq!(.pve_backup_event, "vm_failed")
+                assert_eq!(.pve_vmid, "101")
+              } else {
+                assert_eq!(.pve_backup_event, "job_failed")
+              }
+              true
+
+  - name: successful and failed authentications
+    inputs:
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pvedaemon
+          body_priority: "6"
+          body_message: "<root@pam> successful auth for user 'root@pam'"
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pvedaemon
+          body_priority: "6"
+          body_message: "authentication failure; rhost=::ffff:192.0.2.50 user=admin@pve msg=no such user ('admin@pve')"
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.pve_kind, "auth")
+              if contains(string!(.body_message), "successful") {
+                assert_eq!(.pve_auth_result, "success")
+                assert_eq!(.pve_user, "root@pam")
+                assert_eq!(.pve_client_ip, "")
+                assert_eq!(.pve_level, "info")
+              } else {
+                assert_eq!(.pve_auth_result, "failure")
+                assert_eq!(.pve_user, "admin@pve")
+                assert_eq!(.pve_client_ip, "192.0.2.50")
+                assert_eq!(.pve_level, "warning")
+              }
+              true
+
+  - name: notification, HA and plain daemon lines
+    inputs:
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pve-notify-worker
+          body_priority: "6"
+          body_message: "notified via target `mail-to-root`"
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pve-ha-lrm
+          body_priority: "6"
+          body_message: "status change startup => wait_for_agent_lock"
+      - insert_at: parse_proxmox
+        type: log
+        log_fields:
+          body_syslog_identifier: pmxcfs
+          body_priority: "4"
+          body_message: "[status] notice: received log"
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              c = string!(.pve_component)
+              if c == "pve-notify-worker" { assert_eq!(.pve_kind, "notification") }
+              if c == "pve-ha-lrm" { assert_eq!(.pve_kind, "ha") }
+              if c == "pmxcfs" {
+                assert_eq!(.pve_kind, "log")
+                assert_eq!(.pve_level, "warning")
+              }
+              true

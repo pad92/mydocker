@@ -26,8 +26,14 @@ IGNORED_FILES_PATTERNS = [
 
 # Legitimate public IPs (known DNS, standard gateways) to ignore
 IP_WHITELIST = {
-    "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112"
+    "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112",
+    # Wildcard listen address ("all interfaces"): reveals nothing about the network.
+    "0.0.0.0"
 }
+
+# Values that reference a secret stored elsewhere instead of containing it
+# (Vector: SECRET[backend.key]).
+SECRET_REFERENCE_RE = re.compile(r"^SECRET\[[A-Za-z0-9_.-]+\]$")
 
 # --- Detection RegEx Patterns ---
 
@@ -35,6 +41,10 @@ IP_WHITELIST = {
 INTERNAL_DOMAINS_RE = re.compile(
     r"\b[a-zA-Z0-9-]+\.(lan|local|home|internal|home\.lan)\b", re.IGNORECASE
 )
+
+# IPv4 ranges reserved for documentation and examples (RFC 5737, TEST-NET-1/2/3):
+# they are never routed, so they reveal nothing about the network.
+DOCUMENTATION_IPV4_PREFIXES = ("192.0.2.", "198.51.100.", "203.0.113.")
 
 # IP addresses (v4 & v6)
 IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
@@ -117,7 +127,8 @@ def inspect_line(line, filepath, line_num):
             val = match.group(2) if len(match.groups()) >= 2 else match.group(0)
             runtime_read = ["getpass", "args.", "os.environ", "os.getenv", "input(", "sys.stdin"]
             if not any(ph in val.lower() for ph in ["placeholder", "your_", "insert_", "xxx", "template", "valeur", "value"]) \
-               and not any(rt in val for rt in runtime_read):
+               and not any(rt in val for rt in runtime_read) \
+               and not SECRET_REFERENCE_RE.match(val):
                 findings.append({
                     "type": "SECRET",
                     "desc": f"{description} (detected value: '{val[:3]}...{val[-3:] if len(val) > 6 else ''}')",
@@ -136,7 +147,7 @@ def inspect_line(line, filepath, line_num):
 
     # 3. IP Addresses (Private or Public)
     for ip in IPV4_RE.findall(line):
-        if ip in IP_WHITELIST:
+        if ip in IP_WHITELIST or ip.startswith(DOCUMENTATION_IPV4_PREFIXES):
             continue
         is_priv, priv_desc = is_private_ip(ip)
         if is_priv:

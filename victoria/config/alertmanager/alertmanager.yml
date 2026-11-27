@@ -1,0 +1,180 @@
+route:
+  receiver: sms
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 60m
+  routes:
+    # Heartbeat to Uptime Kuma: first, and on its own receiver. A push
+    # every minute while the watchdog fires (see vmalert_metrics_rules).
+    - matchers: [alertname="watchdog"]
+      receiver: watchdog
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 1m
+    - matchers: [alertname="authentik_login_failed_burst"]
+      repeat_interval: 80m
+    - matchers: [alertname="authentik_sensitive_event"]
+      repeat_interval: 70m
+    - matchers: [alertname="authentik_errors"]
+      repeat_interval: 80m
+    - matchers: [alertname="authentik_logs_silent"]
+      repeat_interval: 65m
+    - matchers: [alertname="proxmox_metrics_silent"]
+      repeat_interval: 65m
+    - matchers: [alertname="proxmox_storage_usage_high"]
+      repeat_interval: 725m
+    - matchers: [alertname="proxmox_node_memory_high"]
+      repeat_interval: 125m
+    - matchers: [alertname="proxmox_node_cpu_high"]
+      repeat_interval: 140m
+    - matchers: [alertname="proxmox_guest_restarted"]
+      repeat_interval: 45m
+    - matchers: [alertname="proxmox_backup_failed"]
+      repeat_interval: 80m
+    - matchers: [alertname="proxmox_backup_missing"]
+      repeat_interval: 780m
+    - matchers: [alertname="proxmox_task_failed"]
+      repeat_interval: 1460m
+    - matchers: [alertname="proxmox_auth_failed_burst"]
+      repeat_interval: 80m
+    - matchers: [alertname="unpoller_no_unifi_data"]
+      repeat_interval: 65m
+    - matchers: [alertname="unpoller_unifi_data_stale"]
+      repeat_interval: 50m
+    - matchers: [alertname="host_logs_silent"]
+      repeat_interval: 125m
+    - matchers: [alertname="kernel_critical"]
+      repeat_interval: 80m
+    - matchers: [alertname="systemd_unit_failed"]
+      repeat_interval: 1460m
+    - matchers: [alertname="oom_kill"]
+      repeat_interval: 80m
+    - matchers: [alertname="container_restart_loop"]
+      repeat_interval: 80m
+    - matchers: [alertname="dns_resolver_silent"]
+      repeat_interval: 125m
+    - matchers: [alertname="unifi_ips_event"]
+      repeat_interval: 80m
+    - matchers: [alertname="traefik_5xx_burst"]
+      repeat_interval: 65m
+    - matchers: [alertname="unifi_device_down"]
+      repeat_interval: 65m
+    - matchers: [alertname="host_metrics_silent"]
+      repeat_interval: 65m
+    - matchers: [alertname="filesystem_usage_high"]
+      repeat_interval: 725m
+    - matchers: [alertname="filesystem_usage_critical"]
+      repeat_interval: 125m
+    - matchers: [alertname="zfs_pool_degraded"]
+      repeat_interval: 65m
+    - matchers: [alertname="zfs_pool_capacity_high"]
+      repeat_interval: 725m
+    - matchers: [alertname="smart_status_failed"]
+      repeat_interval: 65m
+    - matchers: [alertname="smart_attribute_failing"]
+      repeat_interval: 1445m
+    - matchers: [alertname="smart_sectors_growing"]
+      repeat_interval: 2885m
+    - matchers: [alertname="smart_crc_errors_growing"]
+      repeat_interval: 2885m
+    - matchers: [alertname="smart_temperature_high"]
+      repeat_interval: 125m
+    - matchers: [alertname="smart_data_missing"]
+      repeat_interval: 125m
+    - matchers: [alertname="zfs_data_missing"]
+      repeat_interval: 125m
+    - matchers: [alertname="synology_system_failed"]
+      repeat_interval: 65m
+    - matchers: [alertname="synology_raid_degraded"]
+      repeat_interval: 65m
+    - matchers: [alertname="synology_disk_failed"]
+      repeat_interval: 65m
+    - matchers: [alertname="synology_temperature_high"]
+      repeat_interval: 125m
+    - matchers: [alertname="synology_scrape_down"]
+      repeat_interval: 65m
+    - matchers: [alertname="freebox_connection_down"]
+      repeat_interval: 65m
+    - matchers: [alertname="freebox_scrape_down"]
+      repeat_interval: 65m
+    - matchers: [alertname="freebox_fiber_signal_low"]
+      repeat_interval: 125m
+    - matchers: [alertname="freebox_temperature_high"]
+      repeat_interval: 125m
+    - matchers: [alertname="freebox_auth_failed"]
+      repeat_interval: 65m
+    - matchers: [alertname="freebox_collector_failed"]
+      repeat_interval: 65m
+    - matchers: [alertname="victoria_component_down"]
+      repeat_interval: 65m
+    - matchers: [alertname="vmalert_rule_errors"]
+      repeat_interval: 245m
+    - matchers: [alertname="alertmanager_notifications_failed"]
+      repeat_interval: 70m
+    - matchers: [alertname="vmalert_send_failed"]
+      repeat_interval: 75m
+    - matchers: [alertname="victoria_disk_fill_predicted"]
+      repeat_interval: 1505m
+    - matchers: [alertname="victorialogs_ingestion_stopped"]
+      repeat_interval: 70m
+    - matchers: [alertname="vector_component_errors"]
+      repeat_interval: 95m
+receivers:
+  - name: sms
+    webhook_configs:
+      # The SMS bridge: the alertmanager source of vector.
+      - url: http://vector:8080/alertmanager
+        send_resolved: false
+        max_alerts: 10
+        # Same credentials as the auth of the vector source. Compose
+        # writes the value into this file: hex only (openssl rand -hex
+        # 32), so that it cannot break the YAML.
+        http_config:
+          basic_auth:
+            username: alertmanager
+            password: "${VECTOR_WEBHOOK_PASSWORD:?Set VECTOR_WEBHOOK_PASSWORD}"
+  # Push URL of an Uptime Kuma push monitor (see the README). The token
+  # in the URL is secret and goes in the environment of the stack only.
+  # send_resolved false: a resolved watchdog must not count as a push.
+  - name: watchdog
+    webhook_configs:
+      - url: "${ALERTMANAGER_WATCHDOG_URL:?Set ALERTMANAGER_WATCHDOG_URL}"
+        send_resolved: false
+        max_alerts: 1
+# A firing source mutes its consequences, which then send no SMS.
+inhibit_rules:
+  # A host sending no metrics at all is the collector or the host
+  # down: its logs, SMART, ZFS and DNS go silent with it.
+  - source_matchers: [alertname="host_metrics_silent"]
+    target_matchers:
+      - alertname=~"host_logs_silent|smart_data_missing|zfs_data_missing|dns_resolver_silent"
+    equal: [host_name]
+  # VictoriaLogs receiving nothing: every logs source looks silent.
+  # No equal: the source has no host_name.
+  - source_matchers: [alertname="victorialogs_ingestion_stopped"]
+    target_matchers:
+      - alertname=~"host_logs_silent|dns_resolver_silent|authentik_logs_silent"
+  # A component of the stack down: ingestion and Vector errors follow.
+  - source_matchers: [alertname="victoria_component_down"]
+    target_matchers:
+      - alertname=~"victorialogs_ingestion_stopped|vector_component_errors"
+  # No data from the UniFi controller at all: every device would look
+  # down, and a stale alert still held by keep_firing_for adds nothing.
+  - source_matchers: [alertname="unpoller_no_unifi_data"]
+    target_matchers:
+      - alertname=~"unifi_device_down|unpoller_unifi_data_stale"
+  # The Internet connection of the Freebox down: its API may go
+  # unreachable with it (mafreebox.freebox.fr is a public address) and
+  # the collectors fail.
+  - source_matchers: [alertname="freebox_connection_down"]
+    target_matchers: [alertname="freebox_collector_failed"]
+  # The critical threshold of the same filesystem says it all.
+  - source_matchers: [alertname="filesystem_usage_critical"]
+    target_matchers: [alertname="filesystem_usage_high"]
+    equal: [device, type]
+  # A drive whose own SMART status failed: its attributes add nothing.
+  - source_matchers: [alertname="smart_status_failed"]
+    target_matchers:
+      - alertname=~"smart_attribute_failing|smart_sectors_growing|smart_crc_errors_growing"
+    equal: [host_name, device]

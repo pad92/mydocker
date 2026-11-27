@@ -1,10 +1,9 @@
 [http]
   [http.routers]
     [http.routers.proxmox]
-      rule = "Host(`YOUR_PROXMOX_DOMAIN`)" # ex: proxmox.home.lan
+      rule = 'Host(`{{ env "PROXMOX_HOST_LOCAL" }}`)'
       entryPoints = ["websecure"]
       service = "proxmox-svc"
-      middlewares = ["crowdsec@file"]
       [http.routers.proxmox.tls]
         certResolver = "stepca"
   
@@ -13,19 +12,26 @@
       # On lie le service au transport personnalisé ci-dessous
       serversTransport = "pveTransport"
       [[http.services.proxmox-svc.loadBalancer.servers]]
-        url = "https://YOUR_PROXMOX_IP:8006" # L'IP locale de votre Proxmox (ex: 192.168.1.100)
+        url = '{{ env "PROXMOX_UPSTREAM_URL" }}'
   
+  # pveproxy sert un certificat émis par la CA maison (rôle Ansible
+  # proxmox_tls) : on le vérifie. L'URL amont est une IP, donc le nom attendu
+  # dans le certificat est fixé ici. Le chemin de la CA correspond au montage
+  # ${CA_CERT_NAME} du docker-compose.yml.
   [http.serversTransports.pveTransport]
-    # Indispensable car Proxmox utilise un certificat auto-signé par défaut
-    insecureSkipVerify = true
+    serverName = "chataigne.home.lan"
+    rootCAs = ["/etc/ssl/certs/home-lan-root-ca.crt"]
 
-
-  [http.middlewares.crowdsec.plugin.bouncer]
-    enabled = true
-    crowdsecMode = "live"
-    crowdsecLapiScheme = "http"
-    crowdsecLapiHost = "crowdsec:8080"
-    crowdsecLapiKey = "YOUR_CROWDSEC_BOUNCER_API_KEY"
+  # Basic auth des routes d'ingestion de la stack victoria (logs OTLP vers
+  # vector, métriques OTLP vers victoriametrics) : les collecteurs ne suivent
+  # pas un login Authentik. Une entrée htpasswd bcrypt par collecteur, générée
+  # avec `htpasswd -nB collector`, et le même mot de passe dans myansible
+  # (vault). La valeur ci-dessous n'est pas un hash valide : elle refuse tout
+  # tant qu'elle n'est pas remplacée dans traefik_dynamic.toml.
+  # removeHeader : l'en-tête Authorization ne part pas vers les backends.
+  [http.middlewares.victoria-ingest-auth.basicAuth]
+    users = ["collector:REPLACE_WITH_HTPASSWD_BCRYPT_HASH"]
+    removeHeader = true
 
   [http.middlewares.compression.compress]
     excludedContentTypes = ["text/event-stream"]
@@ -42,9 +48,6 @@
     referrerPolicy = "same-origin"
     [http.middlewares.security.headers.customResponseHeaders]
       X-Robots-Tag = "noindex, nofollow"
-
-  [http.middlewares.authdl.basicAuth]
-    users = ["YOUR_USERNAME:YOUR_APR1_MD5_PASSWORD_HASH"]
 
 # --- Configuration TLS (Certificats) ---
 [tls]

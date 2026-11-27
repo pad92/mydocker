@@ -1,0 +1,318 @@
+# Unit tests for the OTLP branch of the vector_config pipeline: normalize,
+# the stream routes, redact_url_secrets and parse_http. Records are injected
+# at normalize in the shape the opentelemetry source gives them, and read
+# where they leave for the victorialogs sink.
+# Run with ./test_vector.sh (renders the compose file with .env.example first).
+tests:
+  - name: Docker record is flattened, cleaned and its URL secrets masked
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {
+            "stream-name": "docker",
+            "source_type": "opentelemetry",
+            "timestamp": t'2026-11-26T10:00:00Z',
+            "observed_timestamp": t'2026-11-26T10:00:01Z',
+            "severity_text": "INFO",
+            "severity_number": 9,
+            "flags": 0,
+            "dropped_attributes_count": 0,
+            "scope": {"name": "otelcol/filelog"},
+            "resources": {"host.name": "srv.example.com"},
+            "attributes": {
+              "container.name": "web",
+              "app.RequestPath": "/cb?state=1&code=abc123",
+              "app.msg": "login with token=t0k3n done"
+            },
+            "message": "GET /?api_key=k3y&monkey=1&sort=code HTTP/1.1"
+          }
+    outputs:
+      - extract_from: route_authentik._unmatched
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.log_stream, "docker")
+              assert_eq!(.host_name, "srv.example.com")
+              assert_eq!(.container_name, "web")
+              assert_eq!(.timestamp, t'2026-11-26T10:00:00Z')
+              assert_eq!(.severity, "INFO")
+              assert_eq!(.severity_number, 9)
+              # A secret name is masked; monkey= and the value "code" are not.
+              assert_eq!(.body, "GET /?api_key=[REDACTED]&monkey=1&sort=code HTTP/1.1")
+              assert_eq!(.app_requestpath, "/cb?state=1&code=[REDACTED]")
+              assert_eq!(.app_msg, "login with token=[REDACTED] done")
+              assert!(!exists(.resources))
+              assert!(!exists(.attributes))
+              assert!(!exists(.scope))
+              assert!(!exists(.flags))
+              assert!(!exists(.dropped_attributes_count))
+              assert!(!exists(.observed_timestamp))
+              assert!(!exists(.source_type))
+              assert!(!exists(."stream-name"))
+              assert!(!exists(.message))
+    no_outputs_from:
+      - parse_authentik
+      - route_streams._unmatched
+
+  - name: Map body becomes body_ fields, record attribute wins, bad stream name falls back
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {
+            "stream-name": "Files/../x",
+            "observed_timestamp": t'2026-11-26T10:00:01Z',
+            "resources": {"host.name": "resource.example.com", "service.name": "svc"},
+            "attributes": {"host.name": "record.example.com"},
+            "message": {"MESSAGE": "hello", "SYSLOG_IDENTIFIER": "cron", "nested": {"Key-1": "v"}}
+          }
+    outputs:
+      - extract_from: route_streams._unmatched
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.log_stream, "default")
+              assert_eq!(.host_name, "record.example.com")
+              assert_eq!(.service_name, "svc")
+              assert_eq!(.body_message, "hello")
+              assert_eq!(.body_syslog_identifier, "cron")
+              assert_eq!(.body_nested_key_1, "v")
+              assert!(!exists(.body))
+              # No record time: the collector receive time is used.
+              assert_eq!(.timestamp, t'2026-11-26T10:00:01Z')
+              assert!(!exists(.severity))
+
+  - name: Other body types are JSON, a record without any time gets one
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {"stream-name": "files", "message": [1, "two"]}
+    outputs:
+      - extract_from: route_streams._unmatched
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.log_stream, "files")
+              assert_eq!(.body, "[1,\"two\"]")
+              assert!(is_timestamp(.timestamp))
+
+  - name: Authentik container logs go to parse_authentik, secrets masked there too
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {
+            "stream-name": "docker",
+            "resources": {"host.name": "srv.example.com"},
+            "attributes": {
+              "container.name": "authentik_server",
+              "app.level": "info",
+              "app.path": "/application/o/authorize/?client_id=abc&code=s3cr3t",
+              "app.runtime": 12
+            },
+            "message": "{\"event\":\"/application/o/authorize/?code=s3cr3t\"}"
+          }
+    outputs:
+      - extract_from: parse_authentik
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.log_stream, "authentik")
+              assert_eq!(.ak_component, "server")
+              assert_eq!(.ak_kind, "http")
+              assert_eq!(.app_path, "/application/o/authorize/?client_id=abc&code=[REDACTED]")
+              assert_eq!(.body, "{\"event\":\"/application/o/authorize/?code=[REDACTED]\"}")
+    no_outputs_from:
+      - route_authentik._unmatched
+
+  - name: Traefik access log of an Authentik route stays in the traefik stream
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {
+            "stream-name": "traefik",
+            "attributes": {"container.name": "authentik_server", "app.RequestPath": "/?password=p"},
+            "message": "access"
+          }
+    outputs:
+      - extract_from: route_authentik._unmatched
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.log_stream, "traefik")
+              assert_eq!(.app_requestpath, "/?password=[REDACTED]")
+              assert!(!exists(.ak_kind))
+    no_outputs_from:
+      - parse_authentik
+
+  - name: Traefik status codes become integers, from float or string
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {
+            "stream-name": "traefik",
+            "attributes": {"container.name": "traefik", "app.DownstreamStatus": 302.0, "app.OriginStatus": "404"},
+            "message": "access"
+          }
+    outputs:
+      - extract_from: route_authentik._unmatched
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.app_downstreamstatus, 302)
+              assert_eq!(.app_originstatus, 404)
+
+  - name: HAProxy httplog line gives http_ fields, query secrets masked
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {
+            "stream-name": "journald",
+            "resources": {"host.name": "lb.example.com"},
+            "message": {
+              "SYSLOG_IDENTIFIER": "haproxy",
+              "MESSAGE": "192.0.2.10:51234 [26/Nov/2026:10:00:00.123] https~ web/srv1 0/0/1/5/6 404 1234 - - ---- 1/1/0/0/0 0/0 \"GET /login?user=bob&password=hunter2 HTTP/1.1\""
+            }
+          }
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.log_stream, "journald")
+              assert_eq!(.http_client_ip, "192.0.2.10")
+              assert_eq!(.http_frontend, "https~")
+              assert_eq!(.http_backend, "web")
+              assert_eq!(.http_server, "srv1")
+              assert_eq!(.http_method, "GET")
+              assert_eq!(.http_path, "/login?user=bob&password=[REDACTED]")
+              assert_eq!(.http_status, 404)
+              assert_eq!(.http_bytes, 1234)
+              assert_eq!(.http_ta_ms, 6)
+              assert!(!contains(string!(.body_message), "hunter2"))
+              assert!(!exists(.pve_kind))
+
+  - name: HAProxy aborted request and IPv6 client keep negative timers
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {
+            "stream-name": "journald",
+            "message": {
+              "SYSLOG_IDENTIFIER": "haproxy",
+              "MESSAGE": "2001:db8::5:40000 [26/Nov/2026:10:00:00.123] https~ web/<NOSRV> -1/-1/-1/-1/+3001 -1 +0 - - CR-- 1/1/0/0/0 0/0 \"POST /api HTTP/1.1\""
+            }
+          }
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.http_client_ip, "2001:db8::5")
+              assert_eq!(.http_server, "<NOSRV>")
+              assert_eq!(.http_status, -1)
+              assert_eq!(.http_bytes, 0)
+              assert_eq!(.http_ta_ms, 3001)
+              assert_eq!(.http_method, "POST")
+
+  - name: HAProxy line that is not a request and other daemons get no http_ fields
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {"stream-name": "journald", "message": {"SYSLOG_IDENTIFIER": "haproxy", "MESSAGE": "Proxy https started."}}
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {"stream-name": "journald", "message": {"SYSLOG_IDENTIFIER": "nginx", "MESSAGE": "192.0.2.10:51234 [26/Nov/2026:10:00:00.123] https~ web/srv1 0/0/1/5/6 200 1 - - ---- 1/1/0/0/0 0/0 \"GET / HTTP/1.1\""}}
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert!(!exists(.http_client_ip))
+              assert!(!exists(.http_status))
+
+  - name: URL secrets are masked outside Authentik, other journal lines kept
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {"stream-name": "docker", "attributes": {"container.name": "web", "app.path": "/cb?code=s3cr3t&x=1"}, "message": "ok"}
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {"stream-name": "journald", "message": {"SYSLOG_IDENTIFIER": "sshd", "MESSAGE": "pam: user=bob key=k3y"}}
+    outputs:
+      - extract_from: route_authentik._unmatched
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.app_path, "/cb?code=[REDACTED]&x=1")
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              # Only HAProxy journal lines are masked: key=value is common in
+              # daemon messages, masking them all would hide useful context.
+              assert_eq!(.body_message, "pam: user=bob key=k3y")
+
+  - name: camera-streamer client connections
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {"stream-name": "journald", "message": {"SYSLOG_IDENTIFIER": "camera-streamer", "MESSAGE": "util/http/http.c: HTTP8080/3: Client connected 192.0.2.7"}}
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {"stream-name": "journald", "message": {"SYSLOG_IDENTIFIER": "camera-streamer", "MESSAGE": "util/http/http.c: Client disconnected 192.0.2.8"}}
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              if .http_event == "connected" {
+                assert_eq!(.http_client_ip, "192.0.2.7")
+              } else {
+                assert_eq!(.http_event, "disconnected")
+                assert_eq!(.http_client_ip, "192.0.2.8")
+              }
+
+  - name: MESSAGE as an array of bytes is decoded, invalid UTF-8 replaced
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          # "util/http/http.c: Client connected 192.0.2.9 ", then "é" (195 169) and a lone 0xff.
+          bytes = [117,116,105,108,47,104,116,116,112,47,104,116,116,112,46,99,58,32,67,108,105,101,110,116,32,99,111,110,110,101,99,116,101,100,32,49,57,50,46,48,46,50,46,57,32,195,169,255]
+          . = {"stream-name": "journald", "message": {"SYSLOG_IDENTIFIER": "octoprint", "MESSAGE": bytes}}
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.body_message, "util/http/http.c: Client connected 192.0.2.9 é�")
+              assert_eq!(.http_event, "connected")
+              assert_eq!(.http_client_ip, "192.0.2.9")
+
+  - name: Proxmox daemon logs from journald go to the proxmox stream
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {"stream-name": "journald", "message": {"SYSLOG_IDENTIFIER": "pvedaemon", "PRIORITY": "6", "MESSAGE": "<root@pam> successful auth for user 'root@pam'"}}
+    outputs:
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.log_stream, "proxmox")
+              assert_eq!(.pve_kind, "auth")
+              assert_eq!(.pve_auth_result, "success")

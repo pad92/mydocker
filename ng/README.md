@@ -35,13 +35,46 @@ These environment variables are shared and used by multiple services in this sta
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
 | `DOCKER_CONFIG_PATH` | Persistent host directory path for volume mount: DOCKER_CONFIG_PATH. | *None (empty)* |
-| `LOCAL_CA_CERT_PATH` | Persistent host directory path for volume mount: LOCAL_CA_CERT_PATH. | *None (empty)* |
+| `LOCAL_CA_CERT_PATH` | Persistent host directory path for volume mount: LOCAL_CA_CERT_PATH. | `/usr/local/share/ca-certificates/example-root-ca.crt` |
 | `PGID` | Group ID matching host permissions to run the container. | *None (empty)* |
 | `PUID` | User ID matching host permissions to run the container. | *None (empty)* |
 | `SERIES_LOCAL_PATH` | Persistent host directory path for volume mount: SERIES_LOCAL_PATH. | *None (empty)* |
 | `TORRENTS_PATH` | Persistent host directory path for volume mount: TORRENTS_PATH. | *None (empty)* |
-| `TRAEFIK_FQDN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `TRAEFIK_FQDN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `TZ` | Timezone configuration for container operations and logs (e.g. Europe/Paris). | *None (empty)* |
+
+---
+
+## Access control (Authentik forward auth)
+
+Radarr, Sonarr, Bazarr, Lidarr, SABnzbd, and Prowlarr sit behind the `authentik@docker` middleware of the `management` stack. A browser that opens one of them is sent to the Authentik login first; only members of the `media-users` group get through. Add users to that group in Authentik (*Directory > Groups*).
+
+Each app also has its own application in Authentik (slugs `radarr`, `sonarr`, `bazarr`, `lidarr`, `sabnzbd`, `prowlarr`, library group *NG media*). These are bookmarks: they put a tile in the user portal and nothing else. Access is decided by the hidden *NG media* application, the same for all six apps. A forward-auth provider is tied to a host, and the apps share one, so per-app rights would need one subdomain per app. Do not bind another group to a bookmark expecting it to grant or restrict access: it only changes who sees the tile.
+
+Requirements:
+- The `management` stack runs Authentik, and `NG_HOST_LOCAL` in `management/.env` has the same value as `TRAEFIK_FQDN` here. The provider is created by the blueprint `management/authentik/blueprints/20-forward-auth-apps.yaml`. If the two values differ, Authentik does not recognise the host and refuses the request.
+- If Authentik is down, Traefik disables the protected routers: these apps answer 404 until it is back.
+
+Not protected:
+- **h5ai** (root of `TRAEFIK_FQDN`) stays public.
+- **Seerr** keeps its own login (Plex accounts) on `SEERR_DOMAIN`.
+- **API paths.** A second router per app (`<app>_api`) serves the paths below without the middleware. Each call still needs the app API key. Its rule is longer, so Traefik gives it a higher priority than the protected router. The rule matches whole path segments only: `/radarr/api/v3/movie` is served without forward auth, `/radarr/apix` stays protected.
+
+| App | Paths without forward auth |
+| :--- | :--- |
+| Radarr, Sonarr, Lidarr | `/<app>/api`, `/<app>/feed` (iCal feeds) |
+| Bazarr, SABnzbd | `/<app>/api` |
+| Prowlarr | `/prowlarr/api`, `/prowlarr/<id>/api` and `/prowlarr/<id>/download` (Torznab/Newznab endpoints) |
+
+Notes:
+- The apps should reach each other by container name on the `ng` network (for example `http://radarr:7878/radarr`), not through Traefik. Calls through Traefik only work on the API paths above.
+- Uptime Kuma monitors that probe the UI through Traefik get a 302 to the login page. Probe the `/<app>/api` path with the API key, or the container on the internal network.
+
+Native app login:
+- **Radarr, Sonarr, Lidarr, Prowlarr** have their own login switched off: `<APP>__AUTH__METHOD: External` in the compose file tells the app that the proxy handles it. The variable takes precedence over `AuthenticationMethod` in `config.xml`, so editing it in the UI has no effect. Remove the variable to get the login back.
+- **Bazarr and SABnzbd** have no such variable. Switch their login off by hand if you want it: Bazarr in *Settings > General > Security* (Authentication: None), SABnzbd in *Config > General > Security* (empty username and password).
+- The API key is still required on every API call, so the `<app>_api` routers and the links between apps keep working.
+- With the login off, the app trusts any client that reaches it directly, and its UI hands out the API key. Only Traefik must reach the UI: never publish a port of these apps, and keep in mind that any container on `traefik_gateway` or `ng` can open them without a login. `tests/test_stack.sh` checks the ports and the routers of the apps that set the variable.
 
 ---
 
@@ -178,13 +211,55 @@ Define these environment variables which are unique to this service:
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
-| `SEERR_DOMAIN` | Dedicated FQDN routed to Seerr (e.g. `requests.home.lan`). | *None (empty)* |
+| `SEERR_DOMAIN` | Dedicated FQDN routed to Seerr (e.g. `requests.example.lan`). | *None (empty)* |
 | `SEERR_PORT` | Configuration settings value for Seerr port. | `5055` |
 
 ### Notes
 - Radarr/Sonarr connections and the Plex link are configured from the Seerr web UI after first boot (no API key variable needed here).
 - Unlike the other services in this stack, the Seerr image runs as a fixed `node` user (UID/GID 1000) — it does not honor `PUID`/`PGID`. `chown 1000:1000` the `${DOCKER_CONFIG_PATH}/seerr` host directory before first start, or the container will fail to write its config.
 - Seerr does not support being served from a subpath (its client-side routing always navigates to root-relative paths, e.g. `/setup` instead of `/seerr/setup`). It is therefore routed on its own dedicated subdomain (`SEERR_DOMAIN`) rather than a `PathPrefix` under `TRAEFIK_FQDN`, consistent with other single-purpose stacks in this repo (e.g. `gitea`, `trilium`). Point `SEERR_DOMAIN` at the host via DNS before deploying.
+
+---
+
+## 9. h5ai (`h5ai`)
+
+### Role
+Read-only web file browser for the media and photo folders, served at the root of `TRAEFIK_FQDN`.
+
+### External Links
+- **Docker Image**: [pad92/docker-h5ai](https://hub.docker.com/r/pad92/docker-h5ai)
+
+### Service-Specific Configuration Variables
+
+| Variable Name | Description | Placeholder / Default |
+| :--- | :--- | :--- |
+| `H5AI_ADMIN_PASSWORD` | Admin page password, hashed at each start. Empty keeps the stored hash. | `CHANGEME` |
+| `H5AI_SHARE_01` ... `H5AI_SHARE_20` | One folder under `/share` each, as `<source>:/share/<name>`. Unset slots show nothing. | *None (empty)* |
+| `H5AI_NFS_01` ... `H5AI_NFS_05` | Path exported by `NFS_SERVER_IP`, mounted by a slot through the volume `h5ai_nfs_01` ... `h5ai_nfs_05`. | *None (empty)* |
+
+### Shared folders
+Compose cannot loop over a list, so `docker-compose.yml` holds 20 fixed slots, and each one takes its whole value from a variable. Adding, moving or removing a share only means changing a variable in `.env` or in the Portainer/Dockhand stack, then redeploying: the compose file and the git repository stay unchanged.
+
+```text
+H5AI_SHARE_01=movies:/share/movies
+H5AI_SHARE_02=/volume1/data/subvol-101-disk-0/downloads/Games:/share/games
+H5AI_SHARE_03=h5ai_nfs_01:/share/music
+H5AI_NFS_01=/volume1/music/library
+```
+
+The value is `<source>:<target>`, without options: the compose file appends `:ro`, so every share is read-only (adding `:ro` yourself makes the mount invalid). The target starts with `/share/`. The source is one of:
+
+| Source | Meaning |
+| :--- | :--- |
+| A path on the Docker host | Bind mount of that folder |
+| `h5ai_nfs_01` ... `h5ai_nfs_05` | The NFS path set in `H5AI_NFS_01` ... `H5AI_NFS_05` |
+| A volume of the stack (`movies`, `series`, `download`, `backups`...) | The same folder as the service that uses it |
+
+An unset slot mounts the empty volume `h5ai_unused` at `/.h5ai-unused/<slot>`, outside `/share`, so it never shows in h5ai. A `h5ai_nfs_*` volume that no slot uses is not created. A volume name with a typo stops the deploy with `refers to undefined volume`. Paths cannot contain spaces or `:`.
+
+More than 20 shares or 5 NFS paths needs new lines in `docker-compose.yml`, following the same pattern.
+
+After an NFS path changes, Docker keeps the old options of the existing volume: remove the volume (`docker volume rm <project>_h5ai_nfs_01`) once the container is stopped, then redeploy.
 
 ---
 

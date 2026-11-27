@@ -18,7 +18,7 @@ Define these environment variables which are unique to this service:
 | :--- | :--- | :--- |
 | `TUDUDI_ALLOWED_ORIGINS` | Configuration settings value for Tududi allowed origins. | *None (empty)* |
 | `TUDUDI_DATA_DIR` | Persistent host directory path for volume mount: TUDUDI_DATA_DIR. | *None (empty)* |
-| `TUDUDI_DOMAIN` | Traefik Host rule domain routing address (e.g., service.home.lan). | *None (empty)* |
+| `TUDUDI_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
 | `TUDUDI_INTERNAL_SSL_ENABLED` | Configuration settings value for Tududi internal ssl enabled. | *None (empty)* |
 | `TUDUDI_SESSION_SECRET` | Secret authentication credentials, token, or key value. | `CHANGEME` |
 | `TUDUDI_UPLOADS_DATA_DIR` | Persistent host directory path for volume mount: TUDUDI_UPLOADS_DATA_DIR. | *None (empty)* |

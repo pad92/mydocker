@@ -1,0 +1,1408 @@
+{
+  "uid": "victoria-http",
+  "title": "HTTP",
+  "tags": [
+    "http",
+    "traefik",
+    "victorialogs",
+    "victoria"
+  ],
+  "editable": false,
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "graphTooltip": 1,
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "victoria"
+      ],
+      "asDropdown": true,
+      "title": "Dashboards",
+      "includeVars": false,
+      "keepTime": true
+    },
+    {
+      "type": "link",
+      "title": "Services rendus",
+      "tooltip": "Vue globale",
+      "icon": "dashboard",
+      "url": "/d/victoria-services/services-rendus",
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "requesthost",
+        "label": "Host",
+        "type": "query",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "type": "fieldValue",
+          "field": "app_requesthost",
+          "query": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\"",
+          "refId": "requesthost"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "type": "fieldValue",
+          "field": "app_servicename",
+          "query": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\"",
+          "refId": "service"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "method",
+        "label": "Méthode",
+        "type": "query",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "type": "fieldValue",
+          "field": "app_requestmethod",
+          "query": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\"",
+          "refId": "method"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "client",
+        "label": "Client",
+        "type": "query",
+        "datasource": {
+          "type": "victoriametrics-logs-datasource",
+          "uid": "victorialogs"
+        },
+        "query": {
+          "type": "fieldValue",
+          "field": "app_clienthost",
+          "query": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\"",
+          "refId": "client"
+        },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "search",
+        "label": "Recherche (LogsQL)",
+        "type": "textbox",
+        "query": "*",
+        "current": {
+          "text": "*",
+          "value": "*"
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Vue d'ensemble",
+      "collapsed": false,
+      "panels": [],
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Requêtes",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | stats count() as n",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "Requêtes servies par Traefik sur la période. Les routeurs d'ingestion (_ingest@), qui reçoivent les logs et métriques de la stack, sont exclus pour ne pas noyer le trafic utilisateur."
+    },
+    {
+      "type": "stat",
+      "title": "Taux de 4xx",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | stats count() as total, count() if (app_downstreamstatus:>=400 app_downstreamstatus:<500) as e | math e*100/total as pct | fields pct",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 3,
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "Part des réponses 4xx (requête refusée ou introuvable). Souvent des robots qui sondent des chemins connus, ou une authentification refusée."
+    },
+    {
+      "type": "stat",
+      "title": "Taux de 5xx",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | stats count() as total, count() if (app_downstreamstatus:>=500) as e | math e*100/total as pct | fields pct",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "Part des réponses 5xx : le service derrière Traefik a échoué ou ne répond pas. Toute valeur durable est à examiner."
+    },
+    {
+      "type": "stat",
+      "title": "Latence p95",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | filter app_downstreamstatus:>0 not app_requestpath:=\"/user/events\" | stats quantile(0.95, app_duration) as p95",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ns",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "yellow"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 5,
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "95e centile de la durée des requêtes, mesurée par Traefik de bout en bout. Les WebSocket et les téléchargements longs la gonflent."
+    },
+    {
+      "type": "stat",
+      "title": "Volume envoyé",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | stats sum(app_downstreamcontentsize) as bytes",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "Octets envoyés aux clients sur la période."
+    },
+    {
+      "type": "stat",
+      "title": "Clients distincts",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | stats count_uniq(app_clienthost) as n",
+          "queryType": "stats"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "id": 7,
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "description": "Nombre d'adresses IP clientes différentes."
+    },
+    {
+      "type": "row",
+      "title": "Tendances",
+      "collapsed": false,
+      "panels": [],
+      "id": 8,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requêtes par service",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | stats by (app_servicename) count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "{{app_servicename}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Requêtes par service Traefik au fil du temps."
+    },
+    {
+      "type": "timeseries",
+      "title": "Réponses par classe de statut (0xx : WebSocket ou client parti)",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | math floor(app_downstreamstatus/100) as classe | stats by (classe) count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "{{classe}}xx"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Réponses par classe de statut. 0xx : connexion WebSocket ou client parti avant la réponse, sans erreur côté serveur."
+    },
+    {
+      "type": "timeseries",
+      "title": "Latence p95 par service",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | filter app_downstreamstatus:>0 not app_requestpath:=\"/user/events\" | stats by (app_servicename) quantile(0.95, app_duration) as p95",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "{{app_servicename}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ns",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "description": "95e centile de la durée des requêtes, par service. Un service dont la courbe monte seul pointe vers ce service plutôt que vers Traefik."
+    },
+    {
+      "type": "timeseries",
+      "title": "Erreurs 5xx par service",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | app_downstreamstatus:>=500 | stats by (app_servicename) count() as n",
+          "queryType": "statsRange",
+          "step": "5m",
+          "legendFormat": "{{app_servicename}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Réponses 5xx par service."
+    },
+    {
+      "type": "row",
+      "title": "Détail",
+      "collapsed": false,
+      "panels": [],
+      "id": 13,
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "table",
+      "title": "Hosts",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | stats by (app_requesthost) count() as n, count() if (app_downstreamstatus:>=400 app_downstreamstatus:<500) as e4xx, count() if (app_downstreamstatus:>=500) as e5xx, quantile(0.95, app_duration) if (app_downstreamstatus:>0 not app_requestpath:=\"/user/events\") as p95 | math round(p95/1000000, 0.1) as ms | sort by (n desc) | limit 30",
+          "queryType": "instant"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": false
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "n",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "e4xx",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "e5xx",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "p95",
+                "destinationType": "number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "app_requesthost": 0,
+              "n": 1,
+              "e4xx": 2,
+              "e5xx": 3,
+              "ms": 4,
+              "p95": 5
+            },
+            "renameByName": {
+              "app_requesthost": "host",
+              "n": "requêtes",
+              "e4xx": "4xx",
+              "e5xx": "5xx",
+              "ms": "p95 (ms)",
+              "p95": "p95 (ns)"
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 14,
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 12,
+        "h": 10
+      },
+      "description": "Par nom d'hôte demandé : volume, erreurs et latence."
+    },
+    {
+      "type": "table",
+      "title": "Chemins en erreur",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | app_downstreamstatus:>=400 | stats by (app_requesthost, app_requestpath, app_downstreamstatus) count() as n | sort by (n desc) | limit 30",
+          "queryType": "instant"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": false
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "n",
+                "destinationType": "number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "app_requesthost": 0,
+              "app_requestpath": 1,
+              "app_downstreamstatus": 2,
+              "n": 3
+            },
+            "renameByName": {
+              "app_requesthost": "host",
+              "app_requestpath": "chemin",
+              "app_downstreamstatus": "statut",
+              "n": "requêtes"
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 15,
+      "gridPos": {
+        "x": 12,
+        "y": 23,
+        "w": 12,
+        "h": 10
+      },
+      "description": "Chemins qui répondent le plus souvent en 4xx ou 5xx."
+    },
+    {
+      "type": "table",
+      "title": "Clients les plus actifs",
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | stats by (app_clienthost) count() as n, count() if (app_downstreamstatus:>=400) as erreurs, count_uniq(app_requesthost) as hosts | sort by (n desc) | limit 30",
+          "queryType": "instant"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "editorMode": "code",
+          "expr": "topk by (ip) (1, max by (ip, mac, name) (tlast_over_time(unpoller_client_uptime_seconds{ip!=\"\"}[$__range])) or max by (ip, mac, name) (tlast_over_time(unpoller_device_info{ip!=\"\"}[$__range])))",
+          "format": "table",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": false
+          },
+          "filter": {
+            "id": "byRefId",
+            "options": "A"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "n",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "erreurs",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "hosts",
+                "destinationType": "number"
+              }
+            ],
+            "fields": {}
+          },
+          "filter": {
+            "id": "byRefId",
+            "options": "A"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "Value #B": true
+            },
+            "renameByName": {
+              "ip": "app_clienthost",
+              "name": "unifi_name",
+              "mac": "unifi_mac"
+            },
+            "indexByName": {}
+          },
+          "filter": {
+            "id": "byRefId",
+            "options": "B"
+          }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "app_clienthost",
+            "mode": "outerTabular"
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "exclude",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "n",
+                "config": {
+                  "id": "isNull",
+                  "options": {}
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "n",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "app_clienthost": 0,
+              "unifi_name": 1,
+              "unifi_mac": 2,
+              "n": 3,
+              "erreurs": 4,
+              "hosts": 5
+            },
+            "renameByName": {
+              "app_clienthost": "client",
+              "unifi_name": "nom UniFi",
+              "unifi_mac": "MAC",
+              "n": "requêtes",
+              "erreurs": "erreurs (4xx, 5xx)",
+              "hosts": "hosts"
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 16,
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 12,
+        "h": 10
+      },
+      "description": "Clients classés par nombre de requêtes. Le nom et la MAC viennent d'UniFi quand l'IP y est connue."
+    },
+    {
+      "type": "table",
+      "title": "Chemins les plus lents (au moins 3 requêtes)",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | filter app_downstreamstatus:>0 not app_requestpath:=\"/user/events\" | stats by (app_requesthost, app_requestpath) count() as n, quantile(0.95, app_duration) as p95 | filter n:>=3 | math round(p95/1000000, 0.1) as ms | sort by (ms desc) | limit 30",
+          "queryType": "instant"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": false
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "n",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "p95",
+                "destinationType": "number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "app_requesthost": 0,
+              "app_requestpath": 1,
+              "n": 2,
+              "ms": 3,
+              "p95": 4
+            },
+            "renameByName": {
+              "app_requesthost": "host",
+              "app_requestpath": "chemin",
+              "n": "requêtes",
+              "ms": "p95 (ms)",
+              "p95": "p95 (ns)"
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 17,
+      "gridPos": {
+        "x": 12,
+        "y": 33,
+        "w": 12,
+        "h": 10
+      },
+      "description": "Chemins à la latence la plus élevée, avec au moins 3 requêtes pour écarter les cas isolés."
+    },
+    {
+      "type": "table",
+      "title": "Services",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | stats by (app_servicename) count() as n, count() if (app_downstreamstatus:>=500) as e5xx, quantile(0.95, app_originduration) if (app_downstreamstatus:>0 not app_requestpath:=\"/user/events\") as p95 | math round(p95/1000000, 0.1) as ms | sort by (n desc) | limit 30",
+          "queryType": "instant"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": false
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "n",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "e5xx",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "ms",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "p95",
+                "destinationType": "number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "app_servicename": 0,
+              "n": 1,
+              "e5xx": 2,
+              "ms": 3,
+              "p95": 4
+            },
+            "renameByName": {
+              "app_servicename": "service",
+              "n": "requêtes",
+              "e5xx": "5xx",
+              "ms": "p95 backend (ms)",
+              "p95": "p95 backend (ns)"
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 18,
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Par service Traefik : volume, taux d'erreur et latence."
+    },
+    {
+      "type": "table",
+      "title": "TLS et protocoles",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search | stats by (app_requestprotocol, app_tlsversion) count() as n | sort by (n desc)",
+          "queryType": "instant"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": false
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "n",
+                "destinationType": "number"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "app_requestprotocol": 0,
+              "app_tlsversion": 1,
+              "n": 2
+            },
+            "renameByName": {
+              "app_requestprotocol": "protocole",
+              "app_tlsversion": "TLS",
+              "n": "requêtes"
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 19,
+      "gridPos": {
+        "x": 12,
+        "y": 43,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Répartition des versions TLS et des protocoles HTTP. Du TLS 1.0 ou 1.1 désigne un client obsolète."
+    },
+    {
+      "type": "row",
+      "title": "Logs",
+      "collapsed": false,
+      "panels": [],
+      "id": 20,
+      "gridPos": {
+        "x": 0,
+        "y": 51,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Dernières erreurs (4xx, 5xx)",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "editorMode": "code",
+          "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($requesthost) app_servicename:in($service) app_requestmethod:in($method) app_clienthost:in($client) $search app_downstreamstatus:>=400 | format \"<app_downstreamstatus> <app_requestmethod> <app_requesthost><app_requestpath> client=<app_clienthost> service=<app_servicename>\" as _msg | sort by (_time desc) | limit 200",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false
+      },
+      "id": 21,
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 14
+      },
+      "description": "Dernières réponses 4xx et 5xx, avec l'hôte, le chemin et le client."
+    }
+  ]
+}

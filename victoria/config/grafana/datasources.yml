@@ -1,0 +1,20 @@
+apiVersion: 1
+datasources:
+  - name: VictoriaLogs
+    uid: victorialogs
+    type: victoriametrics-logs-datasource
+    access: proxy
+    url: http://victorialogs:9428
+    isDefault: true
+    editable: false
+  - name: VictoriaMetrics
+    uid: victoriametrics
+    type: prometheus
+    access: proxy
+    url: http://victoriametrics:8428
+    editable: false
+    jsonData:
+      prometheusType: Prometheus
+      # Longest scrape interval (unpoller, synology, freebox): keeps
+      # $__rate_interval at 4m or more, so a rate always sees 2 samples.
+      timeInterval: 60s

@@ -1,124 +1,217 @@
 # Management Stack
 
-This stack deploys the following services:
+This stack runs Traefik, Authentik, Portainer, and Uptime Kuma.
 
-## Common Configuration Variables
-These environment variables are shared and used by multiple services in this stack:
+## Shared settings
 
-| Variable Name | Description | Placeholder / Default |
-| :--- | :--- | :--- |
-| `CA_CERT_NAME` | Configuration settings value for Ca cert name. | *None (empty)* |
-| `MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR` | Persistent host directory path for volume mount: MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR. | *None (empty)* |
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `CA_CERT_NAME` | CA certificate filename mounted into Traefik and Uptime Kuma | `example-root-ca.crt` |
+| `MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR` | Host directory containing the CA certificate | `/usr/local/share/ca-certificates` |
 
----
+## Traefik
 
-## 1. Traefik (`traefik`)
+Traefik routes HTTP and HTTPS traffic for the other Docker stacks. Its ACME resolver `stepca` uses the step-ca endpoint and email configured by `ACME_CA_SERVER` and `ACME_EMAIL`. `ACME_CA_SERVER` is required: Compose refuses to start without it, otherwise Traefik would fall back to Let's Encrypt. The dashboard host is set by `TRAEFIK_HOST_LOCAL`. The dashboard (`/traefik/`) and its API (`/api/`) on that host are behind Authentik forward auth, like the other administration tools: only members of `traefik-users` get in.
 
-### Role
-Service container running traefik.
+The static configuration is only defined by the `command` flags in `docker-compose.yml`. Traefik reads a single static source, so do not mount a `traefik.toml` at `/etc/traefik/`: Traefik would load it and silently ignore every flag, including `caserver`.
 
-### External Links
-- **Official Project**: [https://hub.docker.com/r/traefik](https://hub.docker.com/r/traefik)
-- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/_/traefik)
+The active dynamic configuration is `traefik_dynamic.toml`. Start from `traefik_dynamic.toml.example` and keep host-specific addresses and authentication data in the ignored active file.
 
-### Service-Specific Configuration Variables
-Define these environment variables which are unique to this service:
+## Authentik
 
-| Variable Name | Description | Placeholder / Default |
-| :--- | :--- | :--- |
-| `ACME_CA_SERVER` | Configuration settings value for Acme ca server. | *None (empty)* |
-| `ACME_EMAIL` | Configuration settings value for Acme email. | *None (empty)* |
-| `TRAEFIK_HOST_LOCAL` | Internal domain routing host rule (e.g. local.home.lan). | *None (empty)* |
+Authentik is the identity provider (SSO). It runs as three containers:
 
----
+| Container | Role | Networks |
+| --- | --- | --- |
+| `authentik_postgresql` | PostgreSQL 16 database | `authentik` |
+| `authentik_server` | Web UI, API, and the embedded outpost that answers Traefik | `authentik`, `traefik_gateway` |
+| `authentik_worker` | Background tasks (e-mail, blueprints, cleanup) | `authentik` |
 
-## 2. CrowdSec (`crowdsec`)
+Redis is not used: since 2025.10, Authentik keeps its cache and task queue in PostgreSQL. No port is published on the host; Traefik is the only way in.
 
-### Role
-Open-source security engine that analyzes Traefik access logs and blocks malicious IPs via the bouncer plugin.
+The Compose file follows the [official one](https://goauthentik.io/compose.yml) with these differences:
 
-### External Links
-- **Official Project**: [https://www.crowdsec.net](https://www.crowdsec.net)
-- **Traefik Bouncer Plugin**: [https://plugins.traefik.io/plugins/6335346ca4caa9ddeffda116/crowdsec-bouncer-traefik-plugin](https://plugins.traefik.io/plugins/6335346ca4caa9ddeffda116/crowdsec-bouncer-traefik-plugin)
-- **Docker Image**: [crowdsecurity/crowdsec](https://hub.docker.com/r/crowdsecurity/crowdsec)
+- The worker runs without `user: root` and without the Docker socket. The official file mounts them so Authentik can deploy extra outposts as containers. Forward auth with Traefik only needs the embedded outpost, and a writable Docker socket gives root on the host.
+- Error reporting (Sentry) and startup analytics are disabled.
+- The data lives in `MANAGEMENT_AUTHENTIK_DATA_DIR` instead of a named volume.
 
-### Service-Specific Configuration Variables
+### Settings
 
-| Variable Name | Description | Placeholder / Default |
-| :--- | :--- | :--- |
-| `CROWDSEC_BOUNCER_API_KEY` | API key for the Traefik bouncer to query the CrowdSec LAPI. | *None (empty)* |
-| `MANAGEMENT_CROWDSEC_CONFIG_DIR` | Persistent host directory path for CrowdSec configuration. | *None (empty)* |
-| `MANAGEMENT_CROWDSEC_DATA_DIR` | Persistent host directory path for CrowdSec data. | *None (empty)* |
+| Variable | Purpose |
+| --- | --- |
+| `AUTHENTIK_HOST_LOCAL` | Internal host name of the Authentik UI, for example `auth.example.lan` |
+| `AUTHENTIK_HOST_PUBLIC` | Optional public host name, for example `auth.example.com`. Leave empty to keep Authentik internal. When set, forward auth logins use it (see [Internal and public exposure](#internal-and-public-exposure)) |
+| `AUTHENTIK_SECRET_KEY` | Signs sessions and tokens. Never change it after the first start |
+| `AUTHENTIK_PG_PASS` | PostgreSQL password |
+| `AUTHENTIK_TAG` | Image version, pinned. Authentik no longer publishes `latest` |
+| `MANAGEMENT_AUTHENTIK_DATA_DIR` | Host directory for `database/`, `data/`, `certs/`, and `custom-templates/` |
+| `NG_HOST_LOCAL` | Host name of the `ng` media apps, protected by forward auth. Must equal `TRAEFIK_FQDN` in `ng/.env` |
 
-### Obtaining `CROWDSEC_BOUNCER_API_KEY`
-
-**Option A**: use the `BOUNCER_KEY_traefik` environment variable (already set in `docker-compose.yml`).
-Choose a random key, set it in your `.env` file, and CrowdSec will register it automatically on first start.
+Generate each secret with:
 
 ```bash
-# Generate a random key
-openssl rand -base64 32
+openssl rand -base64 60 | tr -d '\n'
 ```
 
-**Option B**: generate the key from a running CrowdSec instance.
+### First start
+
+The Compose file requires `AUTHENTIK_HOST_LOCAL`, `AUTHENTIK_PG_PASS`, `AUTHENTIK_SECRET_KEY`, `MANAGEMENT_AUTHENTIK_DATA_DIR`, `UPTIME_HOST_LOCAL`, `NG_HOST_LOCAL`, `PORTAINER_HOST_LOCAL`, `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL`, `TRAEFIK_HOST_LOCAL`, `FORGEJO_HOST_LOCAL`, `GRAMPSWEB_HOST_LOCAL`, `IMMICH_HOST_LOCAL`, `DONETICK_HOST_LOCAL`, `UNIFI_HOST_LOCAL`, `NAS_HOST_LOCAL`, and `SWITCH_HOST_LOCAL` for the whole project. On a host whose `.env` predates Authentik, add them before running any `docker compose` command in this stack: without them, even `docker compose up -d traefik` stops with a "Set ... in .env" error.
+
+The server and worker run as UID 1000. Create the directories with that owner before the first start. The shell does not read `.env`, so set the variable first; the `:?` makes the commands stop instead of running on `/data`, `/certs`, and `/custom-templates` when it is empty:
 
 ```bash
-docker exec crowdsec cscli bouncers add traefik-bouncer
+MANAGEMENT_AUTHENTIK_DATA_DIR=/path/to/authentik
+mkdir -p "${MANAGEMENT_AUTHENTIK_DATA_DIR:?}"/{data,certs,custom-templates}
+chown -R 1000:1000 "${MANAGEMENT_AUTHENTIK_DATA_DIR:?}"/{data,certs,custom-templates}
+docker compose up -d authentik_postgresql authentik_server authentik_worker
 ```
 
-Copy the displayed API key into `CROWDSEC_BOUNCER_API_KEY` in your `.env` file.
-In this case, remove the `BOUNCER_KEY_traefik` environment variable from the `crowdsec` service in `docker-compose.yml` to avoid conflicts.
+Then open `https://<AUTHENTIK_HOST_LOCAL>/if/flow/initial-setup/` to set the password of the `akadmin` account. Do this right away: until then, anyone who reaches the URL can claim the admin account.
 
-### Usage
-The middleware `crowdsec@file` can be applied to any Traefik router (file provider or Docker labels) to enforce CrowdSec decisions.
+### Internal and public exposure
 
----
+The `authentik` router answers on `AUTHENTIK_HOST_LOCAL` and the `authentik_pub` router, when the variable is set, on `AUTHENTIK_HOST_PUBLIC`. Each router has its own certificate, so if step-ca cannot validate the public name, the internal one keeps working. Publishing on the internet goes through the same path as the other public services: Cloudflare Tunnel (`cloudflared` stack) forwards the public host name to Traefik. Add the public host name to the tunnel ingress rules in the Cloudflare dashboard; nothing in this stack opens a port.
 
-## 3. Portainer (`portainer`)
+**Pick one canonical URL.** An identity provider does not behave like an ordinary web app when it has two names:
 
-### Role
-Service container running portainer/portainer-ee.
+- **Sessions.** The login cookie is set per host. A user logged in on `auth.example.lan` is not logged in on `auth.example.com`.
+- **Passkeys (WebAuthn).** A passkey is bound to the domain it was created on. A passkey registered on `auth.example.lan` does not work on `auth.example.com`, and the reverse.
+- **OIDC.** The issuer URL of a provider contains the host name the request came on. An application configured with the `.lan` issuer rejects tokens issued through the public name.
+- **Forward auth.** The embedded outpost redirects browsers to a single Authentik URL. If that URL is the `.lan` one, a visitor coming from the internet is sent to a host name they cannot resolve.
 
-### External Links
-- **Official Project**: [https://hub.docker.com/r/portainer/portainer-ee](https://hub.docker.com/r/portainer/portainer-ee)
-- **Docker Image Maintainer**: [Official Hub Registry](https://hub.docker.com/r/portainer/portainer-ee)
+The setup that avoids all four problems: use the public name everywhere (OIDC applications, outpost, passkeys), and make it resolve to Traefik on the LAN with a DNS rewrite in AdGuard (split-horizon DNS). LAN traffic then never leaves the network, and `auth.example.lan` stays as a fallback to reach the admin UI if the public DNS or the tunnel is down. The forward auth blueprint follows this rule for the URL the outpost uses (`authentik_host`): it is `AUTHENTIK_HOST_PUBLIC` when set, otherwise `AUTHENTIK_HOST_LOCAL`. Do not change it in the admin UI, because the next blueprint apply overwrites it.
 
-### Service-Specific Configuration Variables
-Define these environment variables which are unique to this service:
+**Setting `AUTHENTIK_HOST_PUBLIC` therefore also moves every forward auth login, LAN included, to the public name.** Before you set it, the public name must work end to end: tunnel ingress rule, certificate, and the AdGuard DNS rewrite. Without the rewrite, LAN logins go out through Cloudflare. If the tunnel is down, nobody can log in to the protected services. After changing the variable, run `docker compose up -d authentik_worker`, then force the blueprint apply (see [Blueprints](#blueprints)).
 
-| Variable Name | Description | Placeholder / Default |
-| :--- | :--- | :--- |
-| `MANAGEMENT_PORTAINER_DATA_DIR` | Persistent host directory path for volume mount: MANAGEMENT_PORTAINER_DATA_DIR. | *None (empty)* |
-| `PORTAINER_HOST_LOCAL` | Configuration settings value for Portainer host local. | *None (empty)* |
+**Before publishing**, harden the instance. Once Authentik is public, it is the front door of every service it protects:
 
----
+- MFA is enforced for every user by the `10-mfa.yaml` blueprint (see [Blueprints](#blueprints)). Set a strong `akadmin` password, or replace `akadmin` with a named admin account and deactivate `akadmin`.
+- Keep the default reputation policy, which slows down brute force by client IP, and check that the logs show real client IPs. Behind Cloudflare Tunnel, Traefik sees `cloudflared` as the client. Traefik only keeps the `X-Forwarded-For` header sent by `cloudflared` if the source address of `cloudflared` is in `--entrypoints.websecure.forwardedHeaders.trustedIPs`. That flag is not set today: add it with the exact source address of `cloudflared` (host network, so a loopback or host address) after checking it in the Traefik access log. Never trust a wide range: any client in it could fake its IP.
+- Disable enrollment and recovery flows you do not use, so that the public host offers nothing but login.
 
-## 4. Uptime Kuma (`uptime-kuma`)
+### Protecting a service with Traefik forward auth
 
-### Role
-Self-hosted network host ping monitor and service status monitor.
+Forward auth works like this: for each request on a protected router, Traefik first asks Authentik (`/outpost.goauthentik.io/auth/traefik`) whether the user is logged in. If not, Authentik answers with a redirect to its login page. If yes, Traefik forwards the request to the service and adds `X-authentik-*` headers (user name, e-mail, groups).
 
-### External Links
-- **Official Project**: [https://github.com/louislam/uptime-kuma](https://github.com/louislam/uptime-kuma)
-- **Docker Image Maintainer**: [Louis Lam](https://hub.docker.com/r/louislam/uptime-kuma)
+Three pieces are needed. The first two are already in this stack.
 
-### Service-Specific Configuration Variables
-Define these environment variables which are unique to this service:
+1. The `authentik` middleware, declared in the labels of `authentik_server`. Other stacks use it as `authentik@docker`.
+2. The `authentik_outpost` router. It sends `/outpost.goauthentik.io/` on any host to Authentik, which receives the login callback there. Its priority (1000) keeps it ahead of the service routers. Because it has no `Host()`, it also answers on public host names forwarded by Cloudflare Tunnel, even when `AUTHENTIK_HOST_PUBLIC` is empty: the outpost endpoints are reachable from the internet, though the login itself happens on the Authentik host. To keep Authentik strictly internal, replace the rule with `Host(...) && PathPrefix(...)` listing only the protected hosts.
+3. A provider and an application in Authentik, plus the middleware on the service router. Both are per service, see below. Uptime Kuma, Portainer, VictoriaLogs, VictoriaMetrics, the Grafana of the victoria stack, the Traefik dashboard, and the `ng` media apps are already set up this way.
 
-| Variable Name | Description | Placeholder / Default |
-| :--- | :--- | :--- |
-| `MANAGEMENT_UPTIME_KUMA_DATA_DIR` | Persistent host directory path for volume mount: MANAGEMENT_UPTIME_KUMA_DATA_DIR. | *None (empty)* |
-| `UPTIME_HOST_LOCAL` | Configuration settings value for Uptime host local. | *None (empty)* |
+Per service:
 
----
+1. In `authentik/blueprints/20-forward-auth-apps.yaml`, copy the Uptime Kuma entries: a group, a **Proxy Provider** in `forward_single` mode, an application, and a policy binding between them. Take the host name from a new `BLUEPRINT_*` variable on `authentik_worker`, never write it in the file.
+2. Add the provider to the `providers` list of the embedded outpost at the end of the file. Without this step, Authentik answers 404 and the service stays unreachable.
+3. Run `./tests/test_blueprints.sh` (extend its checks for the new service), then `docker compose up -d authentik_worker`.
+4. Add the middleware to the HTTPS router of the service, for example in its `docker-compose.yml`:
 
-## Global / Other Variables
-The following variables are defined in `.env.example` but are either global configs or not directly referenced in the compose services:
+   ```yaml
+   traefik.http.routers.uptime.middlewares: "authentik@docker"
+   ```
 
-| Variable Name | Description | Placeholder / Default |
-| :--- | :--- | :--- |
-| `HOMARR_HOST_LOCAL` | Configuration settings value for Homarr host local. | *None (empty)* |
-| `HOMARR_SECRET_ENCRYPTION_KEY` | Secret authentication credentials, token, or key value. | `CHANGEME` |
-| `HOMEPAGE_HOST_LOCAL` | Configuration settings value for Homepage host local. | *None (empty)* |
-| `MIRROR_HOST_LOCAL` | Configuration settings value for Mirror host local. | *None (empty)* |
+   If the router already has middlewares, list them separated by commas. Put `authentik@docker` first so the request is authenticated before anything else touches it.
 
+For a service in the file provider (`traefik_dynamic.toml`, for example Proxmox), use the same name:
+
+```toml
+[http.routers.proxmox]
+  middlewares = ["authentik@docker"]
+```
+
+The **Forward auth (domain level)** mode protects many hosts with a single provider and shares the session cookie across a domain such as `example.lan`. It saves configuration but gives every protected service the same access rules.
+
+### Behaviour and limits
+
+- **Fail closed.** If `authentik_server` is stopped, the `authentik@docker` middleware disappears and Traefik disables the routers that reference it: the protected services answer 404 instead of being served without authentication. Portainer is protected, so it is unreachable while Authentik is down: repair Authentik over SSH with `docker compose` in this directory, not through Portainer. The Traefik dashboard goes down with it; read Traefik's state with `docker compose logs traefik` instead.
+- **Monitoring.** Uptime Kuma probes a protected service through Traefik and gets the login redirect. Check the service on its internal address, or accept the 302 status as healthy.
+- **Uptime Kuma push monitors.** Uptime Kuma itself is protected, except `/api/push/`: the `uptime_push` router serves that path without the middleware, so scripts and cron jobs can still report heartbeats. Push URLs carry their own token.
+- **APIs and mobile apps.** Clients that cannot follow a browser login (API tokens, mobile apps, WebDAV) break behind forward auth. For those services, use the native OIDC/SAML support of the application with Authentik as provider, or leave the API path outside the protected router. Forgejo takes the first route (Git over HTTPS, API, runner): see [its README](../forgejo/README.md#login-with-authentik-oidc) for the source to add in Forgejo with the client secret. The victoria stack takes the second: routers without the forward-auth middleware serve only `POST` on the two OTLP ingestion paths, behind HTTP Basic auth, see [its README](../victoria/README.md#4-access-control).
+- **Trusted headers.** The service must trust the `X-authentik-*` headers only because they come from Traefik. Do not publish a protected service on a host port, or a client could reach it directly and forge those headers.
+- **Backups.** Back up `MANAGEMENT_AUTHENTIK_DATA_DIR` and `AUTHENTIK_SECRET_KEY` together. For the database, prefer a `pg_dump` over a copy of the files of a running server.
+- **Upgrades.** Change `AUTHENTIK_TAG` one minor version at a time and read the [release notes](https://docs.goauthentik.io/releases/) first: migrations are not reversible. After the upgrade, re-apply the branding (see [Branding](#branding)).
+
+### Blueprints
+
+The Authentik configuration is versioned as [blueprints](https://docs.goauthentik.io/customize/blueprints/) in `authentik/blueprints/`, mounted read-only on the worker at `/blueprints/custom`. The worker applies them at start and every time a file changes.
+
+| File | Effect |
+| --- | --- |
+| `10-mfa.yaml` | The default authentication flow asks for a second factor (TOTP, WebAuthn, or a static recovery code). A user without one must enroll TOTP or WebAuthn at the next login. |
+| `20-forward-auth-apps.yaml` | Forward auth providers and applications, their access groups, and the provider list of the embedded outpost. Uptime Kuma (`uptime-kuma-users`), Portainer (`portainer-users`), the `ng` media apps (`media-users`, one provider for the Radarr, Sonarr, Bazarr, Lidarr, SABnzbd, and Prowlarr paths on `NG_HOST_LOCAL`, plus a bookmark with no provider for h5ai at the root of that host, which stays public), VictoriaLogs (`victorialogs-users`, on `VICTORIA_LOGS_HOST_LOCAL`), VictoriaMetrics (`victoriametrics-users`, on `VICTORIA_METRICS_HOST_LOCAL`), and Victoria Grafana (`victoria-grafana-users`, on `VICTORIA_GRAFANA_HOST_LOCAL`). Also four OIDC providers, which are not forward auth providers and stay off the outpost: Forgejo (`forgejo-users`, redirect URI on `FORGEJO_HOST_LOCAL`), Portainer SSO (hidden application `portainer-sso`, group `portainer-users`, redirect URI on `PORTAINER_HOST_LOCAL`), and Gramps Web (redirect URI on `GRAMPSWEB_HOST_LOCAL`, open to `grampsweb-owners`, `grampsweb-editors`, and `grampsweb-members`, whose names Gramps Web maps to its roles; see `grampsweb/README.md`), and Immich (`immich-users`, redirect URIs on `IMMICH_HOST_LOCAL`; see `immich/README.md`). Also three bookmarks with no provider for network devices outside this stack, in the *Infrastructure* library group and visible to `infra-users`: UniFi (`UNIFI_HOST_LOCAL`), the Synology NAS (`NAS_HOST_LOCAL`), and the Zyxel switch (`SWITCH_HOST_LOCAL`, a host name or an IP address). Each device keeps its own login. Each visible application also gets an icon, a description, and a group in the library (*Administration*, *NG media*, *Genealogy*, *Photos*, or *Infrastructure*). |
+| `30-branding.yaml` | Look of the login page and of the user interface: title *Homelab*, logo, favicon, dark theme, and background. See [Branding](#branding). |
+
+How they behave:
+
+- **No private data.** The files contain no host name, login, or address. Host names come from the `BLUEPRINT_*` environment variables of `authentik_worker`, built from `.env`, and `tests/test_stack.sh` fails if a domain, URL, e-mail, or IP shows up in them.
+- **Applied when the file changes.** Authentik re-applies a blueprint when the hash of its file changes, not when an environment variable does. After changing a host name in `.env`, recreate the worker (`docker compose up -d authentik_worker`), wait about a minute, then force an apply under *Customization > Blueprints* (Apply button) or with `docker compose exec authentik_worker ak apply_blueprint custom/20-forward-auth-apps.yaml`. Do not run it right after `up -d`: the worker applies its blueprints at startup, and the two concurrent applies can deadlock in PostgreSQL (`deadlock detected` on `guardian_rolemodelpermission`). If that happens, wait and run the command again; an apply is idempotent.
+- **The file wins.** Each apply resets the fields it declares. Change those fields in the file, not in the admin UI. Fields it does not declare (users, group members, other applications) stay as set in the UI.
+- **Fail closed.** An application is only reachable by members of its group, for example `uptime-kuma-users`. Nobody is a member at first, administrators included: add users under *Directory > Groups*.
+- **Library cache after a group change.** Authentik caches each user's application list for 24 hours. Creating an application or changing a binding clears that cache, but adding a user to a group does not, so the new tiles stay hidden from that user's library. Access itself is not cached and works at once. To show the tiles now, clear the cache, then reload the library:
+
+  ```bash
+  docker compose exec -T authentik_worker ak shell -c "from django.core.cache import cache; from authentik.core.api.applications import user_app_cache_key; cache.delete_many(cache.keys(user_app_cache_key('*')))"
+  ```
+- **Removing an entry from a file does not delete the object.** Delete it in the admin UI as well.
+
+`tests/test_blueprints.sh` applies the blueprints on a throw-away Authentik (PostgreSQL and worker on an internal Docker network, no published port, removed at the end), checks the resulting objects, and applies them a second time to check that nothing is duplicated. It pulls the Authentik and PostgreSQL images if needed and takes one to three minutes.
+
+### Branding
+
+The logo, favicon, background, and application icons are SVG files in `authentik/media/`, mounted read-only on `authentik_server` at `/data/media/public/homelab`. The blueprints name them `homelab/<file>`; Authentik serves them from its own host with a signed URL that expires after 15 minutes.
+
+- **Title after the first start or an upgrade.** The *Default - Authentication flow* blueprint sets the login title to "Welcome to authentik!". Authentik applies every new or changed blueprint at the same time, in no set order, so on the first start, and after an upgrade that changes that file, the default title may win. Check the login page and, if needed, re-apply ours: `docker compose exec authentik_worker ak apply_blueprint custom/30-branding.yaml`.
+- **Background.** Authentik 2026.8 ignores the brand's default background on flow pages and shows its stock image. The blueprint therefore sets the background on each flow a user sees: login, MFA enrolment (static, TOTP, WebAuthn), and logout. A flow you add needs the same `background` field.
+- **Brand attributes.** The blueprint replaces the `attributes` of the default brand as a whole (they hold the dark theme). Add any other brand attribute to the file, not in the admin UI, or the next apply removes it.
+- **Adding a file.** Put it in `authentik/media/` and name it in a blueprint. `tests/test_media.sh` fails on a file that no blueprint names, on a name with no file, and on an SVG that is not inert: an SVG opened directly runs as a page of the Authentik host, so it must hold no script, event handler, embedded document, or external reference.
+- **Icon sources.** `logo.svg`, `favicon.svg`, `background.svg`, `icons/victorialogs.svg`, `icons/victoriametrics.svg`, `icons/victoria-grafana.svg`, `icons/h5ai.svg`, `icons/immich.svg`, `icons/traefik.svg`, and `icons/donetick.svg` are made for this repository. The other icons come from [homarr-labs/dashboard-icons](https://github.com/homarr-labs/dashboard-icons) (Apache-2.0), `icons/zyxel.svg` cropped to the logo mark; the logos themselves remain the trademarks of their projects.
+
+### Logs and alerts
+
+The logs of the three containers reach VictoriaLogs with the other Docker logs. Vector moves them to the `authentik` stream and adds `ak_*` fields (component, normalized level, client IP, event action and user, forward-auth host), see [the victoria README](../victoria/README.md#authentik-logs-parse_authentik-authentik-stream). The dashboard *Sécurité — Authentik* and the four alerts built on those fields (failed login burst, sensitive event, errors, server or worker silent for 10 minutes) run in the victoria stack: vmalert-logs evaluates the rules, Alertmanager sends the SMS, and the Grafana of that stack shows the dashboard. See [Alerting](../victoria/README.md#alerting) and [Grafana](../victoria/README.md#grafana).
+
+- **Container names.** The pipeline selects the records whose `container_name` contains `authentik_`. Renaming a container sends its logs back to the `docker` stream, and `authentik_logs_silent` fires for `server` or `worker`.
+- **Blueprint deadlock.** The `deadlock detected` error of a concurrent blueprint apply (see [Blueprints](#blueprints)) is logged by PostgreSQL as `ERROR` and can trigger `authentik_errors`. Re-running the apply is enough.
+- **Client IPs.** Failed logins are reported by client IP. Behind Cloudflare Tunnel, that IP is only the real one once the `trustedIPs` setting described in [Internal and public exposure](#internal-and-public-exposure) is in place.
+
+### Host names of other stacks
+
+`VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL`, `FORGEJO_HOST_LOCAL`, `GRAMPSWEB_HOST_LOCAL`, `IMMICH_HOST_LOCAL`, and `DONETICK_HOST_LOCAL` only feed the blueprints. They must equal `VICTORIA_LOGS_DOMAIN`, `VICTORIA_METRICS_DOMAIN`, `VICTORIA_GRAFANA_DOMAIN`, `FORGEJO_DOMAIN`, `GRAMPSWEB_DOMAIN`, `TRAEFIK_HOST_LOCAL` (immich), and `TODO_DOMAIN` (todo) in the `.env` of those stacks: a different value gives a provider that never matches (VictoriaLogs, VictoriaMetrics, or Grafana answers 404 through the middleware) or a redirect URI that Authentik rejects (Forgejo, Gramps Web, Immich, or Donetick login fails with "redirect URI error").
+
+## Portainer
+
+Portainer manages the Docker environment. Set `MANAGEMENT_PORTAINER_DATA_DIR` to its existing data directory and `PORTAINER_HOST_LOCAL` to its host name.
+
+The whole Portainer host is behind Authentik forward auth (group `portainer-users`). Forward auth only decides who reaches Portainer: Portainer still keeps its own users and asks for a login. The blueprint therefore also creates an OIDC provider, `Portainer SSO`, so that the Portainer login goes through Authentik too (see below). There is no bypass router for `/api`: the web UI calls the API with the browser session, so a bypass would expose everything that Authentik protects. Scripts that call the Portainer API with an access token (`X-API-Key`) through Traefik therefore get the login redirect. Call them on the container from the `traefik_gateway` network (`http://portainer:9000`) instead.
+
+### Login with Authentik (OIDC)
+
+The blueprint creates the `Portainer SSO` provider (client ID `portainer`) and the `portainer-sso` application, hidden from the Authentik library because the `Portainer` forward auth application already opens the same host. Both applications are bound to `portainer-users`, so the same people pass both checks.
+
+Portainer exchanges the OAuth code with Authentik server-side, over HTTPS. The Compose file mounts the step-ca root (`CA_CERT_NAME`) in `/etc/ssl/certs` of the container for that call. Recreate the container once after this change (`docker compose up -d portainer`): without the root, the login fails with a TLS error in the Portainer logs.
+
+Then, in Portainer, go to **Settings > Authentication**, pick **OAuth**, then **Custom**:
+
+| Field | Value |
+| --- | --- |
+| Client ID | `portainer` |
+| Client secret | In Authentik, **Applications > Providers > Portainer SSO**, copy the generated secret. |
+| Authorization URL | `https://<Authentik host>/application/o/authorize/` |
+| Access token URL | `https://<Authentik host>/application/o/token/` |
+| Resource URL | `https://<Authentik host>/application/o/userinfo/` |
+| Redirect URL | `https://<PORTAINER_HOST_LOCAL>/`, with the final slash: Authentik matches the URI exactly. |
+| Logout URL | `https://<Authentik host>/application/o/portainer-sso/end-session/` |
+| User identifier | `preferred_username` |
+| Scopes | `email openid profile` |
+
+`<Authentik host>` is the name the blueprints use, `AUTHENTIK_HOST_PUBLIC` when set, else `AUTHENTIK_HOST_LOCAL`.
+
+Turn on **Automatic user provisioning** if new Authentik users should get a Portainer account on first login (with no access until an administrator grants it). An existing Portainer administrator keeps the rights only if the Authentik username is the same as the Portainer username. Test the OAuth login in a private window before turning on **Hide internal authentication prompt**: if Authentik is down or misconfigured, the internal login is the only way back in.
+
+## Uptime Kuma
+
+Uptime Kuma monitors hosts and services. Set `MANAGEMENT_UPTIME_KUMA_DATA_DIR` to its existing data directory and `UPTIME_HOST_LOCAL` to its host name.
+
+## Other example settings
+
+The `.env.example` file also contains host names and settings for optional services kept commented out in the Compose file, including Homarr, Homepage, and the mirror.

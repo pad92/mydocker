@@ -1,31 +1,48 @@
-x-default-logging: &default-logging
-  driver: json-file
-  options:
-    max-size: 10m
-    max-file: '3'
 x-localtime-volume: &localtime-volume "/etc/localtime:/etc/localtime:ro"
 services:
   traefik:
-    image: traefik:v3.6
+    image: traefik:v3.7.17
     container_name: traefik
     restart: unless-stopped
+    # Static configuration lives only in these flags. Traefik reads a single
+    # static source and a mounted traefik.toml would make it ignore them all.
     command:
+      - "--global.sendAnonymousUsage=false"
+      - "--global.checkNewVersion=true"
+      - "--log.level=INFO"
       - "--api=true"
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+      - "--providers.docker.exposedByDefault=false"
+      - "--providers.file.filename=/etc/traefik/traefik_dynamic.toml"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.transport.respondingTimeouts.readTimeout=600s"
+      - "--entrypoints.web.transport.respondingTimeouts.idleTimeout=600s"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.transport.respondingTimeouts.readTimeout=600s"
+      - "--entrypoints.websecure.transport.respondingTimeouts.idleTimeout=600s"
+      - "--accesslog=true"
+      - "--accesslog.filePath=/dev/stdout"
+      - "--accesslog.format=json"
+      - "--certificatesresolvers.stepca.acme.storage=/etc/traefik/acme/acme.json"
+      - "--certificatesresolvers.stepca.acme.tlschallenge=true"
       - "--certificatesresolvers.stepca.acme.email=${ACME_EMAIL}"
-      - "--certificatesresolvers.stepca.acme.caserver=${ACME_CA_SERVER}"
+      - "--certificatesresolvers.stepca.acme.caserver=${ACME_CA_SERVER:?Set ACME_CA_SERVER to the step-ca ACME directory URL in .env}"
     ports:
       - 80:80
       - 443:443
     environment:
       - LEGO_CA_CERTIFICATES=/etc/ssl/certs/${CA_CERT_NAME}
+      - PROXMOX_HOST_LOCAL=${PROXMOX_HOST_LOCAL:?Set PROXMOX_HOST_LOCAL in .env}
+      - PROXMOX_UPSTREAM_URL=${PROXMOX_UPSTREAM_URL:?Set PROXMOX_UPSTREAM_URL in .env}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - *localtime-volume
       - ${MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR}/${CA_CERT_NAME}:/etc/ssl/certs/${CA_CERT_NAME}:ro
-      - ./traefik.toml:/etc/traefik/traefik.toml:ro
-      - ./acme:/etc/traefik/acme
+      - /rpool/docker/traefik/acme:/etc/traefik/acme
       - ./traefik_dynamic.toml:/etc/traefik/traefik_dynamic.toml:ro
-      - traefik-logs:/var/log/traefik
     networks:
       traefik_gateway:
     security_opt:
@@ -35,36 +52,24 @@ services:
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.traefik.loadbalancer.server.port: "80"
+      traefik.http.routers.traefik_http.rule: "Host(`${TRAEFIK_HOST_LOCAL}`) && (PathPrefix(`/traefik`)
+        || PathPrefix(`/api`))"
+      traefik.http.routers.traefik_http.entrypoints: "web"
+      traefik.http.routers.traefik_http.middlewares: "redirect-https"
       traefik.http.routers.traefik.rule: "Host(`${TRAEFIK_HOST_LOCAL}`) && (PathPrefix(`/traefik`)
         || PathPrefix(`/api`))"
       traefik.http.routers.traefik.service: "api@internal"
-      traefik.http.routers.traefik.entrypoints: "web"
-      traefik.http.routers.traefik.tls: "false"
-      traefik.http.routers.traefik.middlewares: "traefik_strip"
+      traefik.http.routers.traefik.entrypoints: "websecure"
+      traefik.http.routers.traefik.tls: "true"
+      traefik.http.routers.traefik.tls.certresolver: "stepca"
+      # Dashboard and API behind Authentik forward auth (listed first so the
+      # login redirect keeps the original path). Only this router: the other
+      # apps on the same host are not affected.
+      traefik.http.routers.traefik.middlewares: "authentik@docker,traefik_strip"
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
       traefik.http.middlewares.traefik_strip.stripprefix.prefixes: "/traefik"
 
-    depends_on:
-      - crowdsec
-    logging: *default-logging
-  crowdsec:
-    image: crowdsecurity/crowdsec:latest
-    container_name: crowdsec
-    restart: unless-stopped
-    environment:
-      - COLLECTIONS=crowdsecurity/traefik crowdsecurity/http-cve
-      - BOUNCER_KEY_traefik=${CROWDSEC_BOUNCER_API_KEY}
-    volumes:
-      - *localtime-volume
-      - ${MANAGEMENT_CROWDSEC_CONFIG_DIR}:/etc/crowdsec
-      - ${MANAGEMENT_CROWDSEC_DATA_DIR}:/var/lib/crowdsec/data
-      - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.d/traefik.yaml:ro
-      - traefik-logs:/var/log/traefik:ro
-    networks:
-      - traefik_gateway
-    security_opt:
-      - apparmor=docker-default
-      - no-new-privileges:true
-    logging: *default-logging
   portainer:
     container_name: portainer
     image: portainer/portainer-ee:alpine-sts
@@ -72,6 +77,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${MANAGEMENT_PORTAINER_DATA_DIR}:/data
+      # step-ca root: the OAuth login exchanges the code with Authentik over
+      # HTTPS from the container (Go reads every file in /etc/ssl/certs).
+      # Both values are required: an empty name would mount the whole folder
+      # over /etc/ssl/certs and hide the system CAs.
+      - ${MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR:?Set MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR}/${CA_CERT_NAME:?Set CA_CERT_NAME}:/etc/ssl/certs/${CA_CERT_NAME:?Set CA_CERT_NAME}:ro
     networks:
       - traefik_gateway
     labels:
@@ -91,7 +101,10 @@ services:
       traefik.http.routers.portainer.tls.certresolver: "stepca"
 
       traefik.http.middlewares.portainer-stripprefix.stripprefix.prefixes: "/portainer"
-      traefik.http.routers.portainer.middlewares: "portainer-stripprefix@docker"
+      # Behind Authentik (group portainer-users), API included: no bypass, the
+      # UI uses /api with the session. Unreachable while Authentik is down:
+      # fall back to docker compose over SSH.
+      traefik.http.routers.portainer.middlewares: "authentik@docker,portainer-stripprefix@docker"
 
 #  mirror:
 #    image: nginx:stable-alpine-slim
@@ -148,7 +161,6 @@ services:
 #      traefik.http.services.homepage.loadbalancer.server.port: "3000"
 #      traefik.http.routers.homepage.rule: "Host(`${HOMEPAGE_HOST_LOCAL}`)"
 
-    logging: *default-logging
   uptime-kuma:
     image: louislam/uptime-kuma:2
     container_name: uptime-kuma
@@ -176,10 +188,177 @@ services:
       traefik.http.routers.uptime.entrypoints: "websecure"
       traefik.http.routers.uptime.tls: "true"
       traefik.http.routers.uptime.tls.certresolver: "stepca"
+      # Login through Authentik (provider and access group: see
+      # authentik/blueprints/20-forward-auth-apps.yaml).
+      traefik.http.routers.uptime.middlewares: "authentik@docker"
 
-    logging: *default-logging
-volumes:
-  traefik-logs:
+      # Push monitors call /api/push/<token> from scripts that cannot log in.
+      # They stay outside forward auth; the token in the URL is their secret.
+      traefik.http.routers.uptime_push.rule: "Host(`${UPTIME_HOST_LOCAL}`) && PathPrefix(`/api/push/`)"
+      traefik.http.routers.uptime_push.entrypoints: "websecure"
+      traefik.http.routers.uptime_push.tls: "true"
+      traefik.http.routers.uptime_push.tls.certresolver: "stepca"
+      traefik.http.routers.uptime_push.service: "uptime"
+
+  # --- Authentik (SSO / identity provider) -------------------------------
+  # Based on the official compose file (https://goauthentik.io/compose.yml).
+  # Redis is no longer needed since 2025.10: cache, tasks and websockets
+  # use PostgreSQL.
+  authentik_postgresql:
+    image: docker.io/library/postgres:16-alpine
+    container_name: authentik_postgresql
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASS:?Set AUTHENTIK_PG_PASS in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/database:/var/lib/postgresql/data
+    # Private network only: the database is never reachable from Traefik.
+    networks:
+      - authentik
+    security_opt:
+      - no-new-privileges:true
+
+  authentik_server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.6}
+    container_name: authentik_server
+    command: server
+    restart: unless-stopped
+    shm_size: 512mb
+    depends_on:
+      authentik_postgresql:
+        condition: service_healthy
+    environment: &authentik-env
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?Set AUTHENTIK_SECRET_KEY in .env}
+      AUTHENTIK_POSTGRESQL__HOST: authentik_postgresql
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASS:?Set AUTHENTIK_PG_PASS in .env}
+      # No data sent to the vendor (Sentry error reports, startup analytics).
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+    volumes:
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/data:/data
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/custom-templates:/templates
+      # Branding files (logo, background, app icons) of the blueprints, served
+      # by the server as "homelab/..." (authentik/blueprints/30-branding.yaml).
+      - ./authentik/media:/data/media/public/homelab:ro
+      - *localtime-volume
+    networks:
+      - authentik
+      - traefik_gateway
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.authentik.loadbalancer.server.port: "9000"
+
+      # Internal host (.lan) and optional public host. When
+      # AUTHENTIK_HOST_PUBLIC is empty, the second Host() repeats the internal
+      # one, so the rule stays valid without a public name.
+      traefik.http.routers.authentik_http.rule: "Host(`${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}`) || Host(`${AUTHENTIK_HOST_PUBLIC:-${AUTHENTIK_HOST_LOCAL}}`)"
+      traefik.http.routers.authentik_http.entrypoints: web
+      traefik.http.routers.authentik_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      # One HTTPS router per host name, so each name gets its own certificate:
+      # a failed ACME order for the public name must not take the internal
+      # certificate down with it. When AUTHENTIK_HOST_PUBLIC is empty, the
+      # public router repeats the internal host and is harmless.
+      traefik.http.routers.authentik.rule: "Host(`${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}`)"
+      traefik.http.routers.authentik.entrypoints: "websecure"
+      traefik.http.routers.authentik.tls: "true"
+      traefik.http.routers.authentik.tls.certresolver: "stepca"
+      traefik.http.routers.authentik.service: "authentik"
+
+      traefik.http.routers.authentik_pub.rule: "Host(`${AUTHENTIK_HOST_PUBLIC:-${AUTHENTIK_HOST_LOCAL}}`)"
+      traefik.http.routers.authentik_pub.entrypoints: "websecure"
+      traefik.http.routers.authentik_pub.tls: "true"
+      traefik.http.routers.authentik_pub.tls.certresolver: "stepca"
+      traefik.http.routers.authentik_pub.service: "authentik"
+
+      # Embedded outpost callbacks (/outpost.goauthentik.io/...) on every
+      # protected host. The high priority keeps it ahead of the host routers.
+      # It matches every host, public ones included: see the README.
+      traefik.http.routers.authentik_outpost.rule: "PathPrefix(`/outpost.goauthentik.io/`)"
+      traefik.http.routers.authentik_outpost.entrypoints: "websecure"
+      traefik.http.routers.authentik_outpost.tls: "true"
+      traefik.http.routers.authentik_outpost.priority: "1000"
+      traefik.http.routers.authentik_outpost.service: "authentik"
+
+      # Forward-auth middleware, used by other routers as "authentik@docker".
+      # Declared here on purpose: if this container is down, routers that use
+      # it are disabled by Traefik instead of being served unauthenticated.
+      traefik.http.middlewares.authentik.forwardauth.address: "http://authentik_server:9000/outpost.goauthentik.io/auth/traefik"
+      traefik.http.middlewares.authentik.forwardauth.trustForwardHeader: "true"
+      traefik.http.middlewares.authentik.forwardauth.authResponseHeaders: "X-authentik-username,X-authentik-groups,X-authentik-entitlements,X-authentik-email,X-authentik-name,X-authentik-uid,X-authentik-jwt,X-authentik-meta-jwks,X-authentik-meta-outpost,X-authentik-meta-provider,X-authentik-meta-app,X-authentik-meta-version"
+
+  authentik_worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.6}
+    container_name: authentik_worker
+    command: worker
+    restart: unless-stopped
+    shm_size: 512mb
+    depends_on:
+      authentik_postgresql:
+        condition: service_healthy
+    environment:
+      <<: *authentik-env
+      # Host names read by the blueprints (!Env). Kept out of the YAML files
+      # so the repository holds no private name. The outpost sends browsers
+      # to the public name when there is one (see the README), otherwise to
+      # the internal name.
+      BLUEPRINT_AUTHENTIK_HOST: ${AUTHENTIK_HOST_PUBLIC:-${AUTHENTIK_HOST_LOCAL:?Set AUTHENTIK_HOST_LOCAL in .env}}
+      BLUEPRINT_UPTIME_HOST: ${UPTIME_HOST_LOCAL:?Set UPTIME_HOST_LOCAL in .env}
+      # Must equal TRAEFIK_FQDN of the ng stack (host of the *arr paths).
+      BLUEPRINT_NG_HOST: ${NG_HOST_LOCAL:?Set NG_HOST_LOCAL in .env}
+      BLUEPRINT_PORTAINER_HOST: ${PORTAINER_HOST_LOCAL:?Set PORTAINER_HOST_LOCAL in .env}
+      # Host of the Traefik dashboard router above.
+      BLUEPRINT_TRAEFIK_HOST: ${TRAEFIK_HOST_LOCAL:?Set TRAEFIK_HOST_LOCAL in .env}
+      # Must equal VICTORIA_LOGS_DOMAIN / VICTORIA_METRICS_DOMAIN /
+      # VICTORIA_GRAFANA_DOMAIN of the victoria stack.
+      BLUEPRINT_VICTORIA_LOGS_HOST: ${VICTORIA_LOGS_HOST_LOCAL:?Set VICTORIA_LOGS_HOST_LOCAL in .env}
+      BLUEPRINT_VICTORIA_METRICS_HOST: ${VICTORIA_METRICS_HOST_LOCAL:?Set VICTORIA_METRICS_HOST_LOCAL in .env}
+      BLUEPRINT_VICTORIA_GRAFANA_HOST: ${VICTORIA_GRAFANA_HOST_LOCAL:?Set VICTORIA_GRAFANA_HOST_LOCAL in .env}
+      # Must equal FORGEJO_DOMAIN of the forgejo stack (OIDC redirect URI).
+      BLUEPRINT_FORGEJO_HOST: ${FORGEJO_HOST_LOCAL:?Set FORGEJO_HOST_LOCAL in .env}
+      # Must equal GRAMPSWEB_DOMAIN of the grampsweb stack (OIDC redirect URI).
+      BLUEPRINT_GRAMPSWEB_HOST: ${GRAMPSWEB_HOST_LOCAL:?Set GRAMPSWEB_HOST_LOCAL in .env}
+      # Must equal TRAEFIK_HOST_LOCAL of the immich stack (OIDC redirect URIs).
+      BLUEPRINT_IMMICH_HOST: ${IMMICH_HOST_LOCAL:?Set IMMICH_HOST_LOCAL in .env}
+      # Must equal TODO_DOMAIN of the todo stack (OIDC redirect URI).
+      BLUEPRINT_DONETICK_HOST: ${DONETICK_HOST_LOCAL:?Set DONETICK_HOST_LOCAL in .env}
+      # Library bookmarks of the network devices (host name or IP address).
+      BLUEPRINT_UNIFI_HOST: ${UNIFI_HOST_LOCAL:?Set UNIFI_HOST_LOCAL in .env}
+      BLUEPRINT_NAS_HOST: ${NAS_HOST_LOCAL:?Set NAS_HOST_LOCAL in .env}
+      BLUEPRINT_SWITCH_HOST: ${SWITCH_HOST_LOCAL:?Set SWITCH_HOST_LOCAL in .env}
+    # Unlike the official file, no "user: root" and no docker.sock: they are
+    # only used to deploy extra outposts automatically. The embedded outpost
+    # (inside authentik_server) is enough for Traefik forward auth.
+    volumes:
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/data:/data
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/certs:/certs
+      # Versioned blueprints, applied by the worker (see the README).
+      - ./authentik/blueprints:/blueprints/custom:ro
+      - ${MANAGEMENT_AUTHENTIK_DATA_DIR:?Set MANAGEMENT_AUTHENTIK_DATA_DIR in .env}/custom-templates:/templates
+      - *localtime-volume
+    networks:
+      - authentik
+    security_opt:
+      - no-new-privileges:true
+
 networks:
   traefik_gateway:
     name: traefik_gateway
+  authentik:
+    name: authentik

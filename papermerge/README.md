@@ -26,7 +26,7 @@ This stack deploys the Papermerge document management system.
 
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
-| `PAPERMERGE_DOMAIN` | Target Traefik domain address. | `papermerge.home.lan` |
+| `PAPERMERGE_DOMAIN` | Target Traefik domain address. | `papermerge.example.lan` |
 | `PAPERMERGE_SECRET_KEY` | Django/FastAPI security key. | *(Required)* |
 | `PAPERMERGE_ADMIN_USER` | Initial administrative username. | `admin` |
 | `PAPERMERGE_ADMIN_PASSWORD` | Initial administrative user password. | *(Required)* |

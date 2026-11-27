@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://goauthentik.io/blueprints/schema.json
+#
+# Makes MFA mandatory on the default authentication flow.
+#
+# The default "default-authentication-mfa-validation" stage skips MFA for users
+# who have no device yet. With "configure", a user without a device is asked to
+# enrol one (TOTP app or passkey/security key) during the next login, then the
+# login goes on. Nobody is locked out, but nobody can skip it either.
+#
+# Only the listed fields are changed: Authentik updates existing objects
+# partially. The default blueprint never sets these fields, so it does not
+# undo this change when it is re-applied.
+version: 1
+metadata:
+  name: Homelab - Mandatory MFA
+entries:
+  # Make sure the default stages exist before this blueprint touches them
+  # (first start on an empty database).
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Authentication flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - TOTP MFA setup flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - WebAuthn MFA setup flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Static MFA setup flow
+      required: true
+
+  - model: authentik_stages_authenticator_validate.authenticatorvalidatestage
+    identifiers:
+      name: default-authentication-mfa-validation
+    attrs:
+      not_configured_action: configure
+      # Offered to a user who has no device yet. Recovery codes (static) are
+      # accepted at login but are not offered as a first device: they are a
+      # backup, enrolled from the user settings once a real device exists.
+      configuration_stages:
+        - !Find [authentik_stages_authenticator_totp.authenticatortotpstage, [name, default-authenticator-totp-setup]]
+        - !Find [authentik_stages_authenticator_webauthn.authenticatorwebauthnstage, [name, default-authenticator-webauthn-setup]]
+      device_classes:
+        - totp
+        - webauthn
+        - static
