@@ -40,6 +40,8 @@ route:
       repeat_interval: 80m
     - matchers: [alertname="unpoller_no_unifi_data"]
       repeat_interval: 65m
+    - matchers: [alertname="unpoller_unifi_data_stale"]
+      repeat_interval: 50m
     - matchers: [alertname="host_logs_silent"]
       repeat_interval: 125m
     - matchers: [alertname="kernel_critical"]

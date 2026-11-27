@@ -328,6 +328,50 @@ tests:
         alertname: unpoller_no_unifi_data
         exp_alerts: []
 
+  # unpoller serves a frozen snapshot from minute 10: device_info stays
+  # present, the uptimes stop moving. 15m window + for: 5m = fires at 30m,
+  # not before.
+  - name: unifi data stale
+    interval: 1m
+    input_series:
+      - series: 'unpoller_device_info{job="unpoller", name="ap1"}'
+        values: '1x60'
+      - series: 'unpoller_device_uptime_seconds{job="unpoller", name="ap1"}'
+        values: '0+60x10 600x50'
+      - series: 'unpoller_device_uptime_seconds{job="unpoller", name="ap2"}'
+        values: '0+60x10 600x50'
+    alert_rule_test:
+      - eval_time: 27m
+        groupname: unifi_metrics
+        alertname: unpoller_unifi_data_stale
+        exp_alerts: []
+      - eval_time: 32m
+        groupname: unifi_metrics
+        alertname: unpoller_no_unifi_data
+        exp_alerts: []
+      - eval_time: 32m
+        groupname: unifi_metrics
+        alertname: unpoller_unifi_data_stale
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Donnees UniFi figees dans unpoller depuis 20 minutes"
+              description: "unpoller repond mais l'uptime d'aucun equipement UniFi n'a change : la collecte aupres du controleur echoue (TLS, compte, API)"
+  # One device frozen (offline, its last value kept) while another still
+  # moves: collection works, no stale alert.
+  - name: unifi data fresh
+    interval: 1m
+    input_series:
+      - series: 'unpoller_device_uptime_seconds{job="unpoller", name="ap1"}'
+        values: '0+60x10 600x50'
+      - series: 'unpoller_device_uptime_seconds{job="unpoller", name="ap2"}'
+        values: '0+60x60'
+    alert_rule_test:
+      - eval_time: 45m
+        groupname: unifi_metrics
+        alertname: unpoller_unifi_data_stale
+        exp_alerts: []
+
   # Watchdog: fires while the SMS path is healthy, stops at once (no
   # keep_firing_for) when vector goes down or free_mobile fails.
   # An old, constant error count does not stop it once the 30m window
