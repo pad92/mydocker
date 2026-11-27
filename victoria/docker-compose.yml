@@ -3693,6 +3693,74 @@ configs:
             }
           },
           {
+            "type": "timeseries",
+            "title": "Attente E/S et vol de CPU",
+            "description": "Part du temps CPU de l'hôte passée à attendre le disque (iowait) ou prise par l'hyperviseur sous-jacent (steal, nul sur du métal nu). Un iowait élevé et durable désigne un stockage saturé.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (node) (rate(proxmox_node_cpustat_iowait_seconds_total[5m])) / sum by (node) (rate({__name__=~\"proxmox_node_cpustat_(user|nice|system|idle|iowait|irq|softirq|steal)_seconds_total\"}[5m]))",
+                "legendFormat": "{{node}} iowait",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (node) (rate(proxmox_node_cpustat_steal_seconds_total[5m])) / sum by (node) (rate({__name__=~\"proxmox_node_cpustat_(user|nice|system|idle|iowait|irq|softirq|steal)_seconds_total\"}[5m]))",
+                "legendFormat": "{{node}} steal",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                },
+                "min": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 35,
+            "gridPos": {
+              "x": 12,
+              "y": 21,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
             "id": 11,
             "type": "row",
             "title": "Invités",
@@ -6524,6 +6592,95 @@ configs:
           },
           {
             "type": "timeseries",
+            "title": "Erreurs et rejets réseau (/s)",
+            "description": "Paquets en erreur ou rejetés par les interfaces physiques et le bond du NAS (SNMP IF-MIB). Des erreurs désignent un câble ou un port ; des rejets, un tampon saturé.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(ifInErrors{ifName=~\"eth.*|bond.*\"}[5m])",
+                "legendFormat": "{{ifName}} erreurs entrée",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(ifOutErrors{ifName=~\"eth.*|bond.*\"}[5m])",
+                "legendFormat": "{{ifName}} erreurs sortie",
+                "range": true
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(ifInDiscards{ifName=~\"eth.*|bond.*\"}[5m])",
+                "legendFormat": "{{ifName}} rejets entrée",
+                "range": true
+              },
+              {
+                "refId": "D",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "rate(ifOutDiscards{ifName=~\"eth.*|bond.*\"}[5m])",
+                "legendFormat": "{{ifName}} rejets sortie",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "pps",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 17,
+            "gridPos": {
+              "x": 0,
+              "y": 31,
+              "w": 24,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
             "title": "Onduleur",
             "datasource": {
               "type": "prometheus",
@@ -6583,7 +6740,7 @@ configs:
             "id": 16,
             "gridPos": {
               "x": 0,
-              "y": 31,
+              "y": 39,
               "w": 24,
               "h": 8
             }
@@ -7242,7 +7399,7 @@ configs:
           },
           {
             "type": "row",
-            "title": "ZFS",
+            "title": "Système",
             "collapsed": false,
             "panels": [],
             "id": 14,
@@ -7255,7 +7412,8 @@ configs:
           },
           {
             "type": "timeseries",
-            "title": "Remplissage des pools",
+            "title": "Inodes utilisés",
+            "description": "Part des inodes occupés par système de fichiers (sans vfat, tmpfs, squashfs ni overlay). Un disque peut être plein d'inodes alors qu'il reste de l'espace : beaucoup de petits fichiers (cache, sessions, mails).",
             "datasource": {
               "type": "prometheus",
               "uid": "victoriametrics"
@@ -7268,8 +7426,8 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "zfs_pool_capacity_ratio",
-                "legendFormat": "{{pool}}",
+                "expr": "sum by (host_name, mountpoint) (system_filesystem_inodes_usage{host_name=~\"$$host_name\", type!~\"vfat|tmpfs|squashfs|overlay\", state=\"used\"}) / sum by (host_name, mountpoint) (system_filesystem_inodes_usage{host_name=~\"$$host_name\", type!~\"vfat|tmpfs|squashfs|overlay\"})",
+                "legendFormat": "{{host_name}} {{mountpoint}}",
                 "range": true
               }
             ],
@@ -7285,7 +7443,9 @@ configs:
                     "mode": "none",
                     "group": "A"
                   }
-                }
+                },
+                "min": 0,
+                "max": 1
               },
               "overrides": []
             },
@@ -7310,7 +7470,8 @@ configs:
           },
           {
             "type": "timeseries",
-            "title": "Santé des pools (0 = ONLINE)",
+            "title": "Erreurs et pertes réseau (/s)",
+            "description": "Paquets en erreur ou abandonnés par l'interface, par sens. Des erreurs indiquent un câble, un port ou un pilote ; des pertes, un tampon saturé ou du trafic que le noyau refuse (VLAN, protocole inconnu).",
             "datasource": {
               "type": "prometheus",
               "uid": "victoriametrics"
@@ -7323,14 +7484,25 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "zfs_pool_health",
-                "legendFormat": "{{pool}}",
+                "expr": "sum by (host_name, direction) (rate(system_network_errors_total{host_name=~\"$$host_name\"}[5m]))",
+                "legendFormat": "{{host_name}} erreurs {{direction}}",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (host_name, direction) (rate(system_network_dropped_total{host_name=~\"$$host_name\"}[5m]))",
+                "legendFormat": "{{host_name}} pertes {{direction}}",
                 "range": true
               }
             ],
             "fieldConfig": {
               "defaults": {
-                "unit": "short",
+                "unit": "pps",
                 "custom": {
                   "drawStyle": "line",
                   "fillOpacity": 10,
@@ -7359,6 +7531,130 @@ configs:
             "gridPos": {
               "x": 12,
               "y": 32,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Pagination (/s)",
+            "description": "Défauts de page majeurs (lecture sur disque) et pages échangées avec le swap. Une activité de swap soutenue signale un manque de mémoire, même si la mémoire utilisée paraît stable.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (host_name) (rate(system_paging_faults_total{host_name=~\"$$host_name\", type=\"major\"}[5m]))",
+                "legendFormat": "{{host_name}} défauts majeurs",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (host_name, direction) (rate(system_paging_operations_total{host_name=~\"$$host_name\", type=\"major\"}[5m]))",
+                "legendFormat": "{{host_name}} swap {{direction}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "ops",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 17,
+            "gridPos": {
+              "x": 0,
+              "y": 40,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Processus bloqués et actifs",
+            "description": "Processus en cours d'exécution et processus bloqués (en attente d'E/S, état D). Des processus bloqués en continu désignent un disque ou un montage réseau lent.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (host_name, status) (system_processes_count{host_name=~\"$$host_name\", status=~\"running|blocked\"})",
+                "legendFormat": "{{host_name}} {{status}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                },
+                "decimals": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 18,
+            "gridPos": {
+              "x": 12,
+              "y": 40,
               "w": 12,
               "h": 8
             }
@@ -14785,8 +15081,8 @@ configs:
           },
           {
             "type": "stat",
-            "title": "Système de fichiers le plus plein",
-            "description": "Occupation du système de fichiers le plus plein des hôtes Linux (sans vfat ni tmpfs).",
+            "title": "Fragmentation ZFS max",
+            "description": "Fragmentation de l'espace libre du pool ZFS le plus fragmenté. Au-delà de 50 %, les écritures ralentissent, surtout sur un pool presque plein.",
             "datasource": {
               "type": "prometheus",
               "uid": "victoriametrics"
@@ -14799,7 +15095,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max(system_filesystem_utilization_ratio{type!~\"vfat|tmpfs\"})",
+                "expr": "max(zfs_pool_fragmentation_ratio)",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false
@@ -14818,11 +15114,11 @@ configs:
                     },
                     {
                       "color": "orange",
-                      "value": 0.8
+                      "value": 0.5
                     },
                     {
                       "color": "red",
-                      "value": 0.9
+                      "value": 0.7
                     }
                   ]
                 },
@@ -16393,22 +16689,9 @@ configs:
             }
           },
           {
-            "type": "row",
-            "title": "Hôtes Linux",
-            "collapsed": false,
-            "panels": [],
-            "id": 20,
-            "gridPos": {
-              "x": 0,
-              "y": 45,
-              "w": 24,
-              "h": 1
-            }
-          },
-          {
-            "type": "bargauge",
-            "title": "Systèmes de fichiers les plus pleins",
-            "description": "Les 15 systèmes de fichiers les plus pleins des hôtes Linux, sans vfat ni tmpfs. L'alerte filesystem_usage_high se déclenche à 90 %.",
+            "type": "timeseries",
+            "title": "Fragmentation des pools ZFS",
+            "description": "Fragmentation de l'espace libre de chaque pool ZFS (Proxmox). Elle monte avec le remplissage et ne se corrige qu'en réécrivant les données.",
             "datasource": {
               "type": "prometheus",
               "uid": "victoriametrics"
@@ -16421,59 +16704,59 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "topk(15, max by (host_name, mountpoint) (system_filesystem_utilization_ratio{type!~\"vfat|tmpfs\"}))",
-                "legendFormat": "{{host_name}} {{mountpoint}}",
-                "instant": true,
-                "range": false
+                "expr": "max by (pool) (zfs_pool_fragmentation_ratio)",
+                "legendFormat": "{{pool}}",
+                "range": true
               }
             ],
             "fieldConfig": {
               "defaults": {
                 "unit": "percentunit",
-                "min": 0,
-                "max": 1,
-                "decimals": 1,
-                "color": {
-                  "mode": "thresholds"
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
                 },
-                "thresholds": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "green",
-                      "value": null
-                    },
-                    {
-                      "color": "orange",
-                      "value": 0.8
-                    },
-                    {
-                      "color": "red",
-                      "value": 0.9
-                    }
-                  ]
-                }
+                "min": 0,
+                "max": 1
               },
               "overrides": []
             },
             "options": {
-              "orientation": "horizontal",
-              "displayMode": "gradient",
-              "showUnfilled": true,
-              "reduceOptions": {
-                "calcs": [
-                  "lastNotNull"
-                ],
-                "fields": "",
-                "values": false
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
               }
             },
-            "id": 21,
+            "id": 30,
             "gridPos": {
               "x": 0,
-              "y": 46,
-              "w": 12,
-              "h": 10
+              "y": 45,
+              "w": 24,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Hôtes : entrées / sorties disque",
+            "collapsed": false,
+            "panels": [],
+            "id": 20,
+            "gridPos": {
+              "x": 0,
+              "y": 53,
+              "w": 24,
+              "h": 1
             }
           },
           {
@@ -16543,10 +16826,10 @@ configs:
             },
             "id": 22,
             "gridPos": {
-              "x": 12,
-              "y": 46,
+              "x": 0,
+              "y": 54,
               "w": 12,
-              "h": 10
+              "h": 8
             }
           },
           {
@@ -16610,8 +16893,8 @@ configs:
             },
             "id": 23,
             "gridPos": {
-              "x": 0,
-              "y": 56,
+              "x": 12,
+              "y": 54,
               "w": 12,
               "h": 8
             }
@@ -16667,9 +16950,9 @@ configs:
             },
             "id": 24,
             "gridPos": {
-              "x": 12,
-              "y": 56,
-              "w": 12,
+              "x": 0,
+              "y": 62,
+              "w": 24,
               "h": 8
             }
           },
@@ -16681,7 +16964,7 @@ configs:
             "id": 25,
             "gridPos": {
               "x": 0,
-              "y": 64,
+              "y": 70,
               "w": 24,
               "h": 1
             }
@@ -16741,7 +17024,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_power_on_seconds)",
+                "expr": "max by (host_name, device) (smartctl_device_power_on_seconds_total)",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -16754,7 +17037,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_power_cycle_count)",
+                "expr": "max by (host_name, device) (smartctl_device_power_cycle_count_total)",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17249,7 +17532,7 @@ configs:
             "id": 26,
             "gridPos": {
               "x": 0,
-              "y": 65,
+              "y": 71,
               "w": 24,
               "h": 9
             }
@@ -17321,7 +17604,7 @@ configs:
             "id": 27,
             "gridPos": {
               "x": 0,
-              "y": 74,
+              "y": 80,
               "w": 8,
               "h": 8
             }
@@ -17378,7 +17661,7 @@ configs:
             "id": 28,
             "gridPos": {
               "x": 8,
-              "y": 74,
+              "y": 80,
               "w": 8,
               "h": 8
             }
@@ -17451,8 +17734,65 @@ configs:
             "id": 29,
             "gridPos": {
               "x": 16,
-              "y": 74,
+              "y": 80,
               "w": 8,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Erreurs SMART journalisées",
+            "description": "Nombre d'erreurs inscrites dans le journal d'erreurs SMART de chaque disque. Le compteur ne redescend pas : seule une hausse est à surveiller.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (host_name, device) (smartctl_device_error_log_count{error_log_type=\"summary\"})",
+                "legendFormat": "{{host_name}} {{device}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                },
+                "decimals": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 31,
+            "gridPos": {
+              "x": 0,
+              "y": 88,
+              "w": 24,
               "h": 8
             }
           }

@@ -159,13 +159,13 @@ authentik = [
 ]
 # demo-old logged 3 h ago only: it feeds "Conteneurs sans log depuis 1 h".
 docker = [
-    {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "app",
+    {"host_name": "test.example", "compose_project": "demo", "compose_service": "app",
      "container_name": "demo-app", "log_iostream": "stderr", "severity": "Error", "level": "error",
      "_msg": "request 42 failed"},
-    {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "old",
+    {"host_name": "test.example", "compose_project": "demo", "compose_service": "old",
      "container_name": "demo-old", "log_iostream": "stderr", "severity": "error", "level": "error",
      "_msg": "worker 7 crashed", "_age": 180},
-    {"host_name": "test.home.lan", "compose_project": "demo", "compose_service": "old",
+    {"host_name": "test.example", "compose_project": "demo", "compose_service": "old",
      "container_name": "demo-old", "log_iostream": "stdout", "severity": "info", "level": "info",
      "_msg": "worker started", "_age": 181},
 ]
@@ -273,7 +273,7 @@ traefik += [http("logs.example", "vector@docker", "POST", "198.51.100.57", "/v1/
 traefik += [http("metrics.example", "victoriametrics@docker", "POST", "198.51.100.57",
                  "/opentelemetry/v1/metrics", 502, 2000000, 200000, 11,
                  router="victoriametrics_ingest@docker")]
-records = [{"log_stream": "proxmox", "host_name": "pve.home.lan", "_msg": "pve", **r} for r in proxmox]
+records = [{"log_stream": "proxmox", "host_name": "pve.example", "_msg": "pve", **r} for r in proxmox]
 records += [{"log_stream": "authentik", "host_name": "sso.home.lan", "_msg": "ak", **r} for r in authentik]
 records += [{"log_stream": "docker", **r} for r in docker]
 records += [{"log_stream": "dns_queries", "_msg": "dns", **r} for r in dns_queries]
@@ -303,7 +303,7 @@ with open(f"{work}/records.count", "w") as f:
     f.write(str(len(records)))
 
 # Host metrics as the OpenTelemetry collector exports them, one sample a minute
-# over 20 min for test.home.lan; old.home.lan stops 30 min ago (silent host);
+# over 20 min for test.example; old.example stops 30 min ago (silent host);
 # one degraded ZFS pool.
 lines = []
 def series(name, labels, values):
@@ -313,24 +313,40 @@ def series(name, labels, values):
         lines.append(f"{name}{{{lab}}} {value} {ts}")
 recent = range(20, -1, -1)
 for state, step in (("idle", 50), ("user", 10)):
-    series("system_cpu_time_seconds_total", {"host_name": "test.home.lan", "state": state},
+    series("system_cpu_time_seconds_total", {"host_name": "test.example", "state": state},
            [(m, (20 - m) * step) for m in recent])
-series("system_cpu_time_seconds_total", {"host_name": "old.home.lan", "state": "idle"},
+series("system_cpu_time_seconds_total", {"host_name": "old.example", "state": "idle"},
        [(m, (60 - m) * 50) for m in range(60, 29, -1)])
-series("system_memory_utilization_ratio", {"host_name": "test.home.lan", "state": "used"},
+series("system_memory_utilization_ratio", {"host_name": "test.example", "state": "used"},
        [(m, 0.4) for m in recent])
-series("system_cpu_load_average_5m", {"host_name": "test.home.lan"}, [(m, 0.7) for m in recent])
+series("system_cpu_load_average_5m", {"host_name": "test.example"}, [(m, 0.7) for m in recent])
 series("system_filesystem_utilization_ratio",
-       {"host_name": "test.home.lan", "mountpoint": "/", "type": "ext4"}, [(m, 0.55) for m in recent])
+       {"host_name": "test.example", "mountpoint": "/", "type": "ext4"}, [(m, 0.55) for m in recent])
 for direction in ("receive", "transmit"):
     series("system_network_io_bytes_total",
-           {"host_name": "test.home.lan", "device": "eth0", "direction": direction},
+           {"host_name": "test.example", "device": "eth0", "direction": direction},
            [(m, (20 - m) * 6000) for m in recent])
     series("system_disk_io_bytes_total",
-           {"host_name": "test.home.lan", "device": "sda", "direction": direction},
+           {"host_name": "test.example", "device": "sda", "direction": direction},
            [(m, (20 - m) * 9000) for m in recent])
-series("zfs_pool_health", {"host_name": "pve.home.lan", "pool": "rpool"}, [(m, 1) for m in recent])
-series("zfs_pool_capacity_ratio", {"host_name": "pve.home.lan", "pool": "rpool"}, [(m, 0.6) for m in recent])
+# Inodes, interface errors, paging and processes of the hosts "Système" row.
+for state, value in (("used", 2e5), ("free", 8e5)):
+    series("system_filesystem_inodes_usage",
+           {"host_name": "test.example", "mountpoint": "/", "type": "ext4", "state": state},
+           [(m, value) for m in recent])
+for name in ("system_network_errors_total", "system_network_dropped_total"):
+    series(name, {"host_name": "test.example", "device": "eth0", "direction": "receive"},
+           [(m, (20 - m) * 3) for m in recent])
+series("system_paging_faults_total", {"host_name": "test.example", "type": "major"},
+       [(m, (20 - m) * 30) for m in recent])
+series("system_paging_operations_total",
+       {"host_name": "test.example", "type": "major", "direction": "page_in"},
+       [(m, (20 - m) * 12) for m in recent])
+for status, value in (("running", 2), ("blocked", 1)):
+    series("system_processes_count", {"host_name": "test.example", "status": status},
+           [(m, value) for m in recent])
+series("zfs_pool_health", {"host_name": "pve.example", "pool": "rpool"}, [(m, 1) for m in recent])
+series("zfs_pool_capacity_ratio", {"host_name": "pve.example", "pool": "rpool"}, [(m, 0.6) for m in recent])
 # smartctl_exporter on smart-test.example: a hard disk with bad sectors, CRC and
 # logged errors, and an SSD that has used 8 % of its life.
 smart = {"host_name": "smart-test.example", "service_name": "smart"}
@@ -340,8 +356,8 @@ for device, model, protocol in (("sda", "WDC WD40EFRX", "ATA"), ("sdb", "Samsung
     series("smartctl_device_capacity_bytes", disk, [(m, 4e12) for m in recent])
     series("smartctl_device_smart_status", disk, [(m, 1) for m in recent])
     series("smartctl_device_temperature", {**disk, "temperature_type": "current"}, [(m, 38) for m in recent])
-    series("smartctl_device_power_on_seconds", disk, [(m, 9e7 + m) for m in recent])
-    series("smartctl_device_power_cycle_count", disk, [(m, 120) for m in recent])
+    series("smartctl_device_power_on_seconds_total", disk, [(m, 9e7 + m) for m in recent])
+    series("smartctl_device_power_cycle_count_total", disk, [(m, 120) for m in recent])
 for name, kind, value in (("Reallocated_Sector_Ct", "raw", 8), ("Current_Pending_Sector", "raw", 2),
                           ("Offline_Uncorrectable", "raw", 1), ("UDMA_CRC_Error_Count", "raw", 3)):
     series("smartctl_device_attribute", {**smart, "device": "sda", "attribute_name": name,
@@ -377,11 +393,11 @@ with open(f"{work}/metrics.txt", "w") as f:
 values = {
     "victoria-authentik": {"application": "app.home.lan", "composant": "worker"},
     "victoria-dns": {"host_name": "ns01.home.lan", "client": "192.168.0.10"},
-    "victoria-docker": {"host_name": "test.home.lan", "compose_project": "demo",
+    "victoria-docker": {"host_name": "test.example", "compose_project": "demo",
                         "container_name": "demo-old"},
     "victoria-firewall": {"host_name": "gw", "action": "drop", "ruleset": "WAN_LOCAL"},
-    "victoria-logs": {"log_stream": "docker", "host_name": "test.home.lan"},
-    "victoria-hosts": {"host_name": "test.home.lan"},
+    "victoria-logs": {"log_stream": "docker", "host_name": "test.example"},
+    "victoria-hosts": {"host_name": "test.example"},
     "victoria-http": {"requesthost": "cloud.home.lan", "service": "nextcloud@docker",
                       "method": "GET", "client": "192.168.0.57"},
 }
@@ -558,7 +574,7 @@ expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-disks", "vic
 smart_panels = {("victoria-disks", title) for title in (
     "Disques des hôtes", "Température des disques des hôtes",
     "Secteurs défectueux des disques des hôtes", "Vie restante des SSD des hôtes")}
-# Targets that must return nothing: test.home.lan is not silent.
+# Targets that must return nothing: test.example is not silent.
 expected_empty = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "value")}
 # Exact values from the Traefik records: 4 lines match the four values (one
 # 404, one 503), 11 lines have a host (the hostless 404 probe must not count,
