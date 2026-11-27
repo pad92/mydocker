@@ -439,35 +439,35 @@ services:
       - source: grafana_dashboard_provider
         target: /etc/grafana/provisioning/dashboards/victoria.yaml
       - source: grafana_dashboard_authentik
-        target: /etc/grafana/dashboards/authentik.json
+        target: /etc/grafana/dashboards/Applications/authentik.json
       - source: grafana_dashboard_proxmox
-        target: /etc/grafana/dashboards/proxmox.json
+        target: /etc/grafana/dashboards/Infrastructure/proxmox.json
       - source: grafana_dashboard_unifi
-        target: /etc/grafana/dashboards/unifi.json
+        target: /etc/grafana/dashboards/Équipements réseau/unifi.json
       - source: grafana_dashboard_synology
-        target: /etc/grafana/dashboards/synology.json
+        target: /etc/grafana/dashboards/Infrastructure/synology.json
       - source: grafana_dashboard_hosts
         target: /etc/grafana/dashboards/hosts.json
       - source: grafana_dashboard_logs
         target: /etc/grafana/dashboards/logs.json
       - source: grafana_dashboard_docker
-        target: /etc/grafana/dashboards/docker.json
+        target: /etc/grafana/dashboards/Applications/docker.json
       - source: grafana_dashboard_dns
-        target: /etc/grafana/dashboards/dns.json
+        target: /etc/grafana/dashboards/Équipements réseau/dns.json
       - source: grafana_dashboard_firewall
-        target: /etc/grafana/dashboards/firewall.json
+        target: /etc/grafana/dashboards/Équipements réseau/firewall.json
       - source: grafana_dashboard_http
-        target: /etc/grafana/dashboards/http.json
+        target: /etc/grafana/dashboards/Applications/http.json
       - source: grafana_dashboard_alerts
         target: /etc/grafana/dashboards/alerts.json
       - source: grafana_dashboard_disks
-        target: /etc/grafana/dashboards/disks.json
+        target: /etc/grafana/dashboards/Infrastructure/disks.json
       - source: grafana_dashboard_services
         target: /etc/grafana/dashboards/services.json
       - source: grafana_dashboard_stack
-        target: /etc/grafana/dashboards/stack.json
+        target: /etc/grafana/dashboards/Infrastructure/stack.json
       - source: grafana_dashboard_freebox
-        target: /etc/grafana/dashboards/freebox.json
+        target: /etc/grafana/dashboards/Équipements réseau/freebox.json
       - source: grafana_dashboard_network
         target: /etc/grafana/dashboards/network.json
     volumes:
@@ -1019,6 +1019,10 @@ configs:
         - name: host_metrics
           interval: 1m
           rules:
+            # Age of the newest CPU sample per host. The dashboards read this
+            # series instead of running lag() over 24 h at each refresh.
+            - record: host_name:metrics_age_seconds:max
+              expr: max by (host_name) (lag(system_cpu_time_seconds_total[24h]))
             - alert: host_metrics_silent
               expr: max by (host_name) (lag(system_cpu_time_seconds_total[24h])) > 600
               keep_firing_for: 60m
@@ -1072,6 +1076,17 @@ configs:
               annotations:
                 summary: "Pool ZFS {{ $$labels.pool }} rempli a {{ $$value | humanizePercentage }}"
                 description: "Un pool ZFS depasse 85% de remplissage, au-dela les performances chutent"
+            # Without fresh data the two rules above go quiet: a stopped
+            # zfs_exporter would hide a degraded pool. Same shape as
+            # smart_data_missing: a host seen within 24h, silent for 30m.
+            - alert: zfs_data_missing
+              expr: max by (host_name) (lag(zfs_pool_health[24h])) > 1800
+              keep_firing_for: 120m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Plus de donnee ZFS de {{ $$labels.host_name }} depuis 30 minutes"
+                description: "zfs_exporter ou sa collecte est arrete : l'etat des pools n'est plus surveille"
         # smartctl_exporter on the hosts (myansible role smartctl_exporter).
         # Raw counts are gauges: the rise above their 24h minimum, not delta,
         # which counts the first value of a new series (an old CRC error
@@ -1305,10 +1320,32 @@ configs:
               annotations:
                 summary: "Alertmanager n'arrive plus a notifier {{ $$labels.receiver_name }} ({{ $$labels.integration }})"
                 description: "Des notifications d'Alertmanager echouent : webhook injoignable ou en erreur"
+            # vmalert failing to hand alerts to Alertmanager. Mostly for
+            # vmalert-logs: a send failure in vmalert-metrics also stops the
+            # watchdog. Errors in every 10 minute window for 15 minutes: a
+            # restart of Alertmanager, shorter than the for, stays out.
+            - alert: vmalert_send_failed
+              expr: >-
+                sum by (job) (
+                  increase(vmalert_alerts_send_errors_total[10m])
+                ) > 0
+              for: 15m
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "{{ $$labels.job }} n'arrive plus a envoyer ses alertes a Alertmanager"
+                description: "Des alertes declenchees n'atteignent pas Alertmanager : aucun SMS ne part pour elles"
 
-  # One route per alert, its repeat_interval the old OpenObserve silence:
-  # while an alert stays firing, its SMS comes again once per interval.
-  # group_by alertname: one SMS per rule, listing its firing alerts.
+  # One route per alert. Its repeat_interval is at least the event window
+  # of the rule, plus its keep_firing_for, plus its group interval: the
+  # longest a single event keeps the alert firing. One event, one SMS; a
+  # lasting problem, one SMS more per interval. tests/test_alerting.sh
+  # checks the bound.
+  # group_by alertname: one SMS per rule, listing its firing alerts. Not
+  # by host: each group is an SMS, and an outage that hits every host would
+  # send one per host. inhibit_rules drop the alerts a cause already
+  # explains instead.
   # send_resolved false: an SMS only when something goes wrong.
   alertmanager_config:
     content: |
@@ -1327,97 +1364,101 @@ configs:
             group_interval: 1m
             repeat_interval: 1m
           - matchers: [alertname="authentik_login_failed_burst"]
-            repeat_interval: 60m
+            repeat_interval: 80m
           - matchers: [alertname="authentik_sensitive_event"]
-            repeat_interval: 60m
+            repeat_interval: 70m
           - matchers: [alertname="authentik_errors"]
-            repeat_interval: 60m
+            repeat_interval: 80m
           - matchers: [alertname="authentik_logs_silent"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="proxmox_metrics_silent"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="proxmox_storage_usage_high"]
-            repeat_interval: 720m
+            repeat_interval: 725m
           - matchers: [alertname="proxmox_node_memory_high"]
-            repeat_interval: 120m
+            repeat_interval: 125m
           - matchers: [alertname="proxmox_node_cpu_high"]
-            repeat_interval: 120m
+            repeat_interval: 140m
           - matchers: [alertname="proxmox_guest_restarted"]
-            repeat_interval: 30m
+            repeat_interval: 45m
           - matchers: [alertname="proxmox_backup_failed"]
-            repeat_interval: 60m
+            repeat_interval: 80m
           - matchers: [alertname="proxmox_backup_missing"]
-            repeat_interval: 720m
+            repeat_interval: 780m
           - matchers: [alertname="proxmox_task_failed"]
-            repeat_interval: 1440m
+            repeat_interval: 1460m
           - matchers: [alertname="proxmox_auth_failed_burst"]
-            repeat_interval: 60m
+            repeat_interval: 80m
           - matchers: [alertname="unpoller_no_unifi_data"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="host_logs_silent"]
-            repeat_interval: 120m
+            repeat_interval: 125m
           - matchers: [alertname="kernel_critical"]
-            repeat_interval: 60m
+            repeat_interval: 80m
           - matchers: [alertname="systemd_unit_failed"]
-            repeat_interval: 1440m
+            repeat_interval: 1460m
           - matchers: [alertname="oom_kill"]
-            repeat_interval: 60m
+            repeat_interval: 80m
           - matchers: [alertname="container_restart_loop"]
-            repeat_interval: 60m
+            repeat_interval: 80m
           - matchers: [alertname="dns_resolver_silent"]
-            repeat_interval: 120m
+            repeat_interval: 125m
           - matchers: [alertname="unifi_ips_event"]
-            repeat_interval: 60m
+            repeat_interval: 80m
           - matchers: [alertname="traefik_5xx_burst"]
-            repeat_interval: 30m
+            repeat_interval: 65m
           - matchers: [alertname="unifi_device_down"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="host_metrics_silent"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="filesystem_usage_high"]
-            repeat_interval: 720m
+            repeat_interval: 725m
           - matchers: [alertname="filesystem_usage_critical"]
-            repeat_interval: 120m
+            repeat_interval: 125m
           - matchers: [alertname="zfs_pool_degraded"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="zfs_pool_capacity_high"]
-            repeat_interval: 720m
+            repeat_interval: 725m
           - matchers: [alertname="smart_status_failed"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="smart_attribute_failing"]
-            repeat_interval: 1440m
+            repeat_interval: 1445m
           - matchers: [alertname="smart_sectors_growing"]
-            repeat_interval: 1440m
+            repeat_interval: 2885m
           - matchers: [alertname="smart_crc_errors_growing"]
-            repeat_interval: 1440m
+            repeat_interval: 2885m
           - matchers: [alertname="smart_temperature_high"]
-            repeat_interval: 120m
+            repeat_interval: 125m
           - matchers: [alertname="smart_data_missing"]
-            repeat_interval: 120m
+            repeat_interval: 125m
+          - matchers: [alertname="zfs_data_missing"]
+            repeat_interval: 125m
           - matchers: [alertname="synology_system_failed"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="synology_raid_degraded"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="synology_disk_failed"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="synology_temperature_high"]
-            repeat_interval: 120m
+            repeat_interval: 125m
           - matchers: [alertname="synology_scrape_down"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="freebox_connection_down"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="freebox_scrape_down"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="freebox_fiber_signal_low"]
-            repeat_interval: 120m
+            repeat_interval: 125m
           - matchers: [alertname="freebox_temperature_high"]
-            repeat_interval: 120m
+            repeat_interval: 125m
           - matchers: [alertname="victoria_component_down"]
-            repeat_interval: 60m
+            repeat_interval: 65m
           - matchers: [alertname="vmalert_rule_errors"]
-            repeat_interval: 120m
+            repeat_interval: 245m
           - matchers: [alertname="alertmanager_notifications_failed"]
-            repeat_interval: 60m
+            repeat_interval: 70m
+          - matchers: [alertname="vmalert_send_failed"]
+            repeat_interval: 75m
       receivers:
         - name: sms
           webhook_configs:
@@ -1433,6 +1474,27 @@ configs:
             - url: "${ALERTMANAGER_WATCHDOG_URL:?Set ALERTMANAGER_WATCHDOG_URL}"
               send_resolved: false
               max_alerts: 1
+      # A firing source mutes its consequences, which then send no SMS.
+      inhibit_rules:
+        # A host sending no metrics at all is the collector or the host
+        # down: its logs, SMART, ZFS and DNS go silent with it.
+        - source_matchers: [alertname="host_metrics_silent"]
+          target_matchers:
+            - alertname=~"host_logs_silent|smart_data_missing|zfs_data_missing|dns_resolver_silent"
+          equal: [host_name]
+        # No data from the UniFi controller at all: every device would look
+        # down.
+        - source_matchers: [alertname="unpoller_no_unifi_data"]
+          target_matchers: [alertname="unifi_device_down"]
+        # The critical threshold of the same filesystem says it all.
+        - source_matchers: [alertname="filesystem_usage_critical"]
+          target_matchers: [alertname="filesystem_usage_high"]
+          equal: [device, type]
+        # A drive whose own SMART status failed: its attributes add nothing.
+        - source_matchers: [alertname="smart_status_failed"]
+          target_matchers:
+            - alertname=~"smart_attribute_failing|smart_sectors_growing|smart_crc_errors_growing"
+          equal: [host_name, device]
 
   # Vector pipeline. Compose interpolates $ here: write $$ for a literal $.
   vector_config:
@@ -2276,6 +2338,9 @@ configs:
           editable: false
           jsonData:
             prometheusType: Prometheus
+            # Longest scrape interval (unpoller, synology, freebox): keeps
+            # $$__rate_interval at 4m or more, so a rate always sees 2 samples.
+            timeInterval: 60s
   grafana_dashboard_provider:
     content: |
       apiVersion: 1
@@ -2286,6 +2351,10 @@ configs:
           allowUiUpdates: false
           options:
             path: /etc/grafana/dashboards
+            # Each sub-directory becomes a Grafana folder: overview dashboards
+            # stay at the root (General), detail ones go in a folder. Links
+            # use uids and tags, so moving a file does not break them.
+            foldersFromFilesStructure: true
   grafana_dashboard_authentik:
     content: |
       {
@@ -3643,7 +3712,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_node_network_receive_bytes_total{device=~\"vmbr.*\"}[2m])",
+                "expr": "rate(proxmox_node_network_receive_bytes_total{device=~\"vmbr.*\"}[$$__rate_interval])",
                 "legendFormat": "{{device}} rx",
                 "range": true
               },
@@ -3654,7 +3723,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_node_network_transmit_bytes_total{device=~\"vmbr.*\"}[2m])",
+                "expr": "rate(proxmox_node_network_transmit_bytes_total{device=~\"vmbr.*\"}[$$__rate_interval])",
                 "legendFormat": "{{device}} tx",
                 "range": true
               }
@@ -3765,7 +3834,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (node) (rate(proxmox_node_cpustat_iowait_seconds_total[5m])) / sum by (node) (rate({__name__=~\"proxmox_node_cpustat_(user|nice|system|idle|iowait|irq|softirq|steal)_seconds_total\"}[5m]))",
+                "expr": "sum by (node) (rate(proxmox_node_cpustat_iowait_seconds_total[$$__rate_interval])) / sum by (node) (rate({__name__=~\"proxmox_node_cpustat_(user|nice|system|idle|iowait|irq|softirq|steal)_seconds_total\"}[$$__rate_interval]))",
                 "legendFormat": "{{node}} iowait",
                 "range": true
               },
@@ -3776,7 +3845,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (node) (rate(proxmox_node_cpustat_steal_seconds_total[5m])) / sum by (node) (rate({__name__=~\"proxmox_node_cpustat_(user|nice|system|idle|iowait|irq|softirq|steal)_seconds_total\"}[5m]))",
+                "expr": "sum by (node) (rate(proxmox_node_cpustat_steal_seconds_total[$$__rate_interval])) / sum by (node) (rate({__name__=~\"proxmox_node_cpustat_(user|nice|system|idle|iowait|irq|softirq|steal)_seconds_total\"}[$$__rate_interval]))",
                 "legendFormat": "{{node}} steal",
                 "range": true
               }
@@ -3955,7 +4024,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_netin_bytes_total[2m])",
+                "expr": "rate(proxmox_vm_netin_bytes_total[$$__rate_interval])",
                 "legendFormat": "{{name}} in",
                 "range": true
               },
@@ -3966,7 +4035,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_netout_bytes_total[2m])",
+                "expr": "rate(proxmox_vm_netout_bytes_total[$$__rate_interval])",
                 "legendFormat": "{{name}} out",
                 "range": true
               }
@@ -4021,7 +4090,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_diskread_bytes_total[2m])",
+                "expr": "rate(proxmox_vm_diskread_bytes_total[$$__rate_interval])",
                 "legendFormat": "{{name}} read",
                 "range": true
               },
@@ -4032,7 +4101,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_diskwrite_bytes_total[2m])",
+                "expr": "rate(proxmox_vm_diskwrite_bytes_total[$$__rate_interval])",
                 "legendFormat": "{{name}} write",
                 "range": true
               }
@@ -5740,7 +5809,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(unpoller_device_wan_receive_bytes_total[2m])",
+                "expr": "rate(unpoller_device_wan_receive_bytes_total[$$__rate_interval])",
                 "legendFormat": "{{name}} {{port}} rx",
                 "range": true
               },
@@ -5751,7 +5820,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(unpoller_device_wan_transmit_bytes_total[2m])",
+                "expr": "rate(unpoller_device_wan_transmit_bytes_total[$$__rate_interval])",
                 "legendFormat": "{{name}} {{port}} tx",
                 "range": true
               }
@@ -5806,7 +5875,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(unpoller_device_bytes_total[2m])",
+                "expr": "rate(unpoller_device_bytes_total[$$__rate_interval])",
                 "legendFormat": "{{name}}",
                 "range": true
               }
@@ -5861,7 +5930,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "topk(10, sum by (name, mac) (rate(unpoller_client_receive_bytes_total[2m]) + rate(unpoller_client_transmit_bytes_total[2m])))",
+                "expr": "topk(10, sum by (name, mac) (rate(unpoller_client_receive_bytes_total[$$__rate_interval]) + rate(unpoller_client_transmit_bytes_total[$$__rate_interval])))",
                 "legendFormat": "{{name}} {{mac}}",
                 "range": true
               }
@@ -6530,7 +6599,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(ifHCInOctets{ifName=~\"eth.*|bond.*\"}[2m])",
+                "expr": "rate(ifHCInOctets{ifName=~\"eth.*|bond.*\"}[$$__rate_interval])",
                 "legendFormat": "{{ifName}} rx",
                 "range": true
               },
@@ -6541,7 +6610,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(ifHCOutOctets{ifName=~\"eth.*|bond.*\"}[2m])",
+                "expr": "rate(ifHCOutOctets{ifName=~\"eth.*|bond.*\"}[$$__rate_interval])",
                 "legendFormat": "{{ifName}} tx",
                 "range": true
               }
@@ -6596,7 +6665,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(storageIONReadX[2m])",
+                "expr": "rate(storageIONReadX[$$__rate_interval])",
                 "legendFormat": "{{storageIODevice}} lecture",
                 "range": true
               },
@@ -6607,7 +6676,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(storageIONWrittenX[2m])",
+                "expr": "rate(storageIONWrittenX[$$__rate_interval])",
                 "legendFormat": "{{storageIODevice}} écriture",
                 "range": true
               }
@@ -6663,7 +6732,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(ifInErrors{ifName=~\"eth.*|bond.*\"}[5m])",
+                "expr": "rate(ifInErrors{ifName=~\"eth.*|bond.*\"}[$$__rate_interval])",
                 "legendFormat": "{{ifName}} erreurs entrée",
                 "range": true
               },
@@ -6674,7 +6743,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(ifOutErrors{ifName=~\"eth.*|bond.*\"}[5m])",
+                "expr": "rate(ifOutErrors{ifName=~\"eth.*|bond.*\"}[$$__rate_interval])",
                 "legendFormat": "{{ifName}} erreurs sortie",
                 "range": true
               },
@@ -6685,7 +6754,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(ifInDiscards{ifName=~\"eth.*|bond.*\"}[5m])",
+                "expr": "rate(ifInDiscards{ifName=~\"eth.*|bond.*\"}[$$__rate_interval])",
                 "legendFormat": "{{ifName}} rejets entrée",
                 "range": true
               },
@@ -6696,7 +6765,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(ifOutDiscards{ifName=~\"eth.*|bond.*\"}[5m])",
+                "expr": "rate(ifOutDiscards{ifName=~\"eth.*|bond.*\"}[$$__rate_interval])",
                 "legendFormat": "{{ifName}} rejets sortie",
                 "range": true
               }
@@ -6959,7 +7028,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "count(max by (host_name) (lag(system_cpu_time_seconds_total{host_name=~\"$$host_name\"}[24h])) > 600)",
+                "expr": "count(host_name:metrics_age_seconds:max{host_name=~\"$$host_name\"} > 600)",
                 "legendFormat": "__auto",
                 "range": true
               }
@@ -7126,7 +7195,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "1 - sum by (host_name) (rate(system_cpu_time_seconds_total{host_name=~\"$$host_name\", state=\"idle\"}[5m])) / sum by (host_name) (rate(system_cpu_time_seconds_total{host_name=~\"$$host_name\"}[5m]))",
+                "expr": "1 - sum by (host_name) (rate(system_cpu_time_seconds_total{host_name=~\"$$host_name\", state=\"idle\"}[$$__rate_interval])) / sum by (host_name) (rate(system_cpu_time_seconds_total{host_name=~\"$$host_name\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}}",
                 "range": true
               }
@@ -7359,7 +7428,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (host_name, direction) (rate(system_network_io_bytes_total{host_name=~\"$$host_name\", device=~\"eth.*|en.*|vmbr[0-9]+|bond.*|wl.*\"}[5m]))",
+                "expr": "sum by (host_name, direction) (rate(system_network_io_bytes_total{host_name=~\"$$host_name\", device=~\"eth.*|en.*|vmbr[0-9]+|bond.*|wl.*\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} {{direction}}",
                 "range": true
               }
@@ -7414,7 +7483,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (host_name, direction) (rate(system_disk_io_bytes_total{host_name=~\"$$host_name\", device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[5m]))",
+                "expr": "sum by (host_name, direction) (rate(system_disk_io_bytes_total{host_name=~\"$$host_name\", device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} {{direction}}",
                 "range": true
               }
@@ -7541,7 +7610,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (host_name, direction) (rate(system_network_errors_total{host_name=~\"$$host_name\"}[5m]))",
+                "expr": "sum by (host_name, direction) (rate(system_network_errors_total{host_name=~\"$$host_name\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} erreurs {{direction}}",
                 "range": true
               },
@@ -7552,7 +7621,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (host_name, direction) (rate(system_network_dropped_total{host_name=~\"$$host_name\"}[5m]))",
+                "expr": "sum by (host_name, direction) (rate(system_network_dropped_total{host_name=~\"$$host_name\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} pertes {{direction}}",
                 "range": true
               }
@@ -7608,7 +7677,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (host_name) (rate(system_paging_faults_total{host_name=~\"$$host_name\", type=\"major\"}[5m]))",
+                "expr": "sum by (host_name) (rate(system_paging_faults_total{host_name=~\"$$host_name\", type=\"major\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} défauts majeurs",
                 "range": true
               },
@@ -7619,7 +7688,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (host_name, direction) (rate(system_paging_operations_total{host_name=~\"$$host_name\", type=\"major\"}[5m]))",
+                "expr": "sum by (host_name, direction) (rate(system_paging_operations_total{host_name=~\"$$host_name\", type=\"major\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} swap {{direction}}",
                 "range": true
               }
@@ -7735,7 +7804,7 @@ configs:
           "from": "now-24h",
           "to": "now"
         },
-        "refresh": "1m",
+        "refresh": "5m",
         "graphTooltip": 1,
         "links": [
           {
@@ -7858,7 +7927,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search | stats count() as n",
+                "expr": "{log_stream in($$log_stream)} host_name:in($$host_name) $$search | stats count() as n",
                 "queryType": "stats"
               }
             ],
@@ -7908,7 +7977,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search level:in(error,crit) | stats count() as n",
+                "expr": "{log_stream in($$log_stream)} host_name:in($$host_name) $$search level:in(error,crit) | stats count() as n",
                 "queryType": "stats"
               }
             ],
@@ -7958,7 +8027,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search | stats count_uniq(host_name) as n",
+                "expr": "{log_stream in($$log_stream)} host_name:in($$host_name) $$search | stats count_uniq(host_name) as n",
                 "queryType": "stats"
               }
             ],
@@ -8008,7 +8077,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search | stats by (log_stream) count() as n",
+                "expr": "{log_stream in($$log_stream)} host_name:in($$host_name) $$search | stats by (log_stream) count() as n",
                 "queryType": "statsRange",
                 "step": "5m",
                 "legendFormat": "{{log_stream}}"
@@ -8064,7 +8133,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search | stats by (host_name) count() as n",
+                "expr": "{log_stream in($$log_stream)} host_name:in($$host_name) $$search | stats by (host_name) count() as n",
                 "queryType": "statsRange",
                 "step": "5m",
                 "legendFormat": "{{host_name}}"
@@ -8120,7 +8189,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search level:in(error,crit) | stats by (host_name) count() as n",
+                "expr": "{log_stream in($$log_stream)} host_name:in($$host_name) $$search level:in(error,crit) | stats by (host_name) count() as n",
                 "queryType": "statsRange",
                 "step": "5m",
                 "legendFormat": "{{host_name}}"
@@ -8176,7 +8245,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search level:in(error,crit) | stats by (host_name, log_stream) count() as n | sort by (n desc) | limit 30",
+                "expr": "{log_stream in($$log_stream)} host_name:in($$host_name) $$search level:in(error,crit) | stats by (host_name, log_stream) count() as n | sort by (n desc) | limit 30",
                 "queryType": "instant"
               }
             ],
@@ -8416,7 +8485,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "log_stream:in($$log_stream) host_name:in($$host_name) $$search | sort by (_time desc) | limit 200",
+                "expr": "{log_stream in($$log_stream)} host_name:in($$host_name) $$search | sort by (_time desc) | limit 200",
                 "queryType": "instant"
               }
             ],
@@ -8457,7 +8526,7 @@ configs:
           "from": "now-24h",
           "to": "now"
         },
-        "refresh": "1m",
+        "refresh": "5m",
         "graphTooltip": 1,
         "links": [
           {
@@ -9365,7 +9434,7 @@ configs:
           "from": "now-24h",
           "to": "now"
         },
-        "refresh": "1m",
+        "refresh": "5m",
         "graphTooltip": 1,
         "links": [
           {
@@ -10915,7 +10984,7 @@ configs:
           "from": "now-24h",
           "to": "now"
         },
-        "refresh": "1m",
+        "refresh": "5m",
         "graphTooltip": 1,
         "links": [
           {
@@ -12482,7 +12551,7 @@ configs:
           "from": "now-24h",
           "to": "now"
         },
-        "refresh": "1m",
+        "refresh": "5m",
         "graphTooltip": 1,
         "links": [
           {
@@ -16325,7 +16394,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(storageIONReadX[2m])",
+                "expr": "rate(storageIONReadX[$$__rate_interval])",
                 "legendFormat": "{{storageIODevice}} lecture",
                 "range": true
               },
@@ -16336,7 +16405,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "-rate(storageIONWrittenX[2m])",
+                "expr": "-rate(storageIONWrittenX[$$__rate_interval])",
                 "legendFormat": "{{storageIODevice}} écriture",
                 "range": true
               }
@@ -16392,7 +16461,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(storageIOReads[2m])",
+                "expr": "rate(storageIOReads[$$__rate_interval])",
                 "legendFormat": "{{storageIODevice}} lecture",
                 "range": true
               },
@@ -16403,7 +16472,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "-rate(storageIOWrites[2m])",
+                "expr": "-rate(storageIOWrites[$$__rate_interval])",
                 "legendFormat": "{{storageIODevice}} écriture",
                 "range": true
               }
@@ -16832,7 +16901,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (rate(system_disk_io_time_seconds_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[5m]))",
+                "expr": "max by (host_name, device) (rate(system_disk_io_time_seconds_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} {{device}}",
                 "range": true
               }
@@ -16905,7 +16974,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (host_name, device) (rate(system_disk_io_bytes_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\", direction=\"read\"}[5m]))",
+                "expr": "sum by (host_name, device) (rate(system_disk_io_bytes_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\", direction=\"read\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} {{device}} lecture",
                 "range": true
               },
@@ -16916,7 +16985,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "-sum by (host_name, device) (rate(system_disk_io_bytes_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\", direction=\"write\"}[5m]))",
+                "expr": "-sum by (host_name, device) (rate(system_disk_io_bytes_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\", direction=\"write\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} {{device}} écriture",
                 "range": true
               }
@@ -16972,7 +17041,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (host_name, device) (rate(system_disk_operation_time_seconds_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[5m])) / sum by (host_name, device) (rate(system_disk_operations_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[5m]) > 0)",
+                "expr": "sum by (host_name, device) (rate(system_disk_operation_time_seconds_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[$$__rate_interval])) / sum by (host_name, device) (rate(system_disk_operations_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[$$__rate_interval]) > 0)",
                 "legendFormat": "{{host_name}} {{device}}",
                 "range": true
               }
@@ -18568,7 +18637,7 @@ configs:
           {
             "type": "stat",
             "title": "Erreurs dans les logs",
-            "description": "Lignes au niveau error ou crit, tous flux confondus.",
+            "description": "Lignes au niveau error ou crit des flux docker, syslog, journald et authentik, les seuls qui en produisent.",
             "datasource": {
               "type": "victoriametrics-logs-datasource",
               "uid": "victorialogs"
@@ -18581,7 +18650,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "level:in(error,crit) | stats count() as n",
+                "expr": "{log_stream in(\"docker\",\"syslog\",\"journald\",\"authentik\")} level:in(error,crit) | stats count() as n",
                 "queryType": "stats"
               }
             ],
@@ -18929,7 +18998,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "count(max by (host_name) (lag(system_cpu_time_seconds_total[24h])) > 600)",
+                "expr": "count(host_name:metrics_age_seconds:max > 600)",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false
@@ -19347,7 +19416,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name) (lag(system_cpu_time_seconds_total[24h]))",
+                "expr": "host_name:metrics_age_seconds:max",
                 "format": "table",
                 "instant": true,
                 "range": false
@@ -20153,7 +20222,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (reason) (rate(vl_rows_dropped_total[5m]))",
+                "expr": "sum by (reason) (rate(vl_rows_dropped_total[$$__rate_interval]))",
                 "legendFormat": "logs {{reason}}",
                 "range": true
               },
@@ -20164,7 +20233,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum(rate(vl_too_long_lines_skipped_total[5m]))",
+                "expr": "sum(rate(vl_too_long_lines_skipped_total[$$__rate_interval]))",
                 "legendFormat": "logs trop longues",
                 "range": true
               },
@@ -20175,7 +20244,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (type) (rate(vm_rows_invalid_total[5m]))",
+                "expr": "sum by (type) (rate(vm_rows_invalid_total[$$__rate_interval]))",
                 "legendFormat": "métriques {{type}}",
                 "range": true
               }
@@ -20300,7 +20369,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (component_id) (rate(vector_component_received_events_total{component_kind=\"source\"}[5m]))",
+                "expr": "sum by (component_id) (rate(vector_component_received_events_total{component_kind=\"source\"}[$$__rate_interval]))",
                 "legendFormat": "{{component_id}}",
                 "range": true
               }
@@ -20356,7 +20425,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (component_id) (rate(vector_component_sent_events_total{component_kind=\"sink\"}[5m]))",
+                "expr": "sum by (component_id) (rate(vector_component_sent_events_total{component_kind=\"sink\"}[$$__rate_interval]))",
                 "legendFormat": "{{component_id}}",
                 "range": true
               }
@@ -20807,7 +20876,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (job) (rate(process_cpu_seconds_total{job=~\"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector\"}[5m]))",
+                "expr": "sum by (job) (rate(process_cpu_seconds_total{job=~\"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector\"}[$$__rate_interval]))",
                 "legendFormat": "{{job}}",
                 "range": true
               }
@@ -23649,7 +23718,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum(rate(unpoller_device_wan_receive_bytes_total{job=\"unpoller\", name=\"gw\"}[5m])) * 8",
+                "expr": "sum(rate(unpoller_device_wan_receive_bytes_total{job=\"unpoller\", name=\"gw\"}[$$__rate_interval])) * 8",
                 "legendFormat": "reçu",
                 "range": true
               },
@@ -23660,7 +23729,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum(rate(unpoller_device_wan_transmit_bytes_total{job=\"unpoller\", name=\"gw\"}[5m])) * 8",
+                "expr": "sum(rate(unpoller_device_wan_transmit_bytes_total{job=\"unpoller\", name=\"gw\"}[$$__rate_interval])) * 8",
                 "legendFormat": "émis",
                 "range": true
               }
