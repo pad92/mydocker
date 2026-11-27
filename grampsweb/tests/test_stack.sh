@@ -13,7 +13,13 @@
 # - local accounts stay usable: no DISABLE_LOCAL_AUTH, no AUTO_REDIRECT;
 # - the host CA bundle is mounted read-only and REQUESTS_CA_BUNDLE points at
 #   it, so the OIDC discovery trusts Authentik's internal-CA certificate.
-# Rendering fails without the client secret or the Authentik domain, and the
+# - the AI chat is on for both: LLM_BASE_URL ends in /v1/ (Ollama's
+#   OpenAI-compatible API; without it requests hit Ollama's native routes and
+#   fail), the model carries the "ollama:" prefix (Ollama provider, no
+#   OPENAI_API_KEY to leak or forget), and LLM_MAX_CONTEXT_LENGTH is a plain
+#   integer, since Flask parses it as JSON.
+# Rendering fails without the client secret, the Authentik domain or the LLM
+# base URL, and the
 # Traefik router is not behind forward auth (Gramps Web does its own login).
 # Needs Docker Compose and jq. Usage: ./tests/test_stack.sh
 set -euo pipefail
@@ -48,6 +54,15 @@ for svc in grampsweb grampsweb_celery; do
   expect GRAMPSWEB_OIDC_GROUP_EDITOR grampsweb-editors
   expect GRAMPSWEB_OIDC_GROUP_MEMBER grampsweb-members
   expect REQUESTS_CA_BUNDLE "$ca"
+  expect GRAMPSWEB_LLM_MODEL "ollama:qwen2.5:7b"
+  expect GRAMPSWEB_LLM_MAX_CONTEXT_LENGTH 20000
+  [[ "$(getenv GRAMPSWEB_LLM_BASE_URL)" == http*://*/v1/ ]] \
+    || fail "$svc: GRAMPSWEB_LLM_BASE_URL must end in /v1/"
+  [[ "$(getenv GRAMPSWEB_LLM_MODEL)" == ollama:?* ]] \
+    || fail "$svc: GRAMPSWEB_LLM_MODEL must keep the ollama: prefix"
+  [[ "$(getenv GRAMPSWEB_LLM_MAX_CONTEXT_LENGTH)" =~ ^[1-9][0-9]*$ ]] \
+    || fail "$svc: GRAMPSWEB_LLM_MAX_CONTEXT_LENGTH is not an integer"
+  expect OPENAI_API_KEY "<unset>"
 
   others="$(jq -r --arg s "$svc" '.services[$s].environment | keys[]
     | select(test("^GRAMPSWEB_OIDC_(GROUP_|DISABLE_LOCAL_AUTH|AUTO_REDIRECT)"))
@@ -64,7 +79,7 @@ middlewares="$(jq -r '.services.grampsweb.labels | to_entries[]
 [ "$middlewares" = redirect-https ] \
   || fail "unexpected router middlewares (forward auth would block the OIDC callback and the API): $middlewares"
 
-for missing in GRAMPSWEB_OIDC_CLIENT_SECRET AUTHENTIK_DOMAIN; do
+for missing in GRAMPSWEB_OIDC_CLIENT_SECRET AUTHENTIK_DOMAIN GRAMPSWEB_LLM_BASE_URL; do
   out="$(GRAMPSWEB_DOMAIN="$domain" AUTHENTIK_DOMAIN="$idp" GRAMPSWEB_OIDC_CLIENT_SECRET=test-secret \
     bash -c 'export "$1="; shift; "$@"' _ "$missing" \
     docker compose --project-directory "$stack_dir" --env-file "$stack_dir/.env.example" \

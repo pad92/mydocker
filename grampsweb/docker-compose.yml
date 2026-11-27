@@ -53,6 +53,16 @@ x-grampsweb: &grampsweb
     # Authentik's certificate comes from the internal CA: trust the host
     # bundle (mounted below) instead of the certifi one Python ships.
     REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
+    # AI chat, answered by the Ollama of the "ollama" stack (GPU on
+    # chataigne). The "ollama:" prefix selects Pydantic AI's Ollama provider,
+    # so no OPENAI_API_KEY is needed; the base URL must end in /v1/. The
+    # assistant relies on tool calling: keep a model that supports it.
+    GRAMPSWEB_LLM_BASE_URL: "${GRAMPSWEB_LLM_BASE_URL:?Set GRAMPSWEB_LLM_BASE_URL}"
+    GRAMPSWEB_LLM_MODEL: "${GRAMPSWEB_LLM_MODEL:-ollama:qwen2.5:7b}"
+    # Characters of tree context sent per question (Gramps default 50000,
+    # about 13k tokens). 20000 stays within the context Ollama can keep on a
+    # 6 GB card next to a 7B model.
+    GRAMPSWEB_LLM_MAX_CONTEXT_LENGTH: "${GRAMPSWEB_LLM_MAX_CONTEXT_LENGTH:-20000}"
   volumes:
     - ${GRAMPSWEB_DATA_DIR:?Set GRAMPSWEB_DATA_DIR}/users:/app/users
     - ${GRAMPSWEB_DATA_DIR:?Set GRAMPSWEB_DATA_DIR}/indexdir:/app/indexdir
