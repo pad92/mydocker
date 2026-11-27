@@ -43,10 +43,11 @@ services:
       traefik.http.routers.open-webui.tls.certresolver: "stepca"
     logging: *default-logging
   ollama:
-    # Pinned: a new release may drop the CUDA build that still runs on the
-    # Pascal GPU (compute capability 6.1) or need a newer host driver. Test
-    # with `ollama ps` (100% GPU) before raising it.
-    image: docker.io/ollama/ollama:${OLLAMA_VERSION:-0.40.18}
+    # Pinned to the last release that uses the GPU with NVIDIA driver 550:
+    # from 0.30.0 Ollama wants driver 570 or newer and falls back to the CPU
+    # without an error (only a "driver too old" warning in the logs). Raise
+    # it only after a driver upgrade, and check `ollama ps` (100% GPU).
+    image: docker.io/ollama/ollama:${OLLAMA_VERSION:-0.24.0}
     container_name: ollama
     restart: unless-stopped
     volumes:

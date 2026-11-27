@@ -85,6 +85,11 @@ for s in ollama open-webui; do
     *) fail "$s: image not pinned to a release: $img" ;;
   esac
 done
+# From 0.30.0 Ollama needs NVIDIA driver 570 and silently runs on the CPU
+# with the host driver 550: the default must stay on the last tag tested on
+# the GPU until the driver is upgraded (see README, GPU and versions).
+[ "$(image "$config" ollama)" = docker.io/ollama/ollama:0.24.0 ] \
+  || fail "ollama: default image is $(image "$config" ollama), expected the 0.24.0 tested on driver 550"
 pinned="$(render OLLAMA_VERSION=9.9.9 OPEN_WEBUI_VERSION=v9.9.9)"
 [ "$(image "$pinned" ollama)" = docker.io/ollama/ollama:9.9.9 ] \
   || fail "OLLAMA_VERSION override ignored: $(image "$pinned" ollama)"
