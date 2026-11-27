@@ -43,8 +43,18 @@
 #   UDP syslog port: 9428, 8428 and 4318 have no authentication of their own;
 # - the victoria-ingest-auth middleware exists in the Traefik file provider
 #   template (management stack) as Basic auth that drops the Authorization
-#   header before the backend.
-# Needs Docker Compose 2.23+, jq and python3.11+. Usage: ./tests/test_stack.sh
+#   header before the backend;
+# - retention defaults (logs 30d, metrics 1y), mem_limit of the two databases
+#   (1g), of the two vmalert and of alertmanager (128m), their healthchecks
+#   and the depends_on conditions (vmalert waits for a healthy
+#   victoriametrics and alertmanager);
+# - the vector scrape job drops vector_*_bucket, and no other config (rules,
+#   dashboards) reads those buckets;
+# - the SMS webhook: VECTOR_WEBHOOK_PASSWORD is empty in .env.example, the
+#   render fails without it, and the Basic auth that the sms receiver sends
+#   equals the one the alertmanager_webhook source of Vector requires.
+# Needs Docker Compose 2.23+, jq and python3.11+ with PyYAML.
+# Usage: ./tests/test_stack.sh
 set -euo pipefail
 
 stack_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -58,7 +68,7 @@ grafana_host="$(env_value VICTORIA_GRAFANA_DOMAIN)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # PUID/PGID are empty in .env.example but required by the compose file.
-config="$(PUID=1000 PGID=1000 docker compose --project-directory "$stack_dir" \
+config="$(PUID=1000 PGID=1000 VECTOR_WEBHOOK_PASSWORD=0123456789abcdef docker compose --project-directory "$stack_dir" \
   --env-file "$stack_dir/.env.example" config --format json)"
 # Router labels of every service, as "service<TAB>key<TAB>value".
 all_labels="$(jq -r '.services | to_entries[] | .key as $s
@@ -310,6 +320,73 @@ done
 jq -e '.configs.vector_config.content
   | test("prometheus:\n *type: prometheus_exporter\n *inputs:\n *- vector_metrics\n *address: 0.0.0.0:9598\n")' \
   <<<"$config" >/dev/null || fail "vector does not export its internal metrics on 9598"
+
+# Retention: 1 year of metrics and 30 days of logs by default (the compose
+# defaults, not only the values of .env.example).
+grep -qF -- '-retentionPeriod=${VICTORIA_METRICS_RETENTION:-1y}' "$stack_dir/docker-compose.yml" \
+  || fail "the default metrics retention is not 1y"
+grep -qF -- '-retentionPeriod=${VICTORIA_LOGS_RETENTION:-30d}' "$stack_dir/docker-compose.yml" \
+  || fail "the default logs retention is not 30d"
+
+# Memory limits (bytes, as compose config renders them) and health checks.
+for pair in victorialogs:1073741824 victoriametrics:1073741824 vmalert-logs:134217728 \
+  vmalert-metrics:134217728 alertmanager:134217728; do
+  s="${pair%%:*}"
+  [ "$(jq -r --arg s "$s" '.services[$s].mem_limit // ""' <<<"$config")" = "${pair#*:}" ] \
+    || fail "$s mem_limit is not ${pair#*:} bytes"
+done
+for pair in victoriametrics=http://127.0.0.1:8428/health vmalert-logs=http://127.0.0.1:8880/health \
+  vmalert-metrics=http://127.0.0.1:8880/health alertmanager=http://127.0.0.1:9093/-/healthy; do
+  s="${pair%%=*}"
+  jq -e --arg s "$s" --arg u "${pair#*=}" '.services[$s].healthcheck.test
+    == ["CMD", "wget", "-q", "-O", "/dev/null", $u]' <<<"$config" >/dev/null \
+    || fail "$s has no wget health check on ${pair#*=}"
+done
+# vmalert starts only once its datasource and its notifier answer; victorialogs
+# has no health check (no shell, no wget in its image), so started is the most.
+jq -e '.services["vmalert-logs"].depends_on | (.victorialogs.condition == "service_started")
+  and (.victoriametrics.condition == "service_healthy")
+  and (.alertmanager.condition == "service_healthy")' <<<"$config" >/dev/null \
+  || fail "vmalert-logs depends_on conditions are not the expected ones"
+jq -e '.services["vmalert-metrics"].depends_on | (.victoriametrics.condition == "service_healthy")
+  and (.alertmanager.condition == "service_healthy")' <<<"$config" >/dev/null \
+  || fail "vmalert-metrics depends_on conditions are not the expected ones"
+
+# Vector histograms: the vector job drops the buckets, so no dashboard or rule
+# may use them (they would be empty).
+jq -e '.configs.victoriametrics_scrape.content
+  | test("- job_name: vector\n(.*\n)*? *metric_relabel_configs:\n *- source_labels: \\[__name__\\]\n *regex: \"vector_\\.\\*_bucket\"\n *action: drop\n")' \
+  <<<"$config" >/dev/null || fail "the vector job does not drop the vector_.*_bucket series"
+bucket_users="$(jq -r '.configs | to_entries[] | select(.key != "victoriametrics_scrape")
+  | select(.value.content // "" | test("vector_[a-z_]+_bucket|histogram_quantile\\([^)]*vector_"))
+  | .key' <<<"$config")"
+[ -z "$bucket_users" ] || fail "configs use the dropped vector buckets: $bucket_users"
+
+# SMS webhook: Alertmanager sends the Basic auth that the vector source
+# requires, with the same password; it has no value in .env.example and
+# Compose refuses to render the stack without it.
+grep -q '^VECTOR_WEBHOOK_PASSWORD=$' "$stack_dir/.env.example" \
+  || fail "VECTOR_WEBHOOK_PASSWORD has a value in .env.example"
+if PUID=1000 PGID=1000 VECTOR_WEBHOOK_PASSWORD= docker compose --project-directory "$stack_dir" \
+  --env-file "$stack_dir/.env.example" config -q 2>/dev/null; then
+  fail "Compose renders the stack with an empty VECTOR_WEBHOOK_PASSWORD"
+fi
+webhook_check="$(cat <<'PY'
+import json, sys, yaml
+c = json.load(sys.stdin)["configs"]
+am = yaml.safe_load(c["alertmanager_config"]["content"])
+vec = yaml.safe_load(c["vector_config"]["content"])
+hooks = [w for r in am["receivers"] for w in r.get("webhook_configs", [])
+         if w["url"] == "http://vector:8080/alertmanager"]
+src = vec["sources"]["alertmanager_webhook"]["auth"]
+ok = len(hooks) == 1 and src.get("strategy") == "basic" and src.get("password") \
+    and hooks[0].get("http_config", {}).get("basic_auth") \
+        == {"username": src.get("username"), "password": src["password"]}
+sys.exit(0 if ok else 1)
+PY
+)"
+python3 -I -c "$webhook_check" <<<"$config" \
+  || fail "the SMS webhook auth of alertmanager and vector differ or are missing"
 
 python3 -I - "$stack_dir/../management/traefik_dynamic.toml.example" <<'EOF' \
   || fail "victoria-ingest-auth is missing or not a header-removing Basic auth in traefik_dynamic.toml.example"

@@ -13,7 +13,7 @@ trap 'rm -rf "$work_dir"' EXIT
 # PUID/PGID are empty in .env.example but required by the compose file.
 # "compose config" escapes every literal $ as $$ again in its output; the gsub
 # gives back the file the container really receives.
-PUID="${PUID:-1000}" PGID="${PGID:-1000}" docker compose \
+PUID="${PUID:-1000}" PGID="${PGID:-1000}" VECTOR_WEBHOOK_PASSWORD="${VECTOR_WEBHOOK_PASSWORD:-0123456789abcdef}" docker compose \
   --project-directory "$stack_dir" --env-file "$stack_dir/.env.example" \
   config --format json | jq -er '.configs.vector_config.content | gsub("\\$\\$"; "$")' > "$work_dir/vector.yaml"
 cp "$stack_dir"/tests/*_test.yaml "$work_dir/"

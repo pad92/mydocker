@@ -45,7 +45,7 @@ fail() {
 }
 
 # --- Rendering: what the grafana-mcp container really receives.
-config="$(PUID="${PUID:-1000}" PGID="${PGID:-1000}" docker compose \
+config="$(PUID="${PUID:-1000}" PGID="${PGID:-1000}" VECTOR_WEBHOOK_PASSWORD="${VECTOR_WEBHOOK_PASSWORD:-0123456789abcdef}" docker compose \
   --project-directory "$stack_dir" --env-file "$env_file" config --format json)"
 service="$(jq -c '.services."grafana-mcp"' <<<"$config")"
 image="$(jq -r '.image' <<<"$service")"

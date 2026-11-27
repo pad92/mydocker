@@ -19,6 +19,10 @@
 #   scrape interval, so that $__rate_interval always spans 4 samples; no
 #   VictoriaLogs query filters log_stream outside a stream filter {...}; every
 #   recording rule a dashboard reads is defined in the vmalert-metrics rules;
+#   a VictoriaMetrics stat panel without sparkline (graphMode none) shows one
+#   value, so its targets are instant: a range query over the time range
+#   fetches points it drops, and lastNotNull would show a value hours old for
+#   a series that stopped;
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
 # - every VictoriaLogs target of the dashboards, sent as the viewer to
@@ -108,7 +112,7 @@ fail() {
 }
 
 # --- Rendering: the environment and files the Grafana container receives.
-PUID="${PUID:-1000}" PGID="${PGID:-1000}" docker compose \
+PUID="${PUID:-1000}" PGID="${PGID:-1000}" VECTOR_WEBHOOK_PASSWORD="${VECTOR_WEBHOOK_PASSWORD:-0123456789abcdef}" docker compose \
   --project-directory "$stack_dir" --env-file "$env_file" \
   config --format json > "$work_dir/compose.json"
 jq -e '.services.grafana' "$work_dir/compose.json" >/dev/null || fail "no grafana service"
@@ -509,6 +513,10 @@ for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
         for target in panel.get("targets", []):
             datasource = target["datasource"]["uid"]
             where = f'{dash["uid"]} / {panel["title"]}'
+            if (panel["type"] == "stat" and datasource == "victoriametrics"
+                    and panel.get("options", {}).get("graphMode") == "none"):
+                assert target.get("instant") and not target.get("range"), \
+                    f"{where}: stat without sparkline, expected an instant query"
             if datasource == "victorialogs":
                 assert "log_stream:" not in target["expr"], \
                     f"{where}: log_stream filtered as a field, not as a stream: {target['expr']}"

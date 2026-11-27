@@ -11,7 +11,8 @@
 #   least the lifetime of a firing alert (query window + keep_firing_for +
 #   group interval: no second SMS while the same event is still firing), no
 #   route without an alert, inhibit_rules naming existing alerts only, and
-#   the receiver URL matches the alertmanager_webhook source of Vector. The
+#   the receiver URL matches the alertmanager_webhook source of Vector, with
+#   the same Basic auth (strategy basic, username and password). The
 #   watchdog is the exception: no keep_firing_for, first route, its own
 #   receiver (one webhook, send_resolved false) and a repeat_interval of at
 #   most 5m, under the heartbeat interval of the Uptime Kuma monitor.
@@ -26,6 +27,8 @@
 # - the watchdog receiver posts to VictoriaLogs instead of Uptime Kuma;
 # - the scrape config keeps only the jobs of the stack, every 5s (the
 #   unpoller and synology targets do not exist here).
+# The SMS webhook of Vector must answer 401 without a password and with a
+# wrong one; the SMS lines below prove that Alertmanager gets through.
 # Proxmox records already parsed (pve_* fields, as the Vector unit tests
 # produce them) go straight into VictoriaLogs: a failed vzdump job, a failed
 # acmerenew task and a failed qmstart task, with a journald record of a
@@ -88,7 +91,7 @@ fail() {
 }
 
 # --- Rendering: the files and commands the containers really receive.
-PUID="${PUID:-1000}" PGID="${PGID:-1000}" docker compose \
+PUID="${PUID:-1000}" PGID="${PGID:-1000}" VECTOR_WEBHOOK_PASSWORD="${VECTOR_WEBHOOK_PASSWORD:-0123456789abcdef}" docker compose \
   --project-directory "$stack_dir" --env-file "$env_file" \
   config --format json > "$work_dir/compose.json"
 config() {
@@ -258,6 +261,14 @@ if [h.get("url") for h in hooks] != [expected]:
     errors.append(f"receiver webhooks {hooks}: expected one to {expected}")
 elif hooks[0].get("send_resolved", True):
     errors.append("send_resolved is not false: a resolved alert would send an SMS")
+# Any container on the victoria and traefik_gateway networks reaches the
+# webhook: Vector requires Basic auth and Alertmanager must send the same.
+auth = source.get("auth", {})
+if auth.get("strategy") != "basic" or not auth.get("username") or not auth.get("password"):
+    errors.append(f"alertmanager_webhook has no Basic auth: {auth.get('strategy')}")
+elif hooks and hooks[0].get("http_config", {}).get("basic_auth") \
+        != {"username": auth["username"], "password": auth["password"]}:
+    errors.append("the sms receiver does not send the Basic auth of alertmanager_webhook")
 watchdog_hooks = receivers.get("watchdog", {}).get("webhook_configs", [])
 if len(watchdog_hooks) != 1 or "/api/push/" not in watchdog_hooks[0].get("url", ""):
     errors.append(f"watchdog receiver {watchdog_hooks}: expected one Uptime Kuma push URL")
@@ -375,6 +386,15 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 [[ -n "$ready" ]] || fail "victorialogs, victoriametrics, alertmanager or vector did not start"
+
+# The SMS webhook refuses a request without auth or with a wrong password
+# (401 before the body is read); the SMS checks below prove that the
+# credentials Alertmanager sends are accepted.
+for url in http://vector:8080/alertmanager http://alertmanager:wrong@vector:8080/alertmanager; do
+  out="$(client wget -q -O /dev/null --header 'Content-Type: application/json' \
+    --post-data '{"alerts":[]}' "$url" 2>&1 || true)"
+  grep -q ' 401 ' <<<"$out" || fail "the SMS webhook did not answer 401 to a request with no or a wrong password: $out"
+done
 
 # Records one minute old: inside the 15 minute windows whatever the
 # evaluation delay of vmalert. The Authentik event has no client IP and the

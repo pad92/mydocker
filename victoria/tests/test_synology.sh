@@ -60,7 +60,7 @@ fail() {
 
 # --- Rendering. "compose config" escapes every literal $ as $$ again in its
 # output; the gsub gives back the file the container really receives.
-PUID="${PUID:-1000}" PGID="${PGID:-1000}" docker compose \
+PUID="${PUID:-1000}" PGID="${PGID:-1000}" VECTOR_WEBHOOK_PASSWORD="${VECTOR_WEBHOOK_PASSWORD:-0123456789abcdef}" docker compose \
   --project-directory "$stack_dir" --env-file "$env_file" \
   config --format json > "$work_dir/compose.json"
 exporter() { jq -er ".services[\"snmp-exporter\"]$1" "$work_dir/compose.json"; }
