@@ -199,6 +199,63 @@ tests:
               summary: "Systeme de fichiers /dev/sdb1 occupe a 97%"
               description: "Un systeme de fichiers depasse 95% d'occupation"
 
+  # A unit failed for 5 minutes fires with host_name and the unit name;
+  # a unit that fails and restarts within 2 minutes does not, nor the
+  # active state series of a running unit. Two series of one unit (the
+  # scope_version of two collector releases) give one alert. Once the
+  # unit leaves the failed state, keep_firing_for holds the alert 5
+  # minutes, then it resolves: no 24 hour tail as with the old log rule.
+  - name: systemd_unit_failed
+    interval: 1m
+    input_series:
+      - series: 'systemd_unit_state_ratio{host_name="a", systemd_unit_name="x.service", systemd_unit_active_state="failed", scope_version="1"}'
+        values: '1x9 0x20'
+      - series: 'systemd_unit_state_ratio{host_name="a", systemd_unit_name="y.service", systemd_unit_active_state="failed", scope_version="1"}'
+        values: '1x2 0x27'
+      - series: 'systemd_unit_state_ratio{host_name="a", systemd_unit_name="ok.service", systemd_unit_active_state="active", scope_version="1"}'
+        values: '1x29'
+      - series: 'systemd_unit_state_ratio{host_name="b", systemd_unit_name="z.service", systemd_unit_active_state="failed", scope_version="1"}'
+        values: '1x29'
+      - series: 'systemd_unit_state_ratio{host_name="b", systemd_unit_name="z.service", systemd_unit_active_state="failed", scope_version="2"}'
+        values: '1x29'
+    alert_rule_test:
+      - eval_time: 3m
+        groupname: host_metrics
+        alertname: systemd_unit_failed
+        exp_alerts: []
+      - eval_time: 7m
+        groupname: host_metrics
+        alertname: systemd_unit_failed
+        exp_alerts:
+          - exp_labels: {host_name: a, systemd_unit_name: x.service, severity: warning}
+            exp_annotations:
+              summary: "Unit x.service en echec sur a"
+              description: "Une unit systemd est en etat failed depuis 5 minutes"
+          - exp_labels: {host_name: b, systemd_unit_name: z.service, severity: warning}
+            exp_annotations:
+              summary: "Unit z.service en echec sur b"
+              description: "Une unit systemd est en etat failed depuis 5 minutes"
+      - eval_time: 13m
+        groupname: host_metrics
+        alertname: systemd_unit_failed
+        exp_alerts:
+          - exp_labels: {host_name: a, systemd_unit_name: x.service, severity: warning}
+            exp_annotations:
+              summary: "Unit x.service en echec sur a"
+              description: "Une unit systemd est en etat failed depuis 5 minutes"
+          - exp_labels: {host_name: b, systemd_unit_name: z.service, severity: warning}
+            exp_annotations:
+              summary: "Unit z.service en echec sur b"
+              description: "Une unit systemd est en etat failed depuis 5 minutes"
+      - eval_time: 17m
+        groupname: host_metrics
+        alertname: systemd_unit_failed
+        exp_alerts:
+          - exp_labels: {host_name: b, systemd_unit_name: z.service, severity: warning}
+            exp_annotations:
+              summary: "Unit z.service en echec sur b"
+              description: "Une unit systemd est en etat failed depuis 5 minutes"
+
   # A guest that just restarted fires; a stopped guest (uptime 0) and a
   # guest up for a long time do not.
   - name: proxmox_guest_restarted

@@ -157,24 +157,6 @@ groups:
         annotations:
           summary: "Processus {{ $labels.process }} tue par manque de memoire sur {{ $labels.host_name }} ({{ $value }} en 15 minutes)"
           description: "Le noyau a tue un processus faute de memoire (OOM killer), sur l'hote ou dans la limite memoire d'un conteneur"
-      # A unit that ends in the failed state ("<unit>: Failed with
-      # result '<result>'." from systemd), system or user manager. It
-      # covers the timers of the hosts too, such as proxmox-tls-renew.
-      # The message is in _msg: vector names body_message in _msg_field.
-      # A 24 hour window, as proxmox_task_failed, survives a restart.
-      - alert: systemd_unit_failed
-        expr: >-
-          _time:24h {log_stream="journald"} body_syslog_identifier:=systemd
-          "Failed with result"
-          | extract "<systemd_unit>: Failed with result '<unit_result>'" from _msg
-          | stats by (host_name, systemd_unit, unit_result) count() as failures
-          | filter failures:>=1
-        keep_firing_for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Unit {{ $labels.systemd_unit }} en echec ({{ $labels.unit_result }}) sur {{ $labels.host_name }}"
-          description: "Une unit systemd se termine en etat failed"
       # A container that restarts again and again. containerd logs
       # "connecting to shim <container id>" at each start, and the id
       # stays the same across the restarts of a restart policy. Docker
