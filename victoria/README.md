@@ -10,6 +10,7 @@ This stack replaces OpenObserve. It deploys the following services:
 - `grafana` (container `victoria-grafana`): dashboards for hosts, logs, Docker services, DNS, firewall, Authentik, Proxmox, UniFi, Synology, disks and alerts, UI on `grafana.<domain>`.
 - `unpoller`: polls the UniFi gateway and exposes its metrics to VictoriaMetrics, which scrapes them.
 - `snmp-exporter`: polls the Synology NAS over SNMPv3 when VictoriaMetrics scrapes it.
+- `freebox-exporter`: polls the Freebox API (connection, fiber, system) and exposes the metrics to VictoriaMetrics, which scrapes them.
 - `victoria-init`: one-shot container that fixes the ownership of the data directories.
 
 ## Service-Specific Configuration Variables
@@ -24,6 +25,7 @@ This stack replaces OpenObserve. It deploys the following services:
 | `GRAFANA_VERSION` | Grafana image tag. | `13.2.7` |
 | `UNPOLLER_VERSION` | unpoller image tag (`ghcr.io/unpoller/unpoller`). | `v5.9.6` |
 | `SNMP_EXPORTER_VERSION` | snmp_exporter image tag (`prom/snmp-exporter`, the compose file adds the `-distroless` suffix). | `v0.31.0` |
+| `FREEBOX_EXPORTER_VERSION` | freebox-exporter-rs image tag (`ghcr.io/shackerd/freebox-exporter-rs`). Keep a release tag: the `v0.0.27` and later tags are betas. | `v0.0.26` |
 | `GRAFANA_LOGS_PLUGIN_VERSION` | Version of the `victoriametrics-logs-datasource` Grafana plugin. | `0.34.0` |
 | `VICTORIA_LOGS_DOMAIN` | Host name of the logs UI and of the OTLP logs endpoint. Must equal `VICTORIA_LOGS_HOST_LOCAL` in `management/.env`. | `logs.example.com` |
 | `VICTORIA_METRICS_DOMAIN` | Host name of the metrics UI and of the OTLP metrics endpoint. Must equal `VICTORIA_METRICS_HOST_LOCAL` in `management/.env`. | `metrics.example.com` |
@@ -50,6 +52,7 @@ This stack replaces OpenObserve. It deploys the following services:
 | `SYNOLOGY_SNMP_USER` | SNMPv3 user set in DSM. | `snmp-victoria` |
 | `SYNOLOGY_SNMP_AUTH_PASS` | SNMPv3 authentication password (SHA). Secret: set it only in the environment of the stack. Empty means every scrape of the NAS fails. | *None (empty)* |
 | `SYNOLOGY_SNMP_PRIV_PASS` | SNMPv3 privacy password (AES). Secret: set it only in the environment of the stack. | *None (empty)* |
+| `FREEBOX_APP_TOKEN` | App token of freebox-exporter, from the one-time registration (see [Freebox Metrics](#freebox-metrics-freebox-exporter)). Secret: set it only in the environment of the stack. Empty means the exporter waits and no Freebox metric arrives. | *None (empty)* |
 
 ## First Deployment
 
@@ -134,7 +137,7 @@ Do not point the entry at `metrics.<domain>` directly: VictoriaMetrics answers `
 The host pushes node, guest and storage metrics every 10 seconds: `proxmox_node_*` (CPU, memory, ZFS ARC, load, network, uptime), `proxmox_vm_*` (labels `name` and `vmid`) and `proxmox_storage_*` (label `storage`). Their names carry unit suffixes; [`tests/check_metric_names.sh`](./tests/check_metric_names.sh) checks the names used by the rules and the dashboard (see [Post-Deployment Check of the Metric Names](#post-deployment-check-of-the-metric-names)).
 
 ### UniFi Metrics (`unpoller`)
-VictoriaMetrics pulls the UniFi metrics instead of receiving them. The `victoriametrics_scrape` config, loaded with `-promscrape.config`, has a job `unpoller` that scrapes `unpoller:9130` every 60 seconds (the other jobs are the NAS, see [Synology Metrics](#synology-metrics-snmp-exporter), and the stack itself, see [Watchdog](#watchdog)). unpoller refreshes its own data once a minute, so a shorter interval adds no point.
+VictoriaMetrics pulls the UniFi metrics instead of receiving them. The `victoriametrics_scrape` config, loaded with `-promscrape.config`, has a job `unpoller` that scrapes `unpoller:9130` every 60 seconds (the other jobs are the NAS, see [Synology Metrics](#synology-metrics-snmp-exporter), the Freebox, see [Freebox Metrics](#freebox-metrics-freebox-exporter), and the stack itself, see [Watchdog](#watchdog)). unpoller refreshes its own data once a minute, so a shorter interval adds no point.
 
 unpoller runs as `65534:65534` with no published port and no Traefik route. It is on the internal `victoria` network, where VictoriaMetrics reaches it, and on the `unpoller` network, its only route to the gateway. It verifies the gateway certificate against the host CA bundle (`/etc/ssl/certs/ca-certificates.crt`, mounted read-only), so the internal CA that signs `unifi.home.lan` must be in that bundle. The InfluxDB output and the DPI collection are off.
 
@@ -181,6 +184,44 @@ ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- 'http://victoriametri
 `up` must be `1`. The metric names are the MIB names, without a prefix: `systemStatus` (`1` means normal), `temperature`, `diskStatus`, `diskTemperature`, `raidStatus`, `raidFreeSize`, plus the `ifHCInOctets` family of `if_mib` and `sysUpTime` of `system`. Filter them on `job="synology"`.
 
 The *Synology NAS* dashboard (uid `victoria-synology`) shows the scrape state, the count of failed components (system, power, fans, thermal), failed disks (`diskStatus` or `diskHealthStatus` not `1`) and degraded pools or volumes, the system temperature and the uptime (`sysUpTime` is in hundredths of a second). It then plots CPU and memory use, volume occupancy, disk temperatures, the traffic of the physical interfaces (`eth*` and `bond*`; the loopback and Docker interfaces are left out), the disk I/O per device (`storageIONReadX`, `storageIONWrittenX`) and the UPS battery charge and load. The occupancy panel keeps the volumes only: a storage pool is fully allocated to its volume, so its own free space is always close to zero. These metric names and labels were checked against the NAS in production.
+
+### Freebox Metrics (`freebox-exporter`)
+The Freebox Delta runs in bridge mode: UniFi routes, the box only carries the fiber link. [freebox-exporter-rs](https://github.com/shackerd/freebox-exporter-rs) (`v0.0.26`, the last release; later tags are betas) reads the Freebox API every 30 seconds and exposes the result on port 9102. The `freebox` job of `victoriametrics_scrape` scrapes `freebox-exporter:9102` every 60 seconds. The exporter config (`freebox_exporter_config`) enables the `connection` and `system` modules only.
+
+freebox-exporter runs as `65534:65534` with no published port and no Traefik route. It is on the internal `victoria` network, where VictoriaMetrics reaches it, and on the `freebox` network, its only route out to the box (`https://mafreebox.freebox.fr`, 443/tcp). TLS stays verified: the exporter pins the Freebox certificate authorities.
+
+The token is a secret and stays out of the repository. The exporter reads it from `token.dat` in its data directory; the container writes `FREEBOX_APP_TOKEN` to that file on a `tmpfs` (`/data`, mode 0700) at start, then unsets the variable before it starts the exporter. The value still shows in `docker inspect`, like the other secrets of the stack. With `FREEBOX_APP_TOKEN` empty, the container logs `FREEBOX_APP_TOKEN is empty` and waits: the scrape fails and `freebox_scrape_down` fires after 10 minutes.
+
+Setup (once, with physical access to the box):
+
+1. On a Docker host that reaches the box, register the exporter. The Freebox asks for a confirmation on its front screen: press the button to accept within the time shown.
+
+   ```bash
+   mkdir -m 700 fbx
+   docker run --rm -it --hostname freebox-exporter -v "$PWD/fbx":/data -w /data \
+     ghcr.io/shackerd/freebox-exporter-rs:v0.0.26 \
+     /usr/bin/freebox-exporter-rs -c /etc/freebox-exporter-rs/config.toml register
+   ```
+
+   The command writes the token to `fbx/token.dat`. The app shows up in Freebox OS as *Prometheus Exporter*.
+2. In Portainer, put the content of `fbx/token.dat` in `FREEBOX_APP_TOKEN` in the environment of the stack, then delete the file (`rm -r fbx`). Redeploy the stack.
+3. In Freebox OS, *Paramètres de la Freebox > Gestion des accès > Applications*, edit *Prometheus Exporter* and untick every right that changes something (settings, calls, contacts, downloads, files, parental control, VMs). The `connection` and `system` modules only read. If the exporter log then shows `insufficient_rights`, tick back only the right it names.
+
+Bridge mode limits:
+
+- The exporter disables its `lan_browser`, `switch`, `wifi` and `dhcp` modules in bridge mode, and the box serves no LAN in that mode anyway: there is no host, Wi-Fi or DHCP data. The `lan`, `nas` and `download` modules stay off here.
+- In bridge mode the exporter calls `https://mafreebox.freebox.fr/api/`. That name resolves to a public Free address, which the box answers through UniFi (checked with `GET http://mafreebox.freebox.fr/api_version`). Whether it still answers while the fiber link is down is not checked: the DNS lookup itself may fail, and the scrape then fails too.
+- When the Internet connection drops, `freebox_connection_down` fires, but its SMS (Free Mobile API) leaves only once the connection is back.
+- `fbx_exporter_connection_ftth_sfp_pwr_rx` and `_pwr_tx` are the raw API values (likely hundredths of a dBm). Check them against Freebox OS before using them in an alert.
+
+After deployment, check the scrape:
+
+```bash
+ssh <docker-host> "docker exec vmalert-logs wget -qO- 'http://victoriametrics:8428/api/v1/query?query=up%7Bjob%3D%22freebox%22%7D'"
+ssh <docker-host> "docker exec vmalert-logs wget -qO- 'http://victoriametrics:8428/api/v1/query?query=fbx_exporter_connection_state%7Bjob%3D%22freebox%22%7D'"
+```
+
+`up` must be `1`, and `fbx_exporter_connection_state{state="up"}` too. The other useful metrics are `fbx_exporter_connection_ftth_link`, `fbx_exporter_connection_ftth_sfp_has_signal`, `fbx_exporter_connection_rate_down` and `_rate_up` (current throughput), `fbx_exporter_connection_bandwidth_down` and `_bandwidth_up` (line capacity), `fbx_exporter_system_uptime_val`, `fbx_exporter_system_temp_cpum` and the other temperatures, and `fbx_exporter_system_fan_rpm`. Some metrics carry their value as a label set to `1`: `fbx_exporter_connection_media{media}`, `fbx_exporter_system_box_model_name{model_name}` and `fbx_exporter_connection_ipv4{ipv4}`, which holds the public IP. These names come from the exporter source and are not yet checked against the box. No dashboard uses them yet.
 
 ## 3. Vector (`vector`)
 
@@ -354,7 +395,7 @@ In UniFi Network, *Settings > CyberSecure > Traffic Logging* (or *System > Remot
 
 Two vmalert instances evaluate the rules, both defined in the `configs:` section of the compose file. `vmalert-logs` runs LogsQL rules against VictoriaLogs and `vmalert-metrics` runs MetricsQL rules against VictoriaMetrics. Both send their alerts to `alertmanager`. They keep the alert state (`ALERTS`, `ALERTS_FOR_STATE`) in VictoriaMetrics through `-remoteWrite.url` and read it back at startup through `-remoteRead.url`, so a restart does not reset a pending or firing alert.
 
-The rules carry over the OpenObserve alerts and add alerts on hosts, DNS, UniFi, ZFS and the Synology NAS:
+The rules carry over the OpenObserve alerts and add alerts on hosts, DNS, UniFi, ZFS, the Synology NAS and the Freebox:
 
 | Alert | Source | Fires when | Repeat |
 | :--- | :--- | :--- | :--- |
@@ -391,6 +432,8 @@ The rules carry over the OpenObserve alerts and add alerts on hosts, DNS, UniFi,
 | `synology_disk_failed` | metrics | a NAS disk not normal, or with bad sectors | 60m |
 | `synology_temperature_high` | metrics | the NAS above 60°C or a disk above 55°C for 10 minutes | 120m |
 | `synology_scrape_down` | metrics | the `synology` scrape failing for 10 minutes | 60m |
+| `freebox_connection_down` | metrics | the Freebox reporting its Internet connection other than `up` for 2 minutes | 60m |
+| `freebox_scrape_down` | metrics | the `freebox` scrape failing for 10 minutes | 60m |
 | `smart_status_failed` | metrics | a host disk with a failed SMART overall status | 60m |
 | `smart_attribute_failing` | metrics | a normalized SMART attribute at or under its non-zero threshold | 1440m |
 | `smart_sectors_growing` | metrics | reallocated, pending or uncorrectable sectors above their 24 hour minimum | 1440m |
@@ -420,7 +463,7 @@ Vector polls `/api/v1/rules` of `vmalert-logs` and `vmalert-metrics` every minut
 - `inactive`: `Condition non remplie : ` and the description of the rule;
 - a failed evaluation: `Erreur d'evaluation : ` and the vmalert error, whatever the state.
 
-The other fields are `alert_rule`, `alert_group`, `alert_source` (`logs` or `metrics`), `alert_state`, `alert_health` (`ok`, or `err` when the evaluation failed; a query without result is `ok`), `alert_severity`, `alert_count` (active alerts), `alert_active_since` (the oldest `activeAt`, only while an alert is active), `alert_last_evaluation` and `alert_last_samples`. With 43 rules, that is about 62,000 small records a day.
+The other fields are `alert_rule`, `alert_group`, `alert_source` (`logs` or `metrics`), `alert_state`, `alert_health` (`ok`, or `err` when the evaluation failed; a query without result is `ok`), `alert_severity`, `alert_count` (active alerts), `alert_active_since` (the oldest `activeAt`, only while an alert is active), `alert_last_evaluation` and `alert_last_samples`. With 45 rules, that is about 65,000 small records a day.
 
 The *Alertes* dashboard (uid `victoria-alerts`) reads the last poll, within 3 minutes: active, pending and failing rules, the number of rules watched (red at 0, when the polling stops), and a table of every rule with its state, its reason and since when, active rules first. Over the time range, it graphs the active, pending and failing rules and lists each episode of a rule in a state: one row per `alert_active_since` (the real start, even before the time range), its first and last poll and its last reason. Evaluation errors have no start and stay in one row per rule. A rule with several alerts starts a new row when its oldest alert ends while the others go on, since its start moves to the next oldest one. The watchdog fires all the time by design; its severity `none` keeps it out of the active count, and the table shows it in green as *en service*, the healthy state, instead of red.
 

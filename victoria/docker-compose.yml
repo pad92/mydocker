@@ -214,6 +214,49 @@ services:
       - no-new-privileges:true
     logging: *default-logging
 
+  # Freebox Delta metrics (bridge mode: connection, fiber and system only).
+  # The exporter reads its app token from <data_directory>/token.dat. The
+  # token is a secret, taken from FREEBOX_APP_TOKEN in the environment of
+  # the stack and is written at start to /data, a tmpfs, never to the repo
+  # or to a host directory. With no token the container waits and logs why,
+  # instead of restarting in a loop. Registration is a one-time manual step
+  # (see the README). TLS to the box is verified against the Freebox CAs
+  # built into the exporter. The freebox network gives it a route to the box.
+  freebox-exporter:
+    image: ghcr.io/shackerd/freebox-exporter-rs:${FREEBOX_EXPORTER_VERSION:-v0.0.26}
+    container_name: freebox-exporter
+    restart: unless-stopped
+    user: "65534:65534"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$${FREEBOX_APP_TOKEN}" ]; then
+          echo "FREEBOX_APP_TOKEN is empty: register the exporter, see the README" >&2
+          exec sleep 2147483647
+        fi
+        umask 077
+        printf '%s' "$${FREEBOX_APP_TOKEN}" > /data/token.dat
+        unset FREEBOX_APP_TOKEN
+        exec /usr/bin/freebox-exporter-rs -c /etc/freebox-exporter-rs/config.toml serve
+    environment:
+      FREEBOX_APP_TOKEN: "${FREEBOX_APP_TOKEN:-}"
+    configs:
+      - source: freebox_exporter_config
+        target: /etc/freebox-exporter-rs/config.toml
+    tmpfs: ["/data:size=16m,uid=65534,gid=65534,mode=0700"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://freebox-exporter:9102/metrics"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - freebox
+      - victoria
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
   # Log ingestion: OTLP/HTTP logs of the collectors and UDP syslog of the
   # network devices, parsed and written to victorialogs. Pipeline in the
   # vector_config entry under configs: at the end of this file.
@@ -461,6 +504,9 @@ networks:
   unpoller: {}
   # Route out for snmp-exporter only, to reach the NAS on 161/udp.
   snmp: {}
+  # Route out for freebox-exporter only, to reach the Freebox API
+  # (mafreebox.freebox.fr, 443/tcp).
+  freebox: {}
   # Route out for alertmanager only, to reach the Uptime Kuma push URL.
   alertmanager: {}
 configs:
@@ -518,6 +564,11 @@ configs:
               target_label: instance
             - target_label: __address__
               replacement: snmp-exporter:9116
+        # freebox-exporter serves the values of its last refresh (30s).
+        - job_name: freebox
+          scrape_interval: 60s
+          static_configs:
+            - targets: ["freebox-exporter:9102"]
   # SNMPv3 auth of snmp-exporter. $$ keeps ${...} out of Compose
   # interpolation: the exporter expands them from its own environment.
   snmp_exporter_auth:
@@ -531,6 +582,37 @@ configs:
           auth_protocol: SHA
           priv_protocol: AES
           priv_password: $${SNMP_PRIV_PASS}
+  # freebox-exporter config. In bridge mode the exporter turns off
+  # lan_browser, switch, wifi and dhcp by itself; they stay off here too, as
+  # do lan, nas and download. data_directory is the tmpfs that holds the
+  # token and the exporter log files (one day kept). No secret in here.
+  freebox_exporter_config:
+    content: |
+      [api]
+      refresh = 30
+
+      [metrics]
+      connection = true
+      lan = false
+      lan_browser = false
+      switch = false
+      wifi = false
+      dhcp = false
+      system = true
+      nas = false
+      download = false
+      prefix = "fbx_exporter"
+
+      [policies]
+      unresolved_station_hostnames = "ignore"
+
+      [core]
+      data_directory = "/data"
+      port = 9102
+
+      [log]
+      level = "Info"
+      retention = 1
   # Alert rules on VictoriaLogs (LogsQL), evaluated by vmalert-logs. Every
   # query sets its own _time window. A rule returns one series per alert:
   # its labels are the "by" fields, its value the single stats result.
@@ -1047,6 +1129,31 @@ configs:
               annotations:
                 summary: "Le NAS Synology ne repond plus en SNMP depuis 10 minutes"
                 description: "snmp_exporter n'interroge plus le NAS : NAS arrete, reseau ou identifiants SNMPv3"
+        # Freebox Delta in bridge mode (freebox-exporter). connection_state
+        # is 1 while the Internet connection of the box is up. The SMS of a
+        # connection loss leaves only once Internet is back: keep_firing_for
+        # keeps the alert firing until then for an outage under 60 minutes.
+        - name: freebox_metrics
+          interval: 1m
+          rules:
+            - alert: freebox_connection_down
+              expr: fbx_exporter_connection_state{job="freebox", state="up"} == 0
+              for: 2m
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Freebox : connexion Internet coupee"
+                description: "La Freebox signale sa connexion Internet (fibre) autre que up"
+            - alert: freebox_scrape_down
+              expr: up{job="freebox"} == 0
+              for: 10m
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "L'exporter Freebox ne repond plus depuis 10 minutes"
+                description: "freebox-exporter arrete, sans token, token revoque ou API de la Freebox injoignable"
         # Health of the stack itself (job per component in
         # victoriametrics_scrape).
         - name: victoria_stack
@@ -1215,6 +1322,10 @@ configs:
           - matchers: [alertname="synology_temperature_high"]
             repeat_interval: 120m
           - matchers: [alertname="synology_scrape_down"]
+            repeat_interval: 60m
+          - matchers: [alertname="freebox_connection_down"]
+            repeat_interval: 60m
+          - matchers: [alertname="freebox_scrape_down"]
             repeat_interval: 60m
           - matchers: [alertname="victoria_component_down"]
             repeat_interval: 60m

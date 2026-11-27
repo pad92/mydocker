@@ -26,6 +26,10 @@
 #   polls the NAS with SNMPv3 authPriv (SHA, AES); its passwords are empty in
 #   .env.example and reach the auth file as ${...} references that the
 #   exporter expands, never as values written into the compose file;
+# - freebox-exporter has no Traefik label, no port and no volume, runs as
+#   65534 with a pinned image tag, joins only the freebox network (its route
+#   out, which only it joins) and victoria, keeps its token on a tmpfs, and
+#   its token is empty in .env.example; victoriametrics scrapes it on 9102;
 # - victoriametrics loads the scrape config that targets unpoller:9130,
 #   sends the synology job to snmp-exporter:9116, and scrapes every component
 #   of the stack (vector on its prometheus_exporter sink, 9598);
@@ -216,6 +220,34 @@ for line in 'version: 3' 'security_level: authPriv' 'auth_protocol: SHA' 'priv_p
   'username: ${SNMP_USER}' 'password: ${SNMP_AUTH_PASS}' 'priv_password: ${SNMP_PRIV_PASS}'; do
   grep -qxF "    $line" <<<"$auth_yml" || fail "snmp_exporter_auth has no '$line'"
 done
+
+# freebox-exporter: same isolation, on the freebox network. The app token
+# comes from the environment only and is written to a tmpfs, never to a
+# host directory; the image tag is pinned.
+jq -e '.services["freebox-exporter"] | ((.labels // {}) | length) == 0
+  and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
+  and (.networks | keys) == ["freebox", "victoria"]
+  and ((.volumes // []) | length) == 0
+  and (.tmpfs | any(startswith("/data:")))' <<<"$config" >/dev/null \
+  || fail "freebox-exporter has labels, ports, volumes or unexpected networks"
+on_freebox_net="$(jq -c '[.services | to_entries[]
+  | select((.value.networks // {}) | has("freebox")) | .key]' <<<"$config")"
+[ "$on_freebox_net" = '["freebox-exporter"]' ] \
+  || fail "services on the freebox network: $on_freebox_net"
+jq -e '.networks.freebox["internal"] != true' <<<"$config" >/dev/null \
+  || fail "the freebox network is internal: freebox-exporter cannot reach the box"
+[ "$(jq -r '.services["freebox-exporter"].user' <<<"$config")" = "65534:65534" ] \
+  || fail "freebox-exporter does not run as 65534:65534"
+[ "$(jq -r '.services["freebox-exporter"].environment.FREEBOX_APP_TOKEN // "unset"' <<<"$config")" = "" ] \
+  || fail "FREEBOX_APP_TOKEN has a value in .env.example or the compose file"
+jq -r '.services["freebox-exporter"].image' <<<"$config" \
+  | grep -qE '^ghcr\.io/shackerd/freebox-exporter-rs:v[0-9]+\.[0-9]+\.[0-9]+$' \
+  || fail "freebox-exporter image is not pinned to a release tag"
+jq -e '.configs.freebox_exporter_config.content | test("data_directory = \"/data\"\n")' \
+  <<<"$config" >/dev/null || fail "freebox_exporter_config does not keep its data on /data"
+jq -e '.configs.victoriametrics_scrape.content
+  | test("- job_name: freebox\n(.*\n)*? *- targets: \\[\"freebox-exporter:9102\"\\]\n")' \
+  <<<"$config" >/dev/null || fail "victoriametrics_scrape has no freebox job on freebox-exporter:9102"
 
 # victoriametrics scrapes unpoller with the victoriametrics_scrape config
 # (test_unpoller.sh checks that VictoriaMetrics accepts it and scrapes).
