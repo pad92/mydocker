@@ -346,7 +346,7 @@ services:
     security_opt:
       - no-new-privileges:true
     labels:
-      mydocker.config-hash: "7cea912fcde3eda6ef8e98f8dde1d2e8eb645a9d183809a4e9d08375d2c5dcf5"
+      mydocker.config-hash: "539b189ef645aa8b85dba918ca94fe2a2cc1cbda9a7529fa41fba700cd58277c"
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.vector.loadbalancer.server.port: "4318"
@@ -382,7 +382,7 @@ services:
       - source: vmalert_logs_rules
         target: /etc/vmalert/rules.yml
     labels:
-      mydocker.config-hash: "c82e78e0fb0435de3efcb6ce7682503eb4240cf6352e46463268162619b1cde4"
+      mydocker.config-hash: "6ab984a33e1902e5d05ed84382a59f7fb2536f6c5273a20e1d89570b4b13bc96"
     networks:
       - victoria
     mem_limit: 128m
@@ -421,7 +421,7 @@ services:
       - source: vmalert_metrics_rules
         target: /etc/vmalert/rules.yml
     labels:
-      mydocker.config-hash: "0c66acd85b556ba72b2978f66cece10e989c69811c0a5551b6e87d7eaa00494c"
+      mydocker.config-hash: "e52552f8e3dd1d9532e58ae77ca79a4e9960ef844707822162098205deb95043"
     networks:
       - victoria
     mem_limit: 128m
@@ -478,7 +478,7 @@ services:
       - source: alertmanager_config
         target: /etc/alertmanager/alertmanager.yml
     labels:
-      mydocker.config-hash: "03131c2a69b79b8e90caa1e5e583f421e1de86f51538b9a0ca47879e25e0b71c"
+      mydocker.config-hash: "8bdf42ac158b89a27254674dbeafbceff2a5346be301f76b3f969469523b89c8"
     volumes:
       - ${ALERTMANAGER_DATA_DIR:?Set ALERTMANAGER_DATA_DIR}:/alertmanager
       - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
@@ -815,6 +815,10 @@ configs:
   # text, description says what the rule checks.
   vmalert_logs_rules:
     content: |
+      # Each alert carries an impact annotation (what is hit, short host
+      # name) and a summary (the detail without the impact): the SMS line is
+      # "ETAT - impact - summary". resolved_sms: "false" marks a one-off event
+      # (a failure, a burst): no OK SMS when its window passes.
       groups:
         - name: authentik
           interval: 5m
@@ -829,8 +833,10 @@ configs:
               keep_firing_for: 60m
               labels:
                 severity: warning
+                resolved_sms: "false"
               annotations:
-                summary: "{{ $$value }} echecs de connexion Authentik en 15 minutes{{ with $$labels.ak_user }}, dont {{ . }}{{ end }}{{ with $$labels.ak_client_ip }} depuis {{ . }}{{ end }}"
+                impact: "Authentik"
+                summary: "{{ $$value }} echecs de connexion en 15 minutes{{ with $$labels.ak_user }}, dont {{ . }}{{ end }}{{ with $$labels.ak_client_ip }} depuis {{ . }}{{ end }}"
                 description: "Au moins 5 echecs de connexion Authentik en 15 minutes"
             - alert: authentik_sensitive_event
               expr: >-
@@ -841,8 +847,10 @@ configs:
               keep_firing_for: 60m
               labels:
                 severity: critical
+                resolved_sms: "false"
               annotations:
-                summary: "Evenement Authentik sensible {{ $$labels.ak_action }} ({{ $$value }} en 5 minutes){{ with $$labels.ak_user }} pour {{ . }}{{ end }}{{ with $$labels.ak_client_ip }} depuis {{ . }}{{ end }}"
+                impact: "Authentik"
+                summary: "Evenement sensible {{ $$labels.ak_action }} ({{ $$value }} en 5 minutes){{ with $$labels.ak_user }} pour {{ . }}{{ end }}{{ with $$labels.ak_client_ip }} depuis {{ . }}{{ end }}"
                 description: "Evenement Authentik sensible (requete suspecte, impersonation, exception systeme ou de politique, erreur de configuration)"
             - alert: authentik_errors
               expr: >-
@@ -854,7 +862,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "{{ $$value }} erreurs Authentik en 15 minutes, dont authentik {{ $$labels.ak_component }}"
+                impact: "Authentik"
+                summary: "{{ $$value }} erreurs en 15 minutes, dont authentik {{ $$labels.ak_component }}"
                 description: "Au moins 3 erreurs Authentik (server, worker ou postgresql) en 15 minutes"
             # Armed only for a component seen in the last 24 hours.
             - alert: authentik_logs_silent
@@ -866,7 +875,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "authentik {{ $$labels.ak_component }} n'envoie plus de log depuis 10 minutes"
+                impact: "Authentik {{ $$labels.ak_component }}"
+                summary: "Plus de logs depuis 10 minutes"
                 description: "authentik_server ou authentik_worker n'a plus envoye de log depuis 10 minutes"
         - name: proxmox_logs
           interval: 5m
@@ -878,8 +888,10 @@ configs:
               keep_firing_for: 60m
               labels:
                 severity: critical
+                resolved_sms: "false"
               annotations:
-                summary: "Sauvegarde vzdump Proxmox en echec ({{ $$labels.pve_backup_event }}{{ with $$labels.pve_vmid }} VM {{ . }}{{ end }}, {{ $$value }} en 15 minutes)"
+                impact: "Sauvegarde Proxmox"
+                summary: "vzdump en echec ({{ $$labels.pve_backup_event }}{{ with $$labels.pve_vmid }} VM {{ . }}{{ end }}, {{ $$value }} en 15 minutes)"
                 description: "Une sauvegarde vzdump Proxmox echoue (job ou invite)"
             # acmerenew included: the proxmox_tls role of myansible renews the
             # certificate with step and deletes the ACME settings, so a failed
@@ -896,8 +908,10 @@ configs:
               keep_firing_for: 5m
               labels:
                 severity: warning
+                resolved_sms: "false"
               annotations:
-                summary: "Tache Proxmox {{ $$labels.pve_task_type }}{{ with $$labels.pve_vmid }} VM {{ . }}{{ end }} en erreur ({{ $$value }} en 24 heures){{ with $$labels.pve_task_status }} : {{ . }}{{ end }}"
+                impact: "Proxmox"
+                summary: "Tache {{ $$labels.pve_task_type }}{{ with $$labels.pve_vmid }} VM {{ . }}{{ end }} en erreur ({{ $$value }} en 24 heures){{ with $$labels.pve_task_status }} : {{ . }}{{ end }}"
                 description: "Une tache Proxmox se termine en erreur"
             - alert: proxmox_auth_failed_burst
               expr: >-
@@ -908,8 +922,10 @@ configs:
               keep_firing_for: 60m
               labels:
                 severity: warning
+                resolved_sms: "false"
               annotations:
-                summary: "{{ $$value }} echecs d'authentification Proxmox en 15 minutes{{ with $$labels.pve_user }}, dont {{ . }}{{ end }}{{ with $$labels.pve_client_ip }} depuis {{ . }}{{ end }}"
+                impact: "Proxmox"
+                summary: "{{ $$value }} echecs d'authentification en 15 minutes{{ with $$labels.pve_user }}, dont {{ . }}{{ end }}{{ with $$labels.pve_client_ip }} depuis {{ . }}{{ end }}"
                 description: "Au moins 5 echecs d'authentification Proxmox en 15 minutes"
         - name: proxmox_backup
           interval: 60m
@@ -927,7 +943,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Aucune sauvegarde vzdump Proxmox reussie depuis 26 heures"
+                impact: "Sauvegarde Proxmox"
+                summary: "Aucune sauvegarde vzdump reussie depuis 26 heures"
                 description: "Aucune sauvegarde vzdump Proxmox terminee avec succes depuis 26 heures (ne s'arme qu'apres 24 heures de logs)"
         # Hosts that send journald, file or Docker logs through their local
         # collector. A host that logged in the last 24 hours and stopped for
@@ -944,7 +961,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Plus de log de {{ $$labels.host_name }} depuis 30 minutes"
+                impact: "Hote {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "Plus de logs depuis 30 minutes"
                 description: "Un hote qui envoyait des logs journald, fichiers ou Docker n'envoie plus rien depuis 30 minutes"
             # Disk, filesystem and hardware errors, and hung tasks ("task
             # <name>:<pid> blocked for more than <n> seconds"). The OOM killer
@@ -957,8 +975,10 @@ configs:
               keep_firing_for: 60m
               labels:
                 severity: critical
+                resolved_sms: "false"
               annotations:
-                summary: "{{ $$value }} erreurs noyau critiques sur {{ $$labels.host_name }} en 15 minutes"
+                impact: "Hote {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "{{ $$value }} erreurs noyau critiques en 15 minutes"
                 description: "Le noyau signale une erreur d'E/S, une erreur EXT4, une erreur materielle ou une tache bloquee"
             # The OOM killer, for the whole host ("Out of memory: Killed
             # process") or for a cgroup such as a container with a memory
@@ -971,8 +991,10 @@ configs:
               keep_firing_for: 60m
               labels:
                 severity: critical
+                resolved_sms: "false"
               annotations:
-                summary: "Processus {{ $$labels.process }} tue par manque de memoire sur {{ $$labels.host_name }} ({{ $$value }} en 15 minutes)"
+                impact: "Hote {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "Processus {{ $$labels.process }} tue par manque de memoire ({{ $$value }} en 15 minutes)"
                 description: "Le noyau a tue un processus faute de memoire (OOM killer), sur l'hote ou dans la limite memoire d'un conteneur"
             # A container that restarts again and again. containerd logs
             # "connecting to shim <container id>" at each start, and the id
@@ -996,7 +1018,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Conteneur {{ with $$labels.container_name }}{{ . }}{{ else }}{{ slice $$labels.container_id 0 12 }}{{ end }} redemarre en boucle sur {{ $$labels.host_name }} ({{ $$value }} demarrages en 15 minutes)"
+                impact: "Conteneur {{ with $$labels.container_name }}{{ . }}{{ else }}{{ slice $$labels.container_id 0 12 }}{{ end }}"
+                summary: "Redemarre en boucle sur {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }} ({{ $$value }} demarrages en 15 minutes)"
                 description: "Un conteneur Docker redemarre sans cesse : il s'arrete peu apres chaque demarrage"
         # AdGuard resolvers (querylog shipped as dns_queries). A resolver that
         # logged in the last 24 hours and stopped for an hour fires; the hour
@@ -1013,7 +1036,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Plus de requete DNS journalisee par {{ $$labels.host_name }} depuis 1 heure"
+                impact: "DNS {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "Plus de requete journalisee depuis 1 heure"
                 description: "Le resolveur AdGuard n'envoie plus son journal de requetes: service arrete ou collecte cassee"
         # UniFi IPS/IDS events (CEF over syslog). Signature 203 is a plain
         # firewall block and stays on the firewall dashboard.
@@ -1028,8 +1052,10 @@ configs:
               keep_firing_for: 60m
               labels:
                 severity: critical
+                resolved_sms: "false"
               annotations:
-                summary: "{{ $$value }} evenements IPS UniFi ({{ $$labels.cef_name }}){{ with $$labels.cef_ext_src }} depuis {{ . }}{{ end }} en 15 minutes"
+                impact: "Securite UniFi"
+                summary: "{{ $$value }} evenements IPS ({{ $$labels.cef_name }}){{ with $$labels.cef_ext_src }} depuis {{ . }}{{ end }} en 15 minutes"
                 description: "La passerelle UniFi signale une menace detectee (IPS/IDS ou honeypot)"
         # Traefik access logs. A service that answers 5xx in at least 3 of
         # the last six 5-minute buckets, 5 or more in each: a redeploy gives
@@ -1047,7 +1073,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "{{ $$value }} erreurs 5xx de {{ $$labels.app_servicename }} en 30 minutes"
+                impact: "Traefik {{ $$labels.app_servicename }}"
+                summary: "{{ $$value }} erreurs 5xx en 30 minutes"
                 description: "Un service derriere Traefik repond en erreur 5xx depuis au moins 15 minutes"
         # Container id to name, for the metrics that only carry the id (the
         # GPU processes of nvidia-gpu-exporter). Recorded into
@@ -1069,19 +1096,26 @@ configs:
   # post-deploy check).
   vmalert_metrics_rules:
     content: |
+      # Each alert carries an impact annotation (what is hit, short host
+      # name) and a summary (the detail without the impact): the SMS line is
+      # "ETAT - impact - summary". resolved_sms: "false" marks a one-off event
+      # (a failure, a burst): no OK SMS when its window passes.
       groups:
         - name: proxmox_metrics
           interval: 1m
           rules:
             # lag() is the age of the last sample in the 24 h window: one
-            # alert per node that sent metrics in the last 24 hours.
+            # alert per node that sent metrics in the last 24 hours. A Proxmox
+            # upgrade changes service_version and starts a new series: min keeps
+            # the newest series of the node, so the old one does not fire.
             - alert: proxmox_metrics_silent
-              expr: lag(proxmox_node_uptime_seconds[24h]) > 600
+              expr: min by (host_name) (lag(proxmox_node_uptime_seconds[24h])) > 600
               keep_firing_for: 60m
               labels:
                 severity: critical
               annotations:
-                summary: "Plus de metrique Proxmox de {{ $$labels.host_name }} depuis 10 minutes"
+                impact: "Proxmox {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "Plus de metriques depuis 10 minutes"
                 description: "Le serveur de metriques OpenTelemetry de Proxmox n'a plus rien envoye depuis 10 minutes"
             - alert: proxmox_storage_usage_high
               expr: proxmox_storage_used_bytes / proxmox_storage_total_bytes >= 0.85
@@ -1089,7 +1123,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Stockage Proxmox {{ $$labels.storage }} occupe a {{ $$value | humanizePercentage }}"
+                impact: "Stockage Proxmox {{ $$labels.storage }}"
+                summary: "Occupe a {{ $$value | humanizePercentage }}"
                 description: "Un stockage Proxmox depasse 85% d'occupation"
             # ZFS ARC is cache: the kernel gives it back under pressure.
             - alert: proxmox_node_memory_high
@@ -1100,7 +1135,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Memoire Proxmox hors ARC a {{ $$value | humanizePercentage }}"
+                impact: "Memoire Proxmox"
+                summary: "Hors cache ARC a {{ $$value | humanizePercentage }}"
                 description: "La memoire de l'hote Proxmox hors cache ZFS ARC depasse 90%"
             - alert: proxmox_node_cpu_high
               expr: avg_over_time(proxmox_node_cpustat_cpu_percent[15m]) > 0.9
@@ -1108,7 +1144,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "CPU Proxmox a {{ $$value | humanizePercentage }} en moyenne sur 15 minutes"
+                impact: "CPU Proxmox"
+                summary: "A {{ $$value | humanizePercentage }} en moyenne sur 15 minutes"
                 description: "Le CPU de l'hote Proxmox est en moyenne au-dessus de 90% pendant 15 minutes"
             # Stopped guests report an uptime of 0 and are ignored.
             - alert: proxmox_guest_restarted
@@ -1116,8 +1153,10 @@ configs:
               keep_firing_for: 30m
               labels:
                 severity: warning
+                resolved_sms: "false"
               annotations:
-                summary: "Invite Proxmox {{ $$labels.name }} ({{ $$labels.vmid }}) redemarre il y a {{ $$value }} s"
+                impact: "Invite Proxmox {{ $$labels.name }} ({{ $$labels.vmid }})"
+                summary: "Redemarre il y a {{ $$value }} s"
                 description: "Une VM ou un conteneur Proxmox a redemarre (uptime sous 10 minutes, les invites arretes sont ignores)"
         # unpoller answers its scrape with up = 1 even when it cannot log in
         # to UniFi: it then exports only its go_* metrics. absent() also fires
@@ -1132,7 +1171,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Aucune donnee UniFi collectee par unpoller depuis 10 minutes"
+                impact: "Collecte UniFi"
+                summary: "Aucune donnee collectee par unpoller depuis 10 minutes"
                 description: "unpoller ne remonte aucun equipement UniFi : URL, compte ou controleur injoignable, ou unpoller arrete"
             # When a poll of the controller fails, unpoller keeps serving its
             # last good snapshot: unpoller_device_info stays present and the
@@ -1147,7 +1187,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Donnees UniFi figees dans unpoller depuis 20 minutes"
+                impact: "Collecte UniFi"
+                summary: "Donnees figees dans unpoller depuis 20 minutes"
                 description: "unpoller repond mais l'uptime d'aucun equipement UniFi n'a change : la collecte aupres du controleur echoue (TLS, compte, API)"
             # A device that unpoller listed in the last 24 hours and no
             # longer reports: offline, or removed from the controller.
@@ -1157,7 +1198,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Equipement UniFi {{ $$labels.name }} absent depuis 10 minutes"
+                impact: "UniFi {{ $$labels.name }}"
+                summary: "Equipement absent depuis 10 minutes"
                 description: "unpoller ne remonte plus cet equipement UniFi : hors ligne ou retire du controleur"
         # Host metrics from the local OpenTelemetry collectors.
         - name: host_metrics
@@ -1173,7 +1215,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Plus de metrique systeme de {{ $$labels.host_name }} depuis 10 minutes"
+                impact: "Hote {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "Plus de metriques systeme depuis 10 minutes"
                 description: "Le collecteur OpenTelemetry de l'hote n'envoie plus rien depuis 10 minutes : hote ou collecteur arrete"
             # Several hosts report the same NFS or ZFS dataset: one alert per
             # device. vfat (EFI) and tmpfs are left out.
@@ -1186,7 +1229,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Systeme de fichiers {{ $$labels.device }} occupe a {{ $$value | humanizePercentage }}"
+                impact: "Systeme de fichiers {{ $$labels.device }}"
+                summary: "Occupe a {{ $$value | humanizePercentage }}"
                 description: "Un systeme de fichiers depasse 90% d'occupation"
             - alert: filesystem_usage_critical
               expr: >-
@@ -1196,7 +1240,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Systeme de fichiers {{ $$labels.device }} occupe a {{ $$value | humanizePercentage }}"
+                impact: "Systeme de fichiers {{ $$labels.device }}"
+                summary: "Occupe a {{ $$value | humanizePercentage }}"
                 description: "Un systeme de fichiers depasse 95% d'occupation"
             # A system unit in the failed state, from the systemd receiver of
             # the collector (systemd hosts only, user units not included). The
@@ -1214,7 +1259,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Unit {{ $$labels.systemd_unit_name }} en echec sur {{ $$labels.host_name }}"
+                impact: "Hote {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "Unit {{ $$labels.systemd_unit_name }} en echec"
                 description: "Une unit systemd est en etat failed depuis 5 minutes"
         - name: zfs
           interval: 1m
@@ -1227,7 +1273,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Pool ZFS {{ $$labels.pool }} pas ONLINE (etat {{ $$value }})"
+                impact: "Pool ZFS {{ $$labels.pool }}"
+                summary: "Pas ONLINE (etat {{ $$value }})"
                 description: "Un pool ZFS est degrade ou en panne : verifier zpool status"
             - alert: zfs_pool_capacity_high
               expr: zfs_pool_capacity_ratio >= 0.85
@@ -1236,7 +1283,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Pool ZFS {{ $$labels.pool }} rempli a {{ $$value | humanizePercentage }}"
+                impact: "Pool ZFS {{ $$labels.pool }}"
+                summary: "Rempli a {{ $$value | humanizePercentage }}"
                 description: "Un pool ZFS depasse 85% de remplissage, au-dela les performances chutent"
             # Without fresh data the two rules above go quiet: a stopped
             # zfs_exporter would hide a degraded pool. Same shape as
@@ -1247,7 +1295,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Plus de donnee ZFS de {{ $$labels.host_name }} depuis 30 minutes"
+                impact: "ZFS {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "Plus de donnees depuis 30 minutes"
                 description: "zfs_exporter ou sa collecte est arrete : l'etat des pools n'est plus surveille"
         # smartctl_exporter on the hosts (myansible role smartctl_exporter).
         # Raw counts are gauges: the rise above their 24h minimum, not delta,
@@ -1263,7 +1312,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Disque {{ $$labels.device }} de {{ $$labels.host_name }} : bilan SMART en echec"
+                impact: "Disque {{ $$labels.device }} de {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "Bilan SMART en echec"
                 description: "Le disque annonce lui-meme une panne prochaine : sauvegarder et le remplacer"
             - alert: smart_attribute_failing
               expr: >-
@@ -1273,7 +1323,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Disque {{ $$labels.device }} de {{ $$labels.host_name }} : {{ $$labels.attribute_name }} sous son seuil ({{ $$value }})"
+                impact: "Disque {{ $$labels.device }} de {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "{{ $$labels.attribute_name }} sous son seuil ({{ $$value }})"
                 description: "Un attribut SMART normalise est descendu a son seuil de panne"
             - alert: smart_sectors_growing
               expr: >-
@@ -1285,7 +1336,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Disque {{ $$labels.device }} de {{ $$labels.host_name }} : {{ $$labels.attribute_name }} +{{ $$value }} en 24h"
+                impact: "Disque {{ $$labels.device }} de {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "{{ $$labels.attribute_name }} +{{ $$value }} en 24h"
                 description: "Des secteurs realloues, en attente ou illisibles apparaissent : le disque se degrade"
             - alert: smart_crc_errors_growing
               expr: >-
@@ -1297,7 +1349,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Disque {{ $$labels.device }} de {{ $$labels.host_name }} : +{{ $$value }} erreurs CRC en 24h"
+                impact: "Disque {{ $$labels.device }} de {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "+{{ $$value }} erreurs CRC en 24h"
                 description: "Des erreurs de transfert apparaissent entre le disque et le controleur : cable ou connecteur"
             - alert: smart_temperature_high
               expr: max by (host_name, device) (smartctl_device_temperature{temperature_type="current"}) > 55
@@ -1306,7 +1359,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Disque {{ $$labels.device }} de {{ $$labels.host_name }} a {{ $$value }} degres"
+                impact: "Disque {{ $$labels.device }} de {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "A {{ $$value }} degres"
                 description: "Un disque d'hote depasse 55 degres depuis 10 minutes"
             - alert: smart_data_missing
               expr: max by (host_name) (lag(smartctl_device_smart_status[24h])) > 1800
@@ -1314,7 +1368,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Plus de donnee SMART de {{ $$labels.host_name }} depuis 30 minutes"
+                impact: "SMART {{ $$labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+                summary: "Plus de donnees depuis 30 minutes"
                 description: "smartctl_exporter ou sa collecte par le collecteur OpenTelemetry est arrete"
         # The UPS is on USB on the Synology NAS, whose NUT server reads it; the
         # job synology reads it in the SYNOLOGY-UPS-MIB. instance is the NAS,
@@ -1332,7 +1387,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Onduleur sur batterie (lu par {{ $$labels.instance }})"
+                impact: "Onduleur"
+                summary: "Sur batterie (lu par {{ $$labels.instance }})"
                 description: "Coupure secteur : l'onduleur alimente les equipements sur sa batterie"
             # The UPS's own low battery flag: the NAS starts its shutdown.
             - alert: ups_low_battery
@@ -1341,7 +1397,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Onduleur batterie faible (lu par {{ $$labels.instance }})"
+                impact: "Onduleur"
+                summary: "Batterie faible (lu par {{ $$labels.instance }})"
                 description: "La batterie de l'onduleur est presque vide : arret imminent des equipements"
             # On line power too: a load that leaves less than 10 minutes.
             - alert: ups_runtime_low
@@ -1353,7 +1410,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Autonomie de l'onduleur a {{ $$value | humanizeDuration }} (lu par {{ $$labels.instance }})"
+                impact: "Onduleur"
+                summary: "Autonomie a {{ $$value | humanizeDuration }} (lu par {{ $$labels.instance }})"
                 description: "L'autonomie estimee sur batterie est sous 10 minutes"
             - alert: ups_overload
               expr: max by (instance) (upsInfoLoadValue) >= 80
@@ -1362,7 +1420,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Onduleur charge a {{ $$value }}% (lu par {{ $$labels.instance }})"
+                impact: "Onduleur"
+                summary: "Charge a {{ $$value }}% (lu par {{ $$labels.instance }})"
                 description: "La charge de l'onduleur depasse 80% depuis 10 minutes"
             # Set by the UPS self-test: the battery no longer holds its charge.
             - alert: ups_replace_battery
@@ -1371,7 +1430,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Batterie de l'onduleur a remplacer (lu par {{ $$labels.instance }})"
+                impact: "Onduleur"
+                summary: "Batterie a remplacer (lu par {{ $$labels.instance }})"
                 description: "Le test de l'onduleur signale une batterie usee"
             # Without fresh data the rules above go quiet: the UPS unplugged
             # from the NAS or the NAS unreachable would hide a power outage.
@@ -1383,7 +1443,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Plus de donnee de l'onduleur via {{ $$labels.instance }} depuis 30 minutes"
+                impact: "Onduleur"
+                summary: "Plus de donnees via {{ $$labels.instance }} depuis 30 minutes"
                 description: "Le NAS ne voit plus l'onduleur en USB, ou sa collecte SNMP est arretee"
         # Synology status OIDs are 1 when normal. diskBadSector is -1 on
         # cache devices, so only a positive count fires.
@@ -1397,7 +1458,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "NAS Synology : {{ $$labels.__name__ }} en defaut"
+                impact: "NAS Synology"
+                summary: "{{ $$labels.__name__ }} en defaut"
                 description: "Le NAS signale une panne systeme, d'alimentation ou de ventilateur"
             - alert: synology_raid_degraded
               expr: raidStatus{job="synology"} != 1
@@ -1405,7 +1467,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Volume Synology {{ $$labels.raidName }} pas normal (etat {{ $$value }})"
+                impact: "Volume Synology {{ $$labels.raidName }}"
+                summary: "Pas normal (etat {{ $$value }})"
                 description: "Un volume RAID du NAS est degrade, en reconstruction ou en panne"
             - alert: synology_disk_failed
               expr: >-
@@ -1415,7 +1478,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Disque Synology {{ $$labels.diskID }} : {{ $$labels.__name__ }} = {{ $$value }}"
+                impact: "Disque Synology {{ $$labels.diskID }}"
+                summary: "{{ $$labels.__name__ }} = {{ $$value }}"
                 description: "Un disque du NAS est en defaut ou a des secteurs defectueux"
             - alert: synology_temperature_high
               expr: >-
@@ -1425,7 +1489,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Temperature du NAS Synology a {{ $$value }} degres"
+                impact: "NAS Synology"
+                summary: "Temperature a {{ $$value }} degres"
                 description: "Le NAS depasse 60 degres ou un disque depasse 55 degres"
             - alert: synology_scrape_down
               expr: up{job="synology"} == 0
@@ -1434,7 +1499,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Le NAS Synology ne repond plus en SNMP depuis 10 minutes"
+                impact: "NAS Synology"
+                summary: "Ne repond plus en SNMP depuis 10 minutes"
                 description: "snmp_exporter n'interroge plus le NAS : NAS arrete, reseau ou identifiants SNMPv3"
         # Freebox Delta in bridge mode (freebox-exporter). connection_state
         # is 1 while the Internet connection of the box is up. The SMS of a
@@ -1450,7 +1516,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Freebox : connexion Internet coupee"
+                impact: "Freebox"
+                summary: "Connexion Internet coupee"
                 description: "La Freebox signale sa connexion Internet (fibre) autre que up"
             - alert: freebox_scrape_down
               expr: up{job="freebox"} == 0
@@ -1459,7 +1526,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "L'exporter Freebox ne repond plus depuis 10 minutes"
+                impact: "Exporter Freebox"
+                summary: "Ne repond plus depuis 10 minutes"
                 description: "freebox-exporter arrete, sans token ou API de la Freebox injoignable (un token refuse declenche freebox_auth_failed)"
             # pwr_rx is in hundredths of dBm. GPON receivers lose the link
             # around -28 dBm: below -26 the fibre or a connector is degrading.
@@ -1470,7 +1538,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Freebox : signal fibre faible ({{ $$value | printf \"%.1f\" }} dBm)"
+                impact: "Freebox"
+                summary: "Signal fibre faible ({{ $$value | printf \"%.1f\" }} dBm)"
                 description: "Puissance optique recue sous -26 dBm depuis 30 minutes : fibre, connecteur ou SFP a verifier"
             - alert: freebox_temperature_high
               expr: max by (job) (fbx_exporter_system_temp_cpu{job="freebox"}) > 85
@@ -1479,7 +1548,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Freebox : processeur a {{ $$value }} degres"
+                impact: "Freebox"
+                summary: "Processeur a {{ $$value }} degres"
                 description: "Temperature CPU de la Freebox au-dessus de 85 degres depuis 15 minutes : ventilation ou ventilateur a verifier"
             # Exporter v0.0.29+: authenticated drops to 0 only when the box
             # answers the login with an error_code (token revoked, pending,
@@ -1493,7 +1563,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Freebox : l'exporter n'est plus autorise depuis 10 minutes"
+                impact: "Exporter Freebox"
+                summary: "Plus autorise par la Freebox depuis 10 minutes"
                 description: "La Freebox refuse le login de freebox-exporter (code dans fbx_exporter_authentication_error et le log) : token revoque ou droits retires, l'enregistrer a nouveau"
             # One collector (connection, system) failing while the login
             # works: its metrics stop updating without the scrape failing.
@@ -1504,7 +1575,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Freebox : le collecteur {{ $$labels.collector }} echoue depuis 30 minutes"
+                impact: "Exporter Freebox"
+                summary: "Le collecteur {{ $$labels.collector }} echoue depuis 30 minutes"
                 description: "freebox-exporter ne lit plus ce module de l'API de la Freebox : ses metriques ne sont plus a jour, voir le log de l'exporter"
         # Health of the stack itself (job per component in
         # victoriametrics_scrape).
@@ -1542,7 +1614,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "Composant victoria {{ $$labels.job }} injoignable depuis 5 minutes"
+                impact: "Victoria {{ $$labels.job }}"
+                summary: "Injoignable depuis 5 minutes"
                 description: "victoriametrics ne scrape plus ce composant de la stack : conteneur arrete ou en echec"
             # A failing query (datasource down, LogsQL or MetricsQL error)
             # leaves its rule silent: no alert, whatever happens. Two failed
@@ -1558,7 +1631,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Regle {{ $$labels.alertname }} ({{ $$labels.job }}) en erreur a plusieurs evaluations"
+                impact: "Victoria {{ $$labels.job }}"
+                summary: "Regle {{ $$labels.alertname }} en erreur a plusieurs evaluations"
                 description: "vmalert n'arrive plus a evaluer une regle d'alerte : la regle ne peut plus se declencher"
             # The watchdog receiver failing (Uptime Kuma unreachable) comes
             # by SMS; the sms receiver failing stops the watchdog instead.
@@ -1574,7 +1648,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Alertmanager n'arrive plus a notifier {{ $$labels.receiver_name }} ({{ $$labels.integration }})"
+                impact: "Victoria alertmanager"
+                summary: "Notifications {{ $$labels.receiver_name }} ({{ $$labels.integration }}) en echec"
                 description: "Des notifications d'Alertmanager echouent : webhook injoignable ou en erreur"
             # vmalert failing to hand alerts to Alertmanager. Mostly for
             # vmalert-logs: a send failure in vmalert-metrics also stops the
@@ -1590,7 +1665,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "{{ $$labels.job }} n'arrive plus a envoyer ses alertes a Alertmanager"
+                impact: "Victoria {{ $$labels.job }}"
+                summary: "Les alertes n'atteignent plus Alertmanager"
                 description: "Des alertes declenchees n'atteignent pas Alertmanager : aucun SMS ne part pour elles"
             # /data full within 4 days at the pace of the last 24 hours.
             # victoriametrics and victorialogs share /data on the host, so
@@ -1608,7 +1684,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Disque {{ $$labels.path }} de {{ $$labels.job }} plein dans moins de 4 jours au rythme actuel"
+                impact: "Victoria {{ $$labels.job }}"
+                summary: "Disque {{ $$labels.path }} plein dans moins de 4 jours au rythme actuel"
                 description: "L'espace libre baisse assez vite pour etre epuise en 4 jours : ingestion en hausse ou retention trop longue"
             # VictoriaLogs up but writing no row for 5 minutes: Vector sends
             # nothing (sinks blocked, sources stalled). At least 269 rows per
@@ -1629,7 +1706,8 @@ configs:
               labels:
                 severity: critical
               annotations:
-                summary: "VictoriaLogs ne recoit plus aucun log depuis plus de 5 minutes"
+                impact: "Victoria victorialogs"
+                summary: "Plus aucun log recu depuis plus de 5 minutes"
                 description: "VictoriaLogs repond mais n'ecrit plus de ligne : Vector n'envoie plus rien, les alertes sur les logs sont aveugles"
             # Errors of a Vector component other than free_mobile (the
             # watchdog covers it): a source that cannot parse or read, a sink
@@ -1644,7 +1722,8 @@ configs:
               labels:
                 severity: warning
               annotations:
-                summary: "Vector : {{ $$value }} erreurs du composant {{ $$labels.component_id }} en 30 minutes"
+                impact: "Victoria vector"
+                summary: "{{ $$value }} erreurs du composant {{ $$labels.component_id }} en 30 minutes"
                 description: "Un composant de Vector echoue : des logs ou des metriques sont perdus ou retardes"
         # VRAM per process on the GPU, named after its container. The name
         # comes from docker_container_info (vmalert-logs, one day back); a
@@ -1814,9 +1893,11 @@ configs:
       receivers:
         - name: sms
           webhook_configs:
-            # The SMS bridge: the alertmanager source of vector.
+            # The SMS bridge: the alertmanager source of vector. send_resolved
+            # true: Vector turns a resolved alert into an OK line, except for the
+            # one-off events (label resolved_sms="false").
             - url: http://vector:8080/alertmanager
-              send_resolved: false
+              send_resolved: true
               max_alerts: 10
               # Same credentials as the auth of the vector source. Compose
               # writes the value into this file: hex only (openssl rand -hex
@@ -1961,8 +2042,11 @@ configs:
 
       transforms:
         # One SMS per webhook. Alertmanager groups by alertname, so a webhook
-        # holds the firing alerts of one rule (max_alerts: 10). The text is the
-        # summary annotation of each alert, one per line.
+        # holds the alerts of one rule (max_alerts: 10). One line per alert,
+        # "ETAT - impact - detail" from the impact and summary annotations:
+        # ALERTE (critical) or ATTENTION (warning) while firing, then OK with
+        # the outage duration once resolved, unless the alert is a one-off event
+        # (label resolved_sms="false"). Firing lines come first.
         sms_message:
           type: remap
           inputs:
@@ -1972,10 +2056,46 @@ configs:
           drop_on_abort: true
           source: |
             alerts = array(.alerts) ?? []
-            firing = filter(alerts) -> |_index, alert| { alert.status == "firing" }
-            lines = map_values(firing) -> |alert| {
-              string(alert.annotations.summary) ?? string(alert.labels.alertname) ?? "alerte"
+            firing = []
+            resolved = []
+            for_each(alerts) -> |_index, alert| {
+              status = string(alert.status) ?? ""
+              name = string(alert.labels.alertname) ?? "alerte"
+              impact = string(alert.annotations.impact) ?? ""
+              if status == "firing" {
+                state = if (string(alert.labels.severity) ?? "") == "critical" { "ALERTE" } else { "ATTENTION" }
+                detail = string(alert.annotations.summary) ?? name
+                line = if impact == "" { state + " - " + detail } else { state + " - " + impact + " - " + detail }
+                firing = push(firing, line)
+              } else if status == "resolved" && (string(alert.labels.resolved_sms) ?? "") != "false" {
+                subject = if impact == "" { name } else { impact }
+                line = "OK - " + subject + " - Revenu a la normale"
+                # Outage duration from startsAt to endsAt, rounded to the minute:
+                # "12 min", "1h05" or "2j03h". Left out when a date is missing.
+                starts = parse_timestamp(string(alert.startsAt) ?? "", "%+") ?? null
+                ends = parse_timestamp(string(alert.endsAt) ?? "", "%+") ?? null
+                if is_timestamp(starts) && is_timestamp(ends) {
+                  secs = to_unix_timestamp!(ends) - to_unix_timestamp!(starts)
+                  if secs >= 0 {
+                    mins = to_int(round(to_float(secs) / 60.0))
+                    if mins < 1 { mins = 1 }
+                    elapsed = to_string(mins) + " min"
+                    if mins >= 1440 {
+                      hours = to_string(to_int(floor(mod(mins, 1440) / 60)))
+                      if strlen(hours) < 2 { hours = "0" + hours }
+                      elapsed = to_string(to_int(floor(mins / 1440))) + "j" + hours + "h"
+                    } else if mins >= 60 {
+                      minutes = to_string(mod(mins, 60))
+                      if strlen(minutes) < 2 { minutes = "0" + minutes }
+                      elapsed = to_string(to_int(floor(mins / 60))) + "h" + minutes
+                    }
+                    line = line + " apres " + elapsed
+                  }
+                }
+                resolved = push(resolved, line)
+              }
             }
+            lines = append(firing, resolved)
             if length(lines) == 0 { abort }
             msg = join!(lines, "\n")
             truncated = int(.truncatedAlerts) ?? 0
@@ -1991,8 +2111,9 @@ configs:
             . = {"user": user, "pass": pass, "msg": truncate(msg, 900)}
 
         # One record per vmalert rule. message holds the reason for the state:
-        # the evaluation error, the rendered summary of each active alert (the
-        # SMS text), or the condition that is not met (description).
+        # the evaluation error, "impact - summary" of each active alert (the
+        # SMS text without its state), or the condition that is not met
+        # (description).
         alert_rules:
           type: remap
           inputs:
@@ -2016,7 +2137,10 @@ configs:
                 # Earliest activeAt of the alerts, in seconds; 0 when none.
                 since = 0
                 for_each(alerts) -> |_ai, alert| {
-                  summaries = push(summaries, string(alert.annotations.summary) ?? string(alert.labels.alertname) ?? "alerte")
+                  detail = string(alert.annotations.summary) ?? string(alert.labels.alertname) ?? "alerte"
+                  impact = string(alert.annotations.impact) ?? ""
+                  if impact != "" { detail = impact + " - " + detail }
+                  summaries = push(summaries, detail)
                   active = to_unix_timestamp(parse_timestamp(string(alert.activeAt) ?? "", "%+") ?? t'1970-01-01T00:00:00Z')
                   if active > 0 && (since == 0 || active < since) {
                     since = active

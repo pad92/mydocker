@@ -12,7 +12,9 @@
 #   group interval: no second SMS while the same event is still firing), no
 #   route without an alert, inhibit_rules naming existing alerts only, and
 #   the receiver URL matches the alertmanager_webhook source of Vector, with
-#   the same Basic auth (strategy basic, username and password). The
+#   the same Basic auth (strategy basic, username and password), and
+#   send_resolved true for the OK SMS. Every alert has an impact
+#   annotation, and resolved_sms is only ever "false". The
 #   watchdog is the exception: no keep_firing_for, first route, its own
 #   receiver (one webhook, send_resolved false) and a repeat_interval of at
 #   most 5m, under the heartbeat interval of the Uptime Kuma monitor.
@@ -209,6 +211,12 @@ for rules in ("logs_rules.yml", "metrics_rules.yml"):
                     errors.append("watchdog has a for or keep_firing_for")
                 alerts[name] = None
                 continue
+            # The SMS line is "ETAT - impact - summary".
+            annotations = rule.get("annotations", {})
+            if not annotations.get("impact") or not annotations.get("summary"):
+                errors.append(f"alert {name} lacks an impact or summary annotation")
+            if rule.get("labels", {}).get("resolved_sms", "false") != "false":
+                errors.append(f"alert {name}: resolved_sms must be \"false\" or absent")
             if "keep_firing_for" not in rule:
                 errors.append(f"alert {name} has no keep_firing_for")
                 continue
@@ -264,8 +272,8 @@ port = source["address"].rsplit(":", 1)[1]
 expected = f"http://vector:{port}{source['path']}"
 if [h.get("url") for h in hooks] != [expected]:
     errors.append(f"receiver webhooks {hooks}: expected one to {expected}")
-elif hooks[0].get("send_resolved", True):
-    errors.append("send_resolved is not false: a resolved alert would send an SMS")
+elif hooks[0].get("send_resolved", True) is not True:
+    errors.append("send_resolved is not true: no OK SMS when an alert resolves")
 # Any container on the victoria and traefik_gateway networks reaches the
 # webhook: Vector requires Basic auth and Alertmanager must send the same.
 auth = source.get("auth", {})
@@ -519,10 +527,11 @@ task_types="$(jq -c '[.[] | select(.labels.alertname == "proxmox_task_failed") |
 loops="$(jq -c '[.[] | select(.labels.alertname == "container_restart_loop") | .labels.container_id[0:4]] | sort' <<<"$alerts")"
 [[ "$loops" == '["aaaa","bbbb"]' ]] || fail "container_restart_loop for $loops, expected [\"aaaa\",\"bbbb\"]"
 
-# One SMS per alertname (group_by), after group_wait, one line per alert. A
+# One SMS per alertname (group_by), after group_wait, one line per alert
+# ("ETAT - impact - detail", host names cut at the first dot). A
 # task alert that joins its group late comes in a second SMS: compare the
 # distinct lines of all the SMS bodies, sorted.
-expected='["1 erreurs noyau critiques sur pve.test en 15 minutes","1 evenements IPS UniFi (Threat detected) en 15 minutes","15 erreurs 5xx de app@docker en 30 minutes","Conteneur app redemarre en boucle sur docker.test (5 demarrages en 15 minutes)","Conteneur bbbbbbbbbbbb redemarre en boucle sur docker.test (5 demarrages en 15 minutes)","Evenement Authentik sensible suspicious_request (1 en 5 minutes) pour akadmin","Processus java tue par manque de memoire sur pve.test (1 en 15 minutes)","Sauvegarde vzdump Proxmox en echec (job_failed, 1 en 15 minutes)","Tache Proxmox acmerenew en erreur (1 en 24 heures) : Failed to initialize HTTP daemon","Tache Proxmox qmstart VM 101 en erreur (1 en 24 heures) : start failed"]'
+expected='["ALERTE - Authentik - Evenement sensible suspicious_request (1 en 5 minutes) pour akadmin","ALERTE - Hote pve - 1 erreurs noyau critiques en 15 minutes","ALERTE - Hote pve - Processus java tue par manque de memoire (1 en 15 minutes)","ALERTE - Sauvegarde Proxmox - vzdump en echec (job_failed, 1 en 15 minutes)","ALERTE - Securite UniFi - 1 evenements IPS (Threat detected) en 15 minutes","ATTENTION - Conteneur app - Redemarre en boucle sur docker (5 demarrages en 15 minutes)","ATTENTION - Conteneur bbbbbbbbbbbb - Redemarre en boucle sur docker (5 demarrages en 15 minutes)","ATTENTION - Proxmox - Tache acmerenew en erreur (1 en 24 heures) : Failed to initialize HTTP daemon","ATTENTION - Proxmox - Tache qmstart VM 101 en erreur (1 en 24 heures) : start failed","ATTENTION - Traefik app@docker - 15 erreurs 5xx en 30 minutes"]'
 sms=""
 messages=""
 until [[ $SECONDS -ge $deadline ]]; do
@@ -591,7 +600,7 @@ until [[ $SECONDS -ge $deadline ]]; do
   sleep 2
 done
 jq -e -s 'map(select(.alert_rule == "proxmox_backup_failed"))[0]
-  | .alert_source == "logs" and (._msg | startswith("Sauvegarde vzdump Proxmox en echec")) and .alert_active_since != null' \
+  | .alert_source == "logs" and (._msg | startswith("Sauvegarde Proxmox - vzdump en echec")) and .alert_active_since != null' \
   <<<"${states:-}" >/dev/null 2>&1 || fail "no firing proxmox_backup_failed record with its reason in the alerts stream: $states"
 jq -e -s 'map(select(.alert_rule == "watchdog" and .alert_state == "firing" and .alert_source == "metrics")) | length == 1' \
   <<<"${states:-}" >/dev/null 2>&1 || fail "no firing watchdog record in the alerts stream: $states"

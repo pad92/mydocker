@@ -1,3 +1,7 @@
+# Each alert carries an impact annotation (what is hit, short host
+# name) and a summary (the detail without the impact): the SMS line is
+# "ETAT - impact - summary". resolved_sms: "false" marks a one-off event
+# (a failure, a burst): no OK SMS when its window passes.
 groups:
   - name: authentik
     interval: 5m
@@ -12,8 +16,10 @@ groups:
         keep_firing_for: 60m
         labels:
           severity: warning
+          resolved_sms: "false"
         annotations:
-          summary: "{{ $value }} echecs de connexion Authentik en 15 minutes{{ with $labels.ak_user }}, dont {{ . }}{{ end }}{{ with $labels.ak_client_ip }} depuis {{ . }}{{ end }}"
+          impact: "Authentik"
+          summary: "{{ $value }} echecs de connexion en 15 minutes{{ with $labels.ak_user }}, dont {{ . }}{{ end }}{{ with $labels.ak_client_ip }} depuis {{ . }}{{ end }}"
           description: "Au moins 5 echecs de connexion Authentik en 15 minutes"
       - alert: authentik_sensitive_event
         expr: >-
@@ -24,8 +30,10 @@ groups:
         keep_firing_for: 60m
         labels:
           severity: critical
+          resolved_sms: "false"
         annotations:
-          summary: "Evenement Authentik sensible {{ $labels.ak_action }} ({{ $value }} en 5 minutes){{ with $labels.ak_user }} pour {{ . }}{{ end }}{{ with $labels.ak_client_ip }} depuis {{ . }}{{ end }}"
+          impact: "Authentik"
+          summary: "Evenement sensible {{ $labels.ak_action }} ({{ $value }} en 5 minutes){{ with $labels.ak_user }} pour {{ . }}{{ end }}{{ with $labels.ak_client_ip }} depuis {{ . }}{{ end }}"
           description: "Evenement Authentik sensible (requete suspecte, impersonation, exception systeme ou de politique, erreur de configuration)"
       - alert: authentik_errors
         expr: >-
@@ -37,7 +45,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "{{ $value }} erreurs Authentik en 15 minutes, dont authentik {{ $labels.ak_component }}"
+          impact: "Authentik"
+          summary: "{{ $value }} erreurs en 15 minutes, dont authentik {{ $labels.ak_component }}"
           description: "Au moins 3 erreurs Authentik (server, worker ou postgresql) en 15 minutes"
       # Armed only for a component seen in the last 24 hours.
       - alert: authentik_logs_silent
@@ -49,7 +58,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "authentik {{ $labels.ak_component }} n'envoie plus de log depuis 10 minutes"
+          impact: "Authentik {{ $labels.ak_component }}"
+          summary: "Plus de logs depuis 10 minutes"
           description: "authentik_server ou authentik_worker n'a plus envoye de log depuis 10 minutes"
   - name: proxmox_logs
     interval: 5m
@@ -61,8 +71,10 @@ groups:
         keep_firing_for: 60m
         labels:
           severity: critical
+          resolved_sms: "false"
         annotations:
-          summary: "Sauvegarde vzdump Proxmox en echec ({{ $labels.pve_backup_event }}{{ with $labels.pve_vmid }} VM {{ . }}{{ end }}, {{ $value }} en 15 minutes)"
+          impact: "Sauvegarde Proxmox"
+          summary: "vzdump en echec ({{ $labels.pve_backup_event }}{{ with $labels.pve_vmid }} VM {{ . }}{{ end }}, {{ $value }} en 15 minutes)"
           description: "Une sauvegarde vzdump Proxmox echoue (job ou invite)"
       # acmerenew included: the proxmox_tls role of myansible renews the
       # certificate with step and deletes the ACME settings, so a failed
@@ -79,8 +91,10 @@ groups:
         keep_firing_for: 5m
         labels:
           severity: warning
+          resolved_sms: "false"
         annotations:
-          summary: "Tache Proxmox {{ $labels.pve_task_type }}{{ with $labels.pve_vmid }} VM {{ . }}{{ end }} en erreur ({{ $value }} en 24 heures){{ with $labels.pve_task_status }} : {{ . }}{{ end }}"
+          impact: "Proxmox"
+          summary: "Tache {{ $labels.pve_task_type }}{{ with $labels.pve_vmid }} VM {{ . }}{{ end }} en erreur ({{ $value }} en 24 heures){{ with $labels.pve_task_status }} : {{ . }}{{ end }}"
           description: "Une tache Proxmox se termine en erreur"
       - alert: proxmox_auth_failed_burst
         expr: >-
@@ -91,8 +105,10 @@ groups:
         keep_firing_for: 60m
         labels:
           severity: warning
+          resolved_sms: "false"
         annotations:
-          summary: "{{ $value }} echecs d'authentification Proxmox en 15 minutes{{ with $labels.pve_user }}, dont {{ . }}{{ end }}{{ with $labels.pve_client_ip }} depuis {{ . }}{{ end }}"
+          impact: "Proxmox"
+          summary: "{{ $value }} echecs d'authentification en 15 minutes{{ with $labels.pve_user }}, dont {{ . }}{{ end }}{{ with $labels.pve_client_ip }} depuis {{ . }}{{ end }}"
           description: "Au moins 5 echecs d'authentification Proxmox en 15 minutes"
   - name: proxmox_backup
     interval: 60m
@@ -110,7 +126,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Aucune sauvegarde vzdump Proxmox reussie depuis 26 heures"
+          impact: "Sauvegarde Proxmox"
+          summary: "Aucune sauvegarde vzdump reussie depuis 26 heures"
           description: "Aucune sauvegarde vzdump Proxmox terminee avec succes depuis 26 heures (ne s'arme qu'apres 24 heures de logs)"
   # Hosts that send journald, file or Docker logs through their local
   # collector. A host that logged in the last 24 hours and stopped for
@@ -127,7 +144,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Plus de log de {{ $labels.host_name }} depuis 30 minutes"
+          impact: "Hote {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "Plus de logs depuis 30 minutes"
           description: "Un hote qui envoyait des logs journald, fichiers ou Docker n'envoie plus rien depuis 30 minutes"
       # Disk, filesystem and hardware errors, and hung tasks ("task
       # <name>:<pid> blocked for more than <n> seconds"). The OOM killer
@@ -140,8 +158,10 @@ groups:
         keep_firing_for: 60m
         labels:
           severity: critical
+          resolved_sms: "false"
         annotations:
-          summary: "{{ $value }} erreurs noyau critiques sur {{ $labels.host_name }} en 15 minutes"
+          impact: "Hote {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "{{ $value }} erreurs noyau critiques en 15 minutes"
           description: "Le noyau signale une erreur d'E/S, une erreur EXT4, une erreur materielle ou une tache bloquee"
       # The OOM killer, for the whole host ("Out of memory: Killed
       # process") or for a cgroup such as a container with a memory
@@ -154,8 +174,10 @@ groups:
         keep_firing_for: 60m
         labels:
           severity: critical
+          resolved_sms: "false"
         annotations:
-          summary: "Processus {{ $labels.process }} tue par manque de memoire sur {{ $labels.host_name }} ({{ $value }} en 15 minutes)"
+          impact: "Hote {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "Processus {{ $labels.process }} tue par manque de memoire ({{ $value }} en 15 minutes)"
           description: "Le noyau a tue un processus faute de memoire (OOM killer), sur l'hote ou dans la limite memoire d'un conteneur"
       # A container that restarts again and again. containerd logs
       # "connecting to shim <container id>" at each start, and the id
@@ -179,7 +201,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Conteneur {{ with $labels.container_name }}{{ . }}{{ else }}{{ slice $labels.container_id 0 12 }}{{ end }} redemarre en boucle sur {{ $labels.host_name }} ({{ $value }} demarrages en 15 minutes)"
+          impact: "Conteneur {{ with $labels.container_name }}{{ . }}{{ else }}{{ slice $labels.container_id 0 12 }}{{ end }}"
+          summary: "Redemarre en boucle sur {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }} ({{ $value }} demarrages en 15 minutes)"
           description: "Un conteneur Docker redemarre sans cesse : il s'arrete peu apres chaque demarrage"
   # AdGuard resolvers (querylog shipped as dns_queries). A resolver that
   # logged in the last 24 hours and stopped for an hour fires; the hour
@@ -196,7 +219,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Plus de requete DNS journalisee par {{ $labels.host_name }} depuis 1 heure"
+          impact: "DNS {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "Plus de requete journalisee depuis 1 heure"
           description: "Le resolveur AdGuard n'envoie plus son journal de requetes: service arrete ou collecte cassee"
   # UniFi IPS/IDS events (CEF over syslog). Signature 203 is a plain
   # firewall block and stays on the firewall dashboard.
@@ -211,8 +235,10 @@ groups:
         keep_firing_for: 60m
         labels:
           severity: critical
+          resolved_sms: "false"
         annotations:
-          summary: "{{ $value }} evenements IPS UniFi ({{ $labels.cef_name }}){{ with $labels.cef_ext_src }} depuis {{ . }}{{ end }} en 15 minutes"
+          impact: "Securite UniFi"
+          summary: "{{ $value }} evenements IPS ({{ $labels.cef_name }}){{ with $labels.cef_ext_src }} depuis {{ . }}{{ end }} en 15 minutes"
           description: "La passerelle UniFi signale une menace detectee (IPS/IDS ou honeypot)"
   # Traefik access logs. A service that answers 5xx in at least 3 of
   # the last six 5-minute buckets, 5 or more in each: a redeploy gives
@@ -230,7 +256,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "{{ $value }} erreurs 5xx de {{ $labels.app_servicename }} en 30 minutes"
+          impact: "Traefik {{ $labels.app_servicename }}"
+          summary: "{{ $value }} erreurs 5xx en 30 minutes"
           description: "Un service derriere Traefik repond en erreur 5xx depuis au moins 15 minutes"
   # Container id to name, for the metrics that only carry the id (the
   # GPU processes of nvidia-gpu-exporter). Recorded into
