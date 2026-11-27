@@ -169,7 +169,8 @@
         "y": 1,
         "w": 8,
         "h": 4
-      }
+      },
+      "description": "Lignes de log reçues pour les flux et hôtes choisis."
     },
     {
       "type": "stat",
@@ -219,7 +220,8 @@
         "y": 1,
         "w": 8,
         "h": 4
-      }
+      },
+      "description": "Lignes de niveau error ou crit, quand le niveau a pu être extrait."
     },
     {
       "type": "stat",
@@ -269,7 +271,8 @@
         "y": 1,
         "w": 8,
         "h": 4
-      }
+      },
+      "description": "Hôtes ayant envoyé au moins une ligne de log sur la période."
     },
     {
       "type": "timeseries",
@@ -325,7 +328,8 @@
         "y": 5,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Lignes de log par flux (docker, journald, proxmox, traefik...). Un flux qui tombe à zéro signale une collecte arrêtée."
     },
     {
       "type": "timeseries",
@@ -381,7 +385,8 @@
         "y": 5,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Lignes de log par hôte. Un hôte qui disparaît n'envoie plus rien : agent arrêté ou hôte éteint."
     },
     {
       "type": "timeseries",
@@ -437,7 +442,8 @@
         "y": 13,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Lignes error ou crit par hôte."
     },
     {
       "type": "table",
@@ -515,7 +521,8 @@
         "y": 13,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Erreurs regroupées par hôte et flux, pour savoir où chercher."
     },
     {
       "type": "row",
@@ -584,7 +591,8 @@
         "y": 22,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Lignes de log Docker par conteneur, tous projets confondus."
     },
     {
       "type": "table",
@@ -664,7 +672,8 @@
         "y": 22,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Erreurs Docker par hôte et conteneur."
     },
     {
       "type": "row",
@@ -714,7 +723,8 @@
         "y": 31,
         "w": 24,
         "h": 14
-      }
+      },
+      "description": "Les 200 dernières lignes, filtres appliqués."
     }
   ]
 }

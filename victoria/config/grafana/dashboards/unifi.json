@@ -37,7 +37,36 @@
     }
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "device",
+        "label": "Équipement",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "victoriametrics"
+        },
+        "definition": "label_values(unpoller_device_info, name)",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(unpoller_device_info, name)",
+          "refId": "device"
+        },
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
   },
   "annotations": {
     "list": []
@@ -105,7 +134,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "État de la collecte par unpoller : 1 si le contrôleur UniFi répond. À 0, tout le dashboard est figé."
     },
     {
       "type": "stat",
@@ -156,7 +186,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Équipements UniFi connus du contrôleur (passerelle, switchs, points d'accès)."
     },
     {
       "type": "stat",
@@ -207,7 +238,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Équipements adoptés mais injoignables par le contrôleur. Zéro attendu."
     },
     {
       "type": "stat",
@@ -258,7 +290,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Clients filaires et Wi-Fi connectés au réseau."
     },
     {
       "type": "stat",
@@ -309,7 +342,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Équipements pour lesquels une mise à jour du firmware est proposée."
     },
     {
       "type": "stat",
@@ -361,7 +395,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Latence vers Internet mesurée par le contrôleur UniFi (sous-système www)."
     },
     {
       "id": 8,
@@ -391,7 +426,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "unpoller_device_cpu_utilization_ratio",
+          "expr": "unpoller_device_cpu_utilization_ratio{name=~\"$device\"}",
           "legendFormat": "{{name}}",
           "range": true
         }
@@ -429,7 +464,8 @@
         "y": 6,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Utilisation CPU de chaque équipement choisi."
     },
     {
       "type": "timeseries",
@@ -446,7 +482,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "unpoller_device_memory_utilization_ratio",
+          "expr": "unpoller_device_memory_utilization_ratio{name=~\"$device\"}",
           "legendFormat": "{{name}}",
           "range": true
         }
@@ -484,7 +520,8 @@
         "y": 6,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Utilisation mémoire de chaque équipement choisi."
     },
     {
       "type": "timeseries",
@@ -501,7 +538,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "unpoller_device_temperature_celsius",
+          "expr": "unpoller_device_temperature_celsius{name=~\"$device\"}",
           "legendFormat": "{{name}} {{temp_area}}",
           "range": true
         }
@@ -539,7 +576,8 @@
         "y": 14,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Température des équipements qui l'exposent (passerelle, certains switchs)."
     },
     {
       "type": "timeseries",
@@ -556,7 +594,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "sum by (name) (unpoller_device_stations)",
+          "expr": "sum by (name) (unpoller_device_stations{name=~\"$device\"})",
           "legendFormat": "{{name}}",
           "range": true
         }
@@ -594,7 +632,8 @@
         "y": 14,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Clients rattachés à chaque équipement. Un point d'accès qui se vide d'un coup a redémarré ou perdu son lien."
     },
     {
       "id": 13,
@@ -673,7 +712,8 @@
         "y": 23,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Débit de l'interface WAN de la passerelle, reçu et émis."
     },
     {
       "type": "timeseries",
@@ -690,7 +730,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "rate(unpoller_device_bytes_total[$__rate_interval])",
+          "expr": "rate(unpoller_device_bytes_total{name=~\"$device\"}[$__rate_interval])",
           "legendFormat": "{{name}}",
           "range": true
         }
@@ -728,7 +768,8 @@
         "y": 23,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Débit total de chaque équipement choisi."
     },
     {
       "type": "timeseries",
@@ -781,7 +822,64 @@
       "gridPos": {
         "x": 0,
         "y": 31,
-        "w": 24,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Les 10 clients au plus fort débit, reçu et émis cumulés."
+    },
+    {
+      "type": "timeseries",
+      "title": "Latence Internet",
+      "description": "Latence vers Internet mesurée par le contrôleur UniFi (sous-système www). Une hausse durable sans hausse du débit WAN pointe vers le FAI.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "editorMode": "code",
+          "expr": "max(unpoller_site_latency_seconds{subsystem=\"www\"})",
+          "legendFormat": "latence",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 17,
+      "gridPos": {
+        "x": 12,
+        "y": 31,
+        "w": 12,
         "h": 8
       }
     }

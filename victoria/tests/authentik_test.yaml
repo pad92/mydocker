@@ -102,11 +102,14 @@ tests:
               assert_eq!(.ak_user, "bob")
               assert_eq!(.ak_client_ip, "192.0.2.9")
 
+  # Masking happens in redact_url_secrets: the record goes in there and
+  # crosses route_streams and route_authentik on its way to parse_authentik.
   - name: secrets in the request path are redacted
     inputs:
-      - insert_at: parse_authentik
+      - insert_at: redact_url_secrets
         type: log
         log_fields:
+          log_stream: docker
           container_name: authentik_server
           app_level: info
           app_path: /application/o/authorize/?client_id=abc&code=s3cr3t&state=xyz

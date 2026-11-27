@@ -1,8 +1,7 @@
 # OTLP/HTTP logs and UDP syslog to VictoriaLogs.
 #
-#   otlp -> normalize -> route_streams --docker_like--> redact_url_secrets
-#                                      |                 -> route_authentik --authentik--> parse_authentik
-#                                      |--journald--> parse_http -> parse_proxmox
+#   otlp -> normalize -> redact_url_secrets -> route_streams --docker_like--> route_authentik --authentik--> parse_authentik
+#                                                           |--journald--> parse_http -> parse_proxmox
 #   syslog_udp -> parse_syslog
 #
 # Every branch ends in the victorialogs sink. The stream of a record is its
@@ -219,26 +218,35 @@ transforms:
 
   route_streams:
     type: route
-    inputs: [normalize]
+    inputs: [redact_url_secrets]
     route:
       docker_like: '.log_stream == "docker" || .log_stream == "traefik"'
       journald: '.log_stream == "journald"'
 
   # Masks the values of secret-looking URL parameters (token, code,
-  # password and the like) in the container logs: OAuth codes, API keys and session
-  # IDs in request lines must not be readable by everyone with UI access.
+  # password and the like) on every OTLP record: OAuth codes, API keys and
+  # session IDs in request lines must not be readable by everyone with UI
+  # access. The only place that defines secret_re: the parsers downstream
+  # (parse_authentik, parse_http) read fields that are already masked.
   redact_url_secrets:
     type: remap
-    inputs: [route_streams.docker_like]
+    inputs: [normalize]
     source: |
       secret_re = r'(?i)([?&]|\b)((?:access[_-]?token|refresh[_-]?token|token|auth(?:orization)?|api[_-]?key|client[_-]?secret|credential|password|passwd|secret|session(?:[_-]?id)?|jwt|signature|sig|nonce(?:_[a-z0-9]+)?|code|key)=)([^&\s"\x27\\]*)'
       # body: the raw line; app_msg, app_message: the message of a JSON
-      # line; app_requestpath: path and query of the Traefik access log.
-      for_each(["body", "app_msg", "app_message", "app_requestpath"]) -> |_index, name| {
+      # line; app_requestpath: path and query of the Traefik access log;
+      # app_event, app_path, app_context_http_request: Authentik request.
+      for_each(["body", "app_msg", "app_message", "app_requestpath", "app_event", "app_path", "app_context_http_request"]) -> |_index, name| {
         value = get(., [name]) ?? null
         if is_string(value) {
           . = set!(., [name], replace(string!(value), secret_re, "$1$2[REDACTED]"))
         }
+      }
+      # HAProxy httplog line in the journal: its request line carries the
+      # query string, and parse_http takes http_path from it. Other journal
+      # lines are left as they are: key=value is common in daemon messages.
+      if (string(.body_syslog_identifier) ?? "") == "haproxy" && is_string(.body_message) {
+        .body_message = replace(string!(.body_message), secret_re, "$1$2[REDACTED]")
       }
       # Traefik numeric fields arrive as float (302.0) or string ("302")
       # depending on the collector: one integer type for tables and filters.
@@ -254,13 +262,14 @@ transforms:
 
   route_authentik:
     type: route
-    inputs: [redact_url_secrets]
+    inputs: [route_streams.docker_like]
     route:
       authentik: '.log_stream == "docker" && contains(string(.container_name) ?? "", "authentik_")'
 
   # Authentik logs (server, worker, postgresql) to their own authentik
   # stream, with ak_* fields. Runs after redact_url_secrets, which masked
-  # body, app_msg and app_message.
+  # body, app_msg, app_message, app_event, app_path and
+  # app_context_http_request.
   #
   # Two formats on authentik_server:
   # - Python/structlog: app_client_ip, app_runtime (ms), app_action for events;
@@ -283,16 +292,6 @@ transforms:
     inputs: [route_authentik.authentik]
     source: |
       .log_stream = "authentik"
-      secret_re = r'(?i)([?&]|\b)((?:access[_-]?token|refresh[_-]?token|token|auth(?:orization)?|api[_-]?key|client[_-]?secret|credential|password|passwd|secret|session(?:[_-]?id)?|jwt|signature|sig|nonce(?:_[a-z0-9]+)?|code|key)=)([^&\s"\x27\\]*)'
-      if is_string(.app_event) {
-        .app_event = replace(string!(.app_event), secret_re, "$1$2[REDACTED]")
-      }
-      if is_string(.app_path) {
-        .app_path = replace(string!(.app_path), secret_re, "$1$2[REDACTED]")
-      }
-      if is_string(.app_context_http_request) {
-        .app_context_http_request = replace(string!(.app_context_http_request), secret_re, "$1$2[REDACTED]")
-      }
 
       name = string(.container_name) ?? ""
       .ak_component = replace(name, r'^authentik_', "")
@@ -378,18 +377,16 @@ transforms:
         # 192.0.2.10:51234 [26/Nov/2026:10:00:00.123] fe~ be/srv 0/0/1/5/6 200 1234 - - ---- 1/1/0/0/0 0/0 "GET /path HTTP/1.1"
         h, err = parse_regex(msg, r'^(?P<ip>[0-9A-Fa-f.:]+):\d+ \[[^\]]+\] (?P<frontend>\S+) (?P<backend>[^/\s]+)/(?P<server>\S+) -?\d+/-?\d+/-?\d+/-?\d+/\+?(?P<ta>-?\d+) (?P<status>-?\d+) \+?(?P<bytes>\d+) .*?"(?P<method>[A-Z]+) (?P<path>\S+)')
         if err == null {
-          secret_re = r'(?i)([?&]|\b)((?:access[_-]?token|refresh[_-]?token|token|auth(?:orization)?|api[_-]?key|client[_-]?secret|credential|password|passwd|secret|session(?:[_-]?id)?|jwt|signature|sig|nonce(?:_[a-z0-9]+)?|code|key)=)([^&\s"\x27\\]*)'
           .http_client_ip = h.ip
           .http_frontend = h.frontend
           .http_backend = h.backend
           .http_server = h.server
           .http_method = h.method
-          .http_path = replace(string!(h.path), secret_re, "$1$2[REDACTED]")
+          # Query secrets already masked by redact_url_secrets.
+          .http_path = h.path
           .http_status = to_int(h.status) ?? null
           .http_bytes = to_int(h.bytes) ?? null
           .http_ta_ms = to_int(h.ta) ?? null
-          # The request line of the message carries the same query string.
-          .body_message = replace(msg, secret_re, "$1$2[REDACTED]")
         }
       } else if starts_with(msg, "util/http/http.c: ") {
         c, err = parse_regex(msg, r'^util/http/http\.c: (?:\S+: )?Client (?P<event>connected|disconnected) (?P<ip>[0-9A-Fa-f.:]+)')

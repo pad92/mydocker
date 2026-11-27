@@ -105,7 +105,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "État de la collecte SNMP du NAS : 1 si le NAS répond. À 0, tout le dashboard est figé."
     },
     {
       "type": "stat",
@@ -156,7 +157,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Composants dont l'état n'est pas normal : système, alimentation, ventilateurs. Zéro attendu."
     },
     {
       "type": "stat",
@@ -207,7 +209,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Disques dont l'état ou la santé n'est pas normal, chaque disque compté une fois."
     },
     {
       "type": "stat",
@@ -258,7 +261,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Pools et volumes qui ne sont pas normaux : dégradés, en panne ou en maintenance (reconstruction, scrub...)."
     },
     {
       "type": "stat",
@@ -309,7 +313,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Température système du NAS."
     },
     {
       "type": "stat",
@@ -360,7 +365,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Temps écoulé depuis le dernier démarrage du NAS."
     },
     {
       "id": 8,
@@ -428,7 +434,8 @@
         "y": 6,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Utilisation CPU du NAS."
     },
     {
       "type": "timeseries",
@@ -483,7 +490,8 @@
         "y": 6,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Utilisation mémoire du NAS."
     },
     {
       "type": "timeseries",
@@ -538,7 +546,8 @@
         "y": 14,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Part occupée de chaque volume."
     },
     {
       "type": "timeseries",
@@ -593,7 +602,8 @@
         "y": 14,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Température de chaque disque. L'alerte se déclenche au-dessus de 55 °C."
     },
     {
       "id": 13,
@@ -672,7 +682,8 @@
         "y": 23,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Débit des interfaces physiques et du bond, reçu et émis."
     },
     {
       "type": "timeseries",
@@ -738,7 +749,8 @@
         "y": 23,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Lectures et écritures de chaque disque."
     },
     {
       "type": "timeseries",
@@ -893,7 +905,8 @@
         "y": 39,
         "w": 24,
         "h": 8
-      }
+      },
+      "description": "Charge de la batterie de l'onduleur et charge électrique qu'il supporte."
     }
   ]
 }
