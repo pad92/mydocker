@@ -162,16 +162,16 @@ proxmox = [
     {"pve_kind": "backup", "pve_backup_event": "vm_failed", "pve_vmid": "102",
      "pve_level": "error"},
     {"pve_kind": "auth", "pve_auth_result": "failure", "pve_user": "root@pam",
-     "pve_client_ip": "10.0.0.9", "pve_level": "warning", "pve_component": "pvedaemon"},
+     "pve_client_ip": "192.0.2.9", "pve_level": "warning", "pve_component": "pvedaemon"},
 ]
 authentik = [
-    {"ak_kind": "forward_auth", "ak_app_host": "app.home.lan", "app_status": "200",
+    {"ak_kind": "forward_auth", "ak_app_host": "app.example", "app_status": "200",
      "ak_runtime_ms": "13", "ak_level": "info", "ak_component": "server"},
     {"ak_kind": "log", "ak_level": "error", "ak_component": "worker", "app_event": "boom"},
     {"ak_kind": "event", "ak_action": "login", "ak_user": "alice",
-     "ak_client_ip": "10.0.0.2", "ak_level": "info", "ak_component": "events"},
+     "ak_client_ip": "192.0.2.2", "ak_level": "info", "ak_component": "events"},
     {"ak_kind": "event", "ak_action": "login_failed", "ak_user": "bob",
-     "ak_client_ip": "10.0.0.3", "ak_level": "warning", "ak_component": "events"},
+     "ak_client_ip": "192.0.2.3", "ak_level": "warning", "ak_component": "events"},
 ]
 # demo-old logged 3 h ago only: it feeds "Conteneurs sans log depuis 1 h".
 docker = [
@@ -187,7 +187,7 @@ docker = [
 ]
 # AdGuard Home query log: reason 3 blocked, 9 rewrite, 1 allowlist; cached
 # answers keep the upstream of the first one, as live records do.
-def dns(host, ip, qh, qt="A", cached=False, upstream="192.168.69.2:5335",
+def dns(host, ip, qh, qt="A", cached=False, upstream="198.51.100.2:5335",
         elapsed="25000000", filtered=False, reason=None):
     r = {"host_name": host, "body_ip": ip, "body_qh": qh, "body_qt": qt,
          "body_cached": "true" if cached else "false", "body_upstream": upstream,
@@ -198,17 +198,17 @@ def dns(host, ip, qh, qt="A", cached=False, upstream="192.168.69.2:5335",
         r["body_result_reason"] = reason
     return r
 dns_queries = [
-    dns("ns01.home.lan", "192.168.0.10", "slow.example.com", elapsed="80000000"),
-    dns("ns01.home.lan", "192.168.0.10", "slow.example.com", elapsed="90000000"),
-    dns("ns01.home.lan", "192.168.0.10", "slow.example.com", elapsed="95000000"),
-    dns("ns01.home.lan", "192.168.0.10", "slow.example.com", qt="AAAA", cached=True, elapsed="40000"),
-    dns("ns01.home.lan", "192.168.0.10", "ads.example.net", upstream="", elapsed="30000",
+    dns("ns01.example", "192.0.2.10", "slow.example.com", elapsed="80000000"),
+    dns("ns01.example", "192.0.2.10", "slow.example.com", elapsed="90000000"),
+    dns("ns01.example", "192.0.2.10", "slow.example.com", elapsed="95000000"),
+    dns("ns01.example", "192.0.2.10", "slow.example.com", qt="AAAA", cached=True, elapsed="40000"),
+    dns("ns01.example", "192.0.2.10", "ads.example.net", upstream="", elapsed="30000",
         filtered=True, reason="3.0"),
-    dns("ns01.home.lan", "192.168.0.10", "nas.home.lan", upstream="", elapsed="20000",
+    dns("ns01.example", "192.0.2.10", "nas.example", upstream="", elapsed="20000",
         reason="9.0"),
-    dns("ns01.home.lan", "192.168.0.10", "allowed.example.org", elapsed="15000000",
+    dns("ns01.example", "192.0.2.10", "allowed.example.org", elapsed="15000000",
         reason="1.0"),
-    dns("ns02.home.lan", "192.168.0.20", "www.example.com", elapsed="12000000"),
+    dns("ns02.example", "192.0.2.20", "www.example.com", elapsed="12000000"),
 ]
 # UniFi gateway firewall (fields of parse_firewall); WAN_LOCAL is a drop from
 # the Internet, LAN_WAN a reject from a LAN client.
@@ -219,11 +219,11 @@ def fw(action, ruleset, rule_id, descr, src, dst, iface_in, iface_out, proto, dp
             "fw_in": iface_in, "fw_out": iface_out, "fw_proto": proto, "fw_dpt": dpt,
             "_msg": f"[{ruleset}] DESCR={descr}"}
 firewall = [
-    fw("drop", "WAN_LOCAL", "3000", "drop-wan", "203.0.113.7", "192.168.69.254",
+    fw("drop", "WAN_LOCAL", "3000", "drop-wan", "203.0.113.7", "198.51.100.254",
        "eth6", "", "TCP", "22"),
-    fw("drop", "WAN_LOCAL", "3000", "drop-wan", "203.0.113.8", "192.168.69.254",
+    fw("drop", "WAN_LOCAL", "3000", "drop-wan", "203.0.113.8", "198.51.100.254",
        "eth6", "", "TCP", "3389"),
-    fw("reject", "LAN_WAN", "40001", "block-dns", "192.168.0.57", "8.8.8.8",
+    fw("reject", "LAN_WAN", "40001", "block-dns", "192.0.2.57", "8.8.8.8",
        "br0", "eth6", "UDP", "53"),
 ]
 # UniFi CEF events: an IPS threat, and a firewall block (signature 203).
@@ -240,13 +240,13 @@ cef = [
 ]
 # Traefik access logs (JSON fields prefixed with app_ by Vector). The status
 # comes as "200.0" or 200 depending on the line; durations are in ns. The
-# value variant filters on cloud.home.lan, nextcloud@docker, GET and
-# 192.168.0.57 at once, so these lines alone carry a 2xx, a 4xx, a 5xx and
+# value variant filters on cloud.example, nextcloud@docker, GET and
+# 192.0.2.57 at once, so these lines alone carry a 2xx, a 4xx, a 5xx and
 # the same path three times. A line without a host (a bare TLS probe) must be
-# excluded; 172.18.0.1 is the Docker bridge, unknown to UniFi.
+# excluded; 198.51.100.1 is the Docker bridge, unknown to UniFi.
 def http(host, service, method, client, path, status, duration, origin, size,
          proto="HTTP/2.0", tls="1.3", router=None):
-    r = {"host_name": "proxy.home.lan", "app_clienthost": client,
+    r = {"host_name": "proxy.example", "app_clienthost": client,
          "app_requestmethod": method, "app_requestpath": path,
          "app_downstreamstatus": status, "app_duration": duration,
          "app_originduration": origin, "app_downstreamcontentsize": size,
@@ -257,15 +257,15 @@ def http(host, service, method, client, path, status, duration, origin, size,
         r["app_routername"] = router
     return r
 traefik = [
-    http("cloud.home.lan", "nextcloud@docker", "GET", "192.168.0.57", "/status.php", "200.0",
+    http("cloud.example", "nextcloud@docker", "GET", "192.0.2.57", "/status.php", "200.0",
          40000000, 35000000, 512),
-    http("cloud.home.lan", "nextcloud@docker", "GET", "192.168.0.57", "/status.php", 200,
+    http("cloud.example", "nextcloud@docker", "GET", "192.0.2.57", "/status.php", 200,
          60000000, 55000000, 512),
-    http("cloud.home.lan", "nextcloud@docker", "GET", "192.168.0.57", "/status.php", "503.0",
+    http("cloud.example", "nextcloud@docker", "GET", "192.0.2.57", "/status.php", "503.0",
          900000000, 880000000, 128),
-    http("cloud.home.lan", "nextcloud@docker", "GET", "192.168.0.57", "/missing", 404,
+    http("cloud.example", "nextcloud@docker", "GET", "192.0.2.57", "/missing", 404,
          5000000, 3000000, 64),
-    http("grafana.home.lan", "grafana@docker", "POST", "172.18.0.1", "/api/ds/query", "200.0",
+    http("grafana.example", "grafana@docker", "POST", "198.51.100.1", "/api/ds/query", "200.0",
          120000000, 110000000, 2048, proto="HTTP/1.1", tls="1.2"),
     http("", "", "GET", "203.0.113.5", "/", "404.0", 1000000, 0, 19),
 ]
@@ -273,10 +273,10 @@ traefik = [
 # session with status 0 and the Forgejo SSE stream with 200, each lasting as
 # long as the browser tab. Three of each, so that "Chemins les plus lents"
 # (at least 3 requests) would list them if the latency filter missed them.
-traefik += [http("grafana.home.lan", "grafana@docker", "GET", "192.168.0.10", "/api/live/ws",
+traefik += [http("grafana.example", "grafana@docker", "GET", "192.0.2.10", "/api/live/ws",
                  status, 3600000000000, 3599000000000, 0)
             for status in ("0.0", 0, "0.0")]
-traefik += [http("git.home.lan", "forgejo@docker", "GET", "192.168.0.10", "/user/events",
+traefik += [http("git.example", "forgejo@docker", "GET", "192.0.2.10", "/user/events",
                  status, 600000000000, 599000000000, 4096)
             for status in ("200.0", 200, "200.0")]
 # Ingestion routers: the collectors drop their own successful requests from
@@ -290,7 +290,7 @@ traefik += [http("metrics.example", "victoriametrics@docker", "POST", "198.51.10
                  "/opentelemetry/v1/metrics", 502, 2000000, 200000, 11,
                  router="victoriametrics_ingest@docker")]
 records = [{"log_stream": "proxmox", "host_name": "pve.example", "_msg": "pve", **r} for r in proxmox]
-records += [{"log_stream": "authentik", "host_name": "sso.home.lan", "_msg": "ak", **r} for r in authentik]
+records += [{"log_stream": "authentik", "host_name": "sso.example", "_msg": "ak", **r} for r in authentik]
 records += [{"log_stream": "docker", **r} for r in docker]
 records += [{"log_stream": "dns_queries", "_msg": "dns", **r} for r in dns_queries]
 records += [{"log_stream": "firewall", "severity": "notice", "level": "info", **r} for r in firewall]
@@ -397,15 +397,15 @@ series("smartctl_device_error_log_count", {**smart, "device": "sda", "error_log_
 series("smartctl_device_attribute", {**smart, "device": "sdb", "attribute_name": "Wear_Leveling_Count",
                                      "attribute_value_type": "value"}, [(m, 92) for m in recent])
 # UnPoller clients and devices, which name the IPs of the DNS and firewall
-# tables. DHCP gave 192.168.0.10 to "old-pc" until 3 h ago, then to "laptop":
+# tables. DHCP gave 192.0.2.10 to "old-pc" until 3 h ago, then to "laptop":
 # the mapping keeps one row per IP, the MAC seen last, although old-pc has the
-# larger value. 192.168.0.99 is in no log.
-unifi = [("unpoller_client_uptime_seconds", "192.168.0.10", "aa:bb:cc:00:00:10", "laptop", 300, recent),
-         ("unpoller_client_uptime_seconds", "192.168.0.10", "aa:bb:cc:00:00:11", "old-pc", 90000,
+# larger value. 192.0.2.99 is in no log.
+unifi = [("unpoller_client_uptime_seconds", "192.0.2.10", "aa:bb:cc:00:00:10", "laptop", 300, recent),
+         ("unpoller_client_uptime_seconds", "192.0.2.10", "aa:bb:cc:00:00:11", "old-pc", 90000,
           range(200, 179, -1)),
-         ("unpoller_client_uptime_seconds", "192.168.0.57", "aa:bb:cc:00:00:57", "tv", 4000, recent),
-         ("unpoller_client_uptime_seconds", "192.168.0.99", "aa:bb:cc:00:00:99", "phone", 100, recent),
-         ("unpoller_device_info", "192.168.69.254", "aa:bb:cc:00:00:fe", "gateway", 1, recent)]
+         ("unpoller_client_uptime_seconds", "192.0.2.57", "aa:bb:cc:00:00:57", "tv", 4000, recent),
+         ("unpoller_client_uptime_seconds", "192.0.2.99", "aa:bb:cc:00:00:99", "phone", 100, recent),
+         ("unpoller_device_info", "198.51.100.254", "aa:bb:cc:00:00:fe", "gateway", 1, recent)]
 for name, ip, mac, label, value, minutes in unifi:
     series(name, {"ip": ip, "mac": mac, "name": label, "site_name": "default"},
            [(m, value) for m in minutes])
@@ -448,15 +448,15 @@ with open(f"{work}/metrics.txt", "w") as f:
 #   without it Grafana would send every value as an alternation).
 # $search is a text box whose default is *. Grafana replaces $__range itself.
 values = {
-    "victoria-authentik": {"application": "app.home.lan", "composant": "worker"},
-    "victoria-dns": {"host_name": "ns01.home.lan", "client": "192.168.0.10"},
+    "victoria-authentik": {"application": "app.example", "composant": "worker"},
+    "victoria-dns": {"host_name": "ns01.example", "client": "192.0.2.10"},
     "victoria-docker": {"host_name": "test.example", "compose_project": "demo",
                         "container_name": "demo-old"},
     "victoria-firewall": {"host_name": "gw", "action": "drop", "ruleset": "WAN_LOCAL"},
     "victoria-logs": {"log_stream": "docker", "host_name": "test.example"},
     "victoria-hosts": {"host_name": "test.example"},
-    "victoria-http": {"requesthost": "cloud.home.lan", "service": "nextcloud@docker",
-                      "method": "GET", "client": "192.168.0.57"},
+    "victoria-http": {"requesthost": "cloud.example", "service": "nextcloud@docker",
+                      "method": "GET", "client": "192.0.2.57"},
     "victoria-proxmox": {"guest": "guest-test"},
     "victoria-unifi": {"device": "gw"},
     "victoria-disks": {"host_name": "smart-test.example"},
@@ -772,7 +772,7 @@ def has_data(frame):
         return True
     return any(x not in (None, 0) for i in numeric for x in values[i])
 
-unifi_ips = ["192.168.0.10", "192.168.0.57", "192.168.0.99", "192.168.69.254"]
+unifi_ips = ["192.0.2.10", "192.0.2.57", "192.0.2.99", "198.51.100.254"]
 
 # IP tables named from UnPoller. Grafana joins in the browser, so this checks
 # the chain the browser runs: A (VictoriaLogs) and B (the mapping) in a Mixed
@@ -854,8 +854,8 @@ for q in index:
                     ips.setdefault(labels["ip"], []).append((labels.get("mac"), labels.get("name")))
         if sorted(ips) != unifi_ips or any(len(v) != 1 or None in v[0] for v in ips.values()):
             errors.append(f"{label}: IP mapping {ips}, expected one MAC and name for each of {unifi_ips}")
-        elif ips["192.168.0.10"][0] != ("aa:bb:cc:00:00:10", "laptop"):
-            errors.append(f"{label}: 192.168.0.10 maps to {ips['192.168.0.10'][0]}, expected the MAC seen last")
+        elif ips["192.0.2.10"][0] != ("aa:bb:cc:00:00:10", "laptop"):
+            errors.append(f"{label}: 192.0.2.10 maps to {ips['192.0.2.10'][0]}, expected the MAC seen last")
         continue
     if (q["dashboard"], q["panel"]) == tree_panel:
         got = [float(x) for f in result.get("frames", [])
