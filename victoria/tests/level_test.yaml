@@ -274,7 +274,7 @@ tests:
             source: |
               assert_eq!(.level, "debug")
 
-  - name: No level without a usable source
+  - name: Info without a usable source
     inputs:
       - insert_at: normalize_level
         type: log
@@ -287,9 +287,9 @@ tests:
         conditions:
           - type: vrl
             source: |
-              assert!(!exists(.level))
+              assert_eq!(.level, "info")
 
-  - name: No level for an empty event
+  - name: Info for an empty event
     inputs:
       - insert_at: normalize_level
         type: log
@@ -300,4 +300,242 @@ tests:
         conditions:
           - type: vrl
             source: |
-              assert!(!exists(.level))
+              assert_eq!(.level, "info")
+
+  - name: CEF severity 7 becomes error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          cef_severity: 7
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: CEF severity 5 becomes warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          cef_severity: 5
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: CEF severity 2 becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: "test"
+          cef_severity: 2
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: logfmt level in the line
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: 'time="2026-11-27T01:00:23+01:00" level=warning msg=x'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: JSON level in the line
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '{"time":"x","level":"error","msg":"y"}'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: zerolog console token after colour codes
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: "\e[90m2026-11-27T01:03:12+01:00\e[0m \e[31mERR\e[0m Error calling http://auth.example"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: Go log letter of Forgejo
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '2026/11/27 00:49:22 ...eb/routing/logger.go:109:func1() [W] router: slow'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: NestJS LOG becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: "\e[32m[Nest] 59  - \e[39m11/27/2026, 12:00:00 AM \e[32m    LOG\e[39m \e[33m[Svc]\e[39m done"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: NestJS ERROR becomes error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '[Nest] 59  - 11/27/2026, 12:00:00 AM   ERROR [Svc] failed'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: bracket word after colour codes
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: "2026-11-26T23:58:00.030Z [\e[34mdebug\e[39m][Jobs]: Starting"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "debug")
+
+  - name: upper case word with a colon
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '2026-11-27T02:00:00+01:00 [MONITOR] WARN: Monitor down'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: Redis hash marker becomes warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '1:M 27 Nov 2026 00:00:02.724 # WARNING overcommit_memory is set to 0'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: Redis star marker becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '24770:C 27 Nov 2026 00:00:02.730 * DB saved on disk'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: journald message line
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body_message: 'level=error msg=boom'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: syslog message line
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          message: '[Nest] 1  - x   FATAL [App] down'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "crit")
+
+  - name: the severity field wins over the line
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          severity: "INFO"
+          body: 'level=error msg=x'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: a plain line is info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: '200 GET /api/setup/status with 155 bytes took 0ms'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: an error word inside the text is not a level
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          body: 'Sync failed: error while syncing'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")

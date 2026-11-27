@@ -40,6 +40,7 @@ This stack replaces OpenObserve. It deploys the following services:
 | `PUID` | User ID that owns the data directories and runs the databases, vmalert, Alertmanager and Grafana. | *None (empty)* |
 | `VECTOR_SYSLOG_PORT` | UDP port published on the host for syslog. Nothing else on the host may listen on it (rsyslog, for example). | `514` |
 | `VECTOR_SYSLOG_SENDERS` | Known syslog senders, one JSON line keyed by source IP: `name` (FQDN, the `host_name` field) and `vendor` (`device_vendor`). Empty or invalid JSON means no table. No single quote (`'`): the value goes into a VRL raw string. | `{"192.0.2.1":{"name":"gw.example.com","vendor":"unifi"}}` |
+| `VECTOR_SYSLOG_DOMAIN` | Domain added to the short hostname (no dot, not an IP) of a syslog sender missing from `VECTOR_SYSLOG_SENDERS`, so that one device keeps one `host_name`. Empty: the hostname stays as sent. | `example.com` |
 | `GRAFANA_ADMIN_USER` | Authentik username that becomes the Grafana server admin. | `admin` |
 | `GRAFANA_DEFAULT_ROLE` | Grafana role of the other Authentik users: `Viewer`, `Editor` or `Admin`. | `Viewer` |
 | `FREE_MOBILE_USER` | Free Mobile account ID for the SMS API. Secret: set it only in the environment of the stack. Empty means no SMS. | *None (empty)* |
@@ -244,7 +245,7 @@ syslog_udp -> parse_syslog
 
 Every branch ends in the `victorialogs` sink.
 
-The pipeline is the `vector_config` entry under `configs:` at the end of [`docker-compose.yml`](./docker-compose.yml), mounted on `/etc/vector/vector.yaml`. It is inline rather than a `./vector.yaml` bind mount because Portainer resolves relative paths on its own disk: Docker then creates an empty directory on the host and the deployment fails with `mkdirat etc/vector/vector.yaml: file exists`. Compose interpolates `$` in this block, so write `$$` for a literal `$`. Inline `configs` need Docker Compose 2.23 or later. Vector 0.61 does not expand `${VAR}` in its configuration, so Compose writes `VECTOR_SYSLOG_SENDERS` into the pipeline.
+The pipeline is the `vector_config` entry under `configs:` at the end of [`docker-compose.yml`](./docker-compose.yml), mounted on `/etc/vector/vector.yaml`. It is inline rather than a `./vector.yaml` bind mount because Portainer resolves relative paths on its own disk: Docker then creates an empty directory on the host and the deployment fails with `mkdirat etc/vector/vector.yaml: file exists`. Compose interpolates `$` in this block, so write `$$` for a literal `$`. Inline `configs` need Docker Compose 2.23 or later. Vector 0.61 does not expand `${VAR}` in its configuration, so Compose writes `VECTOR_SYSLOG_SENDERS` and `VECTOR_SYSLOG_DOMAIN` into the pipeline.
 
 ### External Links
 - **Official Project**: [https://vector.dev/](https://vector.dev/)
@@ -268,8 +269,22 @@ Records of every stream get a `level` field with one of five values: `debug`, `i
 2. The journald priority `body_priority`: 0-2 give `crit`, 3 `error`, 4 `warn`, 5-6 `info`, 7 `debug`.
 3. The `severity` text, syslog keyword or OTLP severity text, case ignored: `emerg`, `alert`, `crit*`, `fatal`, `panic` give `crit`; `err*` gives `error`; `warn*` gives `warn`; `info` and `notice` give `info`; `debug` and `trace` give `debug`.
 4. The OTLP `severity_number`: 21-24 give `crit`, 17-20 `error`, 13-16 `warn`, 9-12 `info`, 1-8 `debug`.
+5. The CEF severity `cef_severity` of the UniFi events: 9-10 give `crit`, 7-8 `error`, 4-6 `warn`, 0-3 `info`.
+6. The level written in the line (`body`, else `body_message`, else `message`), read in its first 300 characters once the colour codes are removed:
 
-A record with none of these, or with an unknown word, has no `level`. The source fields are kept as they are. Records stored before `level` existed have none; the error panels of the *Logs* and *Docker* dashboards filter on `level`, so errors stored before that change do not show there.
+   | Format | Example | Used by |
+   | :--- | :--- | :--- |
+   | logfmt or JSON key | `level=info`, `"level":"warn"`, `lvl=` | step-ca, Go and Node services |
+   | zerolog console token | `<time> ERR ...` (`TRC`, `DBG`, `INF`, `WRN`, `ERR`, `FTL`, `PNC`) | Traefik, Portainer |
+   | Go log letter | `...func1() [W] ...` (`T`, `D`, `I`, `W`, `E`, `F`) | Forgejo |
+   | NestJS | `[Nest] 59 - <date>    LOG [Context]` (`LOG`, `VERBOSE`, `WARN`...) | Immich |
+   | Word in brackets | `[debug][Jobs]` | Seerr |
+   | Upper case word and colon | `[MONITOR] INFO: ...` | Uptime Kuma |
+   | Redis marker | `1:M 27 Nov 2026 00:00:02.724 * ...` (`.` and `-` debug, `*` info, `#` warn) | Redis |
+
+   A word inside the text (`Sync failed: error while syncing`) is not a level.
+
+A record with none of these is `info`: every record has a `level`, so `level:in(error,crit)` misses only what its source does not mark as an error (a Trilium stack trace, a raw kernel line). The `alerts` stream skips this transform: `alert_rules` gives `error` to a rule that cannot be evaluated, `warn` to a firing or pending one and `info` to the others. The source fields are kept as they are. Records stored before `level` existed have none; the error panels of the *Logs* and *Docker* dashboards filter on `level`, so errors stored before that change do not show there.
 
 ### Sink Notes
 - The sink sends `Content-Type: application/x-ndjson`. Without it VictoriaLogs answers `200` and stores nothing.
@@ -279,6 +294,10 @@ A record with none of these, or with an unknown word, has no `level`. The source
 
 ### Secret Masking (`redact_url_secrets`)
 Records of the `docker` and `traefik` streams have the values of secret-looking parameters (`token`, `code`, `password`, `key`...) replaced by `[REDACTED]` in `body`, `app_msg`, `app_message` and `app_requestpath`. A parameter whose name only contains such a word (`monkey=`) is not masked.
+
+The same step turns the Traefik `app_downstreamstatus` and `app_originstatus` into integers: depending on the collector they arrive as `302.0` or `"302"`.
+
+A Traefik access line without `app_servicename` is a request that never reached a service: a middleware answered it (forward-auth or HTTPS redirect, 301/302), no router matched it (404), or the client left (499). They are not lost records. When most of them come from one client on the same path, that client is misconfigured: for example an OTLP exporter still posting to the old OpenObserve paths `/api/default/v1/logs|traces|metrics`.
 
 ### HAProxy and camera-streamer (`parse_http`, `journald` stream)
 HAProxy `httplog` lines get the fields below. The request line is masked the same way in `http_path` and in `body_message`.
@@ -338,7 +357,7 @@ UDP syslog from UniFi, switches and the NAS.
 - Messages in another format are kept as is in `message`, with a `parse_error` field. Today these are mostly the kernel lines of the UniFi access points, which carry no syslog header.
 - `_time` is the time Vector received the message. The time sent by the device is kept in `syslog_timestamp`: device clocks drift and RFC 3164 has no year.
 - `source_ip` is the address of the sending device.
-- `host_name` is the entry of the sender in `VECTOR_SYSLOG_SENDERS`, else its syslog `hostname` in lower case, else its IP. `device_vendor` comes from the same entry.
+- `host_name` is the entry of the sender in `VECTOR_SYSLOG_SENDERS`, else its syslog `hostname` in lower case (with `.` and `VECTOR_SYSLOG_DOMAIN` added to a short name), else its IP. `device_vendor` comes from the same entry.
 - Firewall lines go to the `firewall` stream, everything else to `syslog`.
 
 #### CEF Fields

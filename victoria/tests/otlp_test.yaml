@@ -148,6 +148,24 @@ tests:
     no_outputs_from:
       - parse_authentik
 
+  - name: Traefik status codes become integers, from float or string
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {
+            "stream-name": "traefik",
+            "attributes": {"container.name": "traefik", "app.DownstreamStatus": 302.0, "app.OriginStatus": "404"},
+            "message": "access"
+          }
+    outputs:
+      - extract_from: route_authentik._unmatched
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.app_downstreamstatus, 302)
+              assert_eq!(.app_originstatus, 404)
+
   - name: HAProxy httplog line gives http_ fields, query secrets masked
     inputs:
       - insert_at: normalize

@@ -1516,6 +1516,10 @@ configs:
                   "Condition non remplie : " + (string(rule.annotations.description) ?? "")
                 }
                 source = if (string(rule.datasourceType) ?? "") == "vlogs" { "logs" } else { "metrics" }
+                # This stream skips normalize_level. A rule that cannot be
+                # evaluated is an error; a firing or pending alert only a
+                # warning, so that the error panels do not count it every minute.
+                level = if health != "ok" || last_error != "" { "error" } else if state == "firing" || state == "pending" { "warn" } else { "info" }
                 record = {
                   "timestamp": ts,
                   "log_stream": "alerts",
@@ -1524,6 +1528,7 @@ configs:
                   "alert_group": group_name,
                   "alert_source": source,
                   "alert_state": state,
+                  "level": level,
                   "alert_health": health,
                   "alert_severity": string(rule.labels.severity) ?? "",
                   "alert_count": length(alerts),
@@ -1607,6 +1612,17 @@ configs:
               value = get(., [name]) ?? null
               if is_string(value) {
                 . = set!(., [name], replace(string!(value), secret_re, "$$1$$2[REDACTED]"))
+              }
+            }
+            # Traefik numeric fields arrive as float (302.0) or string ("302")
+            # depending on the collector: one integer type for tables and filters.
+            if .log_stream == "traefik" {
+              for_each(["app_downstreamstatus", "app_originstatus"]) -> |_index, name| {
+                value = get(., [name]) ?? null
+                number = if is_string(value) { to_float(value) ?? null } else { value }
+                if is_float(number) || is_integer(number) {
+                  . = set!(., [name], to_int!(number))
+                }
               }
             }
 
@@ -1996,13 +2012,22 @@ configs:
             }
             # host_name (FQDN, as in the streams of the hosts) and device_vendor
             # from the VECTOR_SYSLOG_SENDERS table, by source IP. A sender not
-            # listed is named by its syslog hostname, else by its IP.
+            # listed is named by its syslog hostname, else by its IP. A short
+            # hostname gets the VECTOR_SYSLOG_DOMAIN suffix when it is set, so
+            # that the same device has one host_name whether listed or not.
             senders = object(parse_json(s'${VECTOR_SYSLOG_SENDERS:-}') ?? {}) ?? {}
             sender = object(get(senders, [to_string(.source_ip) ?? ""]) ?? {}) ?? {}
             .host_name = sender.name
             if !is_string(.host_name) {
-              hostname = to_string(.hostname) ?? ""
-              .host_name = if hostname != "" && hostname != "-" { downcase(hostname) } else { .source_ip }
+              hostname = downcase(to_string(.hostname) ?? "")
+              domain = downcase(s'${VECTOR_SYSLOG_DOMAIN:-}')
+              if hostname == "" || hostname == "-" {
+                .host_name = .source_ip
+              } else if domain != "" && !contains(hostname, ".") && !is_ipv4(hostname) {
+                .host_name = hostname + "." + domain
+              } else {
+                .host_name = hostname
+              }
             }
             if is_string(sender.vendor) {
               .device_vendor = sender.vendor
@@ -2062,9 +2087,47 @@ configs:
               number = int!(.severity_number)
               level = if number >= 21 { "crit" } else if number >= 17 { "error" } else if number >= 13 { "warn" } else if number >= 9 { "info" } else if number >= 1 { "debug" } else { "" }
             }
-            if level != "" {
-              .level = level
+            # CEF severity (0-10) of the UniFi events.
+            if level == "" && is_integer(.cef_severity) {
+              number = int!(.cef_severity)
+              level = if number >= 9 { "crit" } else if number >= 7 { "error" } else if number >= 4 { "warn" } else { "info" }
             }
+            # The level written in the line itself, by the formats seen in the
+            # logs (colour codes removed first):
+            #   logfmt or JSON   level=info, "level":"warn" (step-ca...)
+            #   zerolog console  <time> ERR ... (Traefik, Portainer)
+            #   Go log           ...func1() [I] ... (Forgejo: T D I W E F)
+            #   NestJS           [Nest] 59 - <date>    LOG [Context] (Immich)
+            #   bracket, colon   [debug][Jobs] (Seerr), [MONITOR] INFO: (Uptime Kuma)
+            #   Redis            1:M 27 Nov 2026 00:00:02.724 * (. - * #)
+            if level == "" {
+              line = string(.body) ?? string(.body_message) ?? string(.message) ?? ""
+              line = replace(truncate(line, 300), r'\x1b\[[0-9;]*m', "")
+              found = parse_regex(line, r'(?i)\b(?:level|lvl)"?\s*[=:]\s*"?(?P<w>[a-z]+)') ??
+                parse_regex(line, r'^(?:\S+\s+){0,2}(?P<w>TRC|DBG|INF|WRN|ERR|FTL|PNC)\s') ??
+                parse_regex(line, r'\s\[(?P<w>[TDIWEF])\]\s') ??
+                parse_regex(line, r'^\[Nest\].*?\s(?P<w>LOG|VERBOSE|DEBUG|WARN|ERROR|FATAL)\s') ??
+                parse_regex(line, r'(?i)\[(?P<w>trace|debug|info|notice|warn|warning|error|fatal|critical)\]') ??
+                parse_regex(line, r'\b(?P<w>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL):\s') ??
+                parse_regex(line, r'^\d+:[XCSM] \d{1,2} \w{3} \d{4} [\d:.]+ (?P<r>[.*#-]) ') ??
+                {}
+              word = downcase(string(found.w) ?? "")
+              marker = string(found.r) ?? ""
+              if match(word, r'^(emerg|alert|crit|critical|fatal|panic|ftl|pnc|f)$$') {
+                level = "crit"
+              } else if match(word, r'^(err|error|e)$$') {
+                level = "error"
+              } else if match(word, r'^(warn|warning|wrn|w)$$') || marker == "#" {
+                level = "warn"
+              } else if match(word, r'^(info|notice|log|inf|i)$$') || marker == "*" {
+                level = "info"
+              } else if match(word, r'^(debug|trace|verbose|dbg|trc|d|t)$$') || marker == "." || marker == "-" {
+                level = "debug"
+              }
+            }
+            # Every record gets a level: one without any (an AdGuard query, a
+            # line that says nothing of its level) is info.
+            .level = if level != "" { level } else { "info" }
 
       sinks:
         victorialogs:

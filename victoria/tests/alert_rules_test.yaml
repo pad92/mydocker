@@ -36,6 +36,7 @@ tests:
                 "alert_group": "proxmox",
                 "alert_source": "logs",
                 "alert_state": "firing",
+                "level": "warn",
                 "alert_health": "ok",
                 "alert_severity": "warning",
                 "alert_count": 2,
@@ -61,6 +62,7 @@ tests:
             source: |
               assert_eq!(.alert_rule, "proxmox_silent")
               assert_eq!(.alert_state, "inactive")
+              assert_eq!(.level, "info")
               assert_eq!(.alert_count, 0)
               assert!(!exists(.alert_active_since))
               assert_eq!(.message, "Condition non remplie : Aucun log Proxmox depuis 30 minutes")
@@ -87,6 +89,7 @@ tests:
               assert_eq!(.alert_group, "victoria_stack")
               assert_eq!(.alert_source, "metrics")
               assert_eq!(.alert_health, "err")
+              assert_eq!(.level, "error")
               assert_eq!(.message, "Erreur d'evaluation : cannot parse query")
 
   - name: a response without rules gives no record
