@@ -578,13 +578,13 @@ for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
                         assert window == "$__rate_interval", \
                             f"{where}: rate window [{window}] in a range panel, expected [$__rate_interval]"
             for variant in ("value", "all"):
-                if variant == "all" and "$" not in re.sub(r"\$__(?:rate_interval|range)\b", "", target["expr"]):
+                if variant == "all" and "$" not in re.sub(r"\$__(?:rate_interval|interval|range)\b", "", target["expr"]):
                     continue
                 query = dict(target)
                 query["expr"] = substitute(target["expr"], datasource, variables, variant, all_values)
-                # $__range and $__rate_interval, which Grafana fills in, and a
+                # $__range, $__interval and $__rate_interval, which Grafana fills in, and a
                 # regex end anchor ($ before a closing quote) are not variables.
-                assert "$" not in re.sub(r'\$__(?:rate_interval|range)\b|\$(?=")', "", query["expr"]), \
+                assert "$" not in re.sub(r'\$__(?:rate_interval|interval|range)\b|\$(?=")', "", query["expr"]), \
                     f'{dash["uid"]} / {panel["title"]}: {query["expr"]}'
                 n = len(index) + 1
                 json.dump({"from": "now-24h", "to": "now", "queries": [query]},
@@ -650,7 +650,9 @@ done
 client wget -q -O /dev/null --post-file /w/metrics.txt 'http://victoriametrics:8428/api/v1/import/prometheus' \
   || fail "metric import refused"
 client wget -q -O /dev/null 'http://victoriametrics:8428/internal/force_flush' || fail "force_flush refused"
-expected_series="$(awk '{print $1}' "$work_dir/metrics.txt" | sort -u | wc -l)"
+# Strip the value and the timestamp, not everything after the first space:
+# a label value may contain spaces (name="GPU test").
+expected_series="$(sed -E 's/ [^ ]+ [^ ]+$//' "$work_dir/metrics.txt" | sort -u | wc -l)"
 (( expected_series > 0 )) || fail "no metric series generated"
 # /api/v1/series/count may count a series once per day index, so count the
 # distinct series that /api/v1/series returns instead.
