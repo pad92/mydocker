@@ -1,0 +1,12 @@
+apiVersion: 1
+providers:
+  - name: victoria
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards
+      # Each sub-directory becomes a Grafana folder: overview dashboards
+      # stay at the root (General), detail ones go in a folder. Links
+      # use uids and tags, so moving a file does not break them.
+      foldersFromFilesStructure: true

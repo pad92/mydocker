@@ -1,0 +1,826 @@
+# OTLP/HTTP logs and UDP syslog to VictoriaLogs.
+#
+#   otlp -> normalize -> route_streams --docker_like--> redact_url_secrets
+#                                      |                 -> route_authentik --authentik--> parse_authentik
+#                                      |--journald--> parse_http -> parse_proxmox
+#   syslog_udp -> parse_syslog
+#
+# Every branch ends in the victorialogs sink. The stream of a record is its
+# log_stream field (one of the VictoriaLogs stream fields): docker,
+# traefik, journald, files... as named by the stream-name header of the
+# collector, then authentik, proxmox, syslog, firewall as set here.
+data_dir: /var/lib/vector
+
+sources:
+  otlp:
+    type: opentelemetry
+    # Required by the source. Not published: the collectors use HTTP.
+    grpc:
+      address: 0.0.0.0:4317
+    http:
+      address: 0.0.0.0:4318
+      # Stream chosen by the collector (otel_collector_streams in myansible).
+      headers: [stream-name]
+
+  syslog_udp:
+    # Raw socket instead of the "syslog" source, so messages that are not valid
+    # RFC 3164/5424 (CEF, vendor formats) are kept instead of being dropped.
+    type: socket
+    mode: udp
+    address: 0.0.0.0:5514
+    host_key: source_ip
+    port_key: source_port
+
+  # Webhook of alertmanager (receiver sms). Reachable on the victoria and
+  # traefik_gateway networks, never routed by Traefik (see the README).
+  alertmanager_webhook:
+    type: http_server
+    address: 0.0.0.0:8080
+    path: /alertmanager
+    strict_path: true
+    method: POST
+    # Any container on the victoria and traefik_gateway networks reaches
+    # port 8080: without auth, any of them could send SMS. Vector 0.61
+    # no longer expands environment variables in its config, so Compose
+    # writes the password here, as in alertmanager_config.
+    auth:
+      strategy: basic
+      username: alertmanager
+      password: "${VECTOR_WEBHOOK_PASSWORD:?Set VECTOR_WEBHOOK_PASSWORD}"
+    decoding:
+      codec: json
+
+  # Rule state of both vmalert instances, polled every minute and stored
+  # as log_stream "alerts" (one record per rule, see alert_rules), for
+  # the Alerts dashboard: state, health and the reason for that state.
+  vmalert_logs_rules:
+    type: http_client
+    endpoint: http://vmalert-logs:8880/api/v1/rules?type=alert
+    scrape_interval_secs: 60
+    decoding:
+      codec: json
+  vmalert_metrics_rules:
+    type: http_client
+    endpoint: http://vmalert-metrics:8880/api/v1/rules?type=alert
+    scrape_interval_secs: 60
+    decoding:
+      codec: json
+
+  # Vector's own metrics (events, errors per component), scraped by
+  # victoriametrics through the prometheus sink below.
+  vector_metrics:
+    type: internal_metrics
+
+transforms:
+  # One SMS per webhook. Alertmanager groups by alertname, so a webhook
+  # holds the firing alerts of one rule (max_alerts: 10). The text is the
+  # summary annotation of each alert, one per line.
+  sms_message:
+    type: remap
+    inputs:
+      - alertmanager_webhook
+    # An error or abort drops the webhook instead of passing it on as is.
+    drop_on_error: true
+    drop_on_abort: true
+    source: |
+      alerts = array(.alerts) ?? []
+      firing = filter(alerts) -> |_index, alert| { alert.status == "firing" }
+      lines = map_values(firing) -> |alert| {
+        string(alert.annotations.summary) ?? string(alert.labels.alertname) ?? "alerte"
+      }
+      if length(lines) == 0 { abort }
+      msg = join!(lines, "\n")
+      truncated = int(.truncatedAlerts) ?? 0
+      if truncated > 0 {
+        msg = msg + "\n(+" + to_string(truncated) + " autres alertes)"
+      }
+      user = get_env_var("FREE_MOBILE_USER") ?? ""
+      pass = get_env_var("FREE_MOBILE_PASS") ?? ""
+      if user == "" || pass == "" {
+        log("FREE_MOBILE_USER or FREE_MOBILE_PASS is empty: SMS not sent", level: "error")
+        abort
+      }
+      . = {"user": user, "pass": pass, "msg": truncate(msg, 900)}
+
+  # One record per vmalert rule. message holds the reason for the state:
+  # the evaluation error, the rendered summary of each active alert (the
+  # SMS text), or the condition that is not met (description).
+  alert_rules:
+    type: remap
+    inputs:
+      - vmalert_logs_rules
+      - vmalert_metrics_rules
+    drop_on_error: true
+    drop_on_abort: true
+    source: |
+      groups = array(.data.groups) ?? []
+      ts = now()
+      records = []
+      for_each(groups) -> |_gi, group| {
+        group_name = string(group.name) ?? ""
+        rules = array(group.rules) ?? []
+        for_each(rules) -> |_ri, rule| {
+          alerts = array(rule.alerts) ?? []
+          health = string(rule.health) ?? "unknown"
+          last_error = string(rule.lastError) ?? ""
+          state = string(rule.state) ?? "unknown"
+          summaries = []
+          # Earliest activeAt of the alerts, in seconds; 0 when none.
+          since = 0
+          for_each(alerts) -> |_ai, alert| {
+            summaries = push(summaries, string(alert.annotations.summary) ?? string(alert.labels.alertname) ?? "alerte")
+            active = to_unix_timestamp(parse_timestamp(string(alert.activeAt) ?? "", "%+") ?? t'1970-01-01T00:00:00Z')
+            if active > 0 && (since == 0 || active < since) {
+              since = active
+            }
+          }
+          reason = if health != "ok" || last_error != "" {
+            "Erreur d'evaluation : " + last_error
+          } else if length(summaries) > 0 {
+            join(summaries, " | ")
+          } else {
+            "Condition non remplie : " + (string(rule.annotations.description) ?? "")
+          }
+          source = if (string(rule.datasourceType) ?? "") == "vlogs" { "logs" } else { "metrics" }
+          # This stream skips normalize_level. A rule that cannot be
+          # evaluated is an error; a firing or pending alert only a
+          # warning, so that the error panels do not count it every minute.
+          level = if health != "ok" || last_error != "" { "error" } else if state == "firing" || state == "pending" { "warn" } else { "info" }
+          record = {
+            "timestamp": ts,
+            "log_stream": "alerts",
+            "message": truncate(reason, 2000),
+            "alert_rule": string(rule.name) ?? "",
+            "alert_group": group_name,
+            "alert_source": source,
+            "alert_state": state,
+            "level": level,
+            "alert_health": health,
+            "alert_severity": string(rule.labels.severity) ?? "",
+            "alert_count": length(alerts),
+            "alert_last_evaluation": string(rule.lastEvaluation) ?? "",
+            "alert_last_samples": int(rule.lastSamples) ?? 0
+          }
+          if since > 0 {
+            record.alert_active_since = from_unix_timestamp!(since)
+          }
+          records = push(records, record)
+        }
+      }
+      if length(records) == 0 { abort }
+      . = records
+
+  # Flat records with stable field names, so that queries, alerts and
+  # dashboards can rely on them: resource and record
+  # attributes flattened with "_" (container.name -> container_name,
+  # app.RequestPath -> app_requestpath), a map body as body_* fields
+  # (journald: body_message, body_syslog_identifier...), a string body in
+  # body.
+  normalize:
+    type: remap
+    inputs: [otlp.logs]
+    source: |
+      resources = object(del(.resources)) ?? {}
+      attributes = object(del(.attributes)) ?? {}
+      # A record attribute wins over a resource attribute of the same name.
+      flat = merge(flatten(resources, "_"), flatten(attributes, "_"))
+      body = del(.message)
+      if is_object(body) {
+        flat = merge(flat, map_keys(flatten(object!(body), "_")) -> |key| { "body_" + key })
+      } else if is_string(body) {
+        flat.body = body
+      } else if body != null {
+        flat.body = encode_json(body)
+      }
+      # Lower case, and only [a-z0-9_]: one spelling per field, whatever
+      # the case or punctuation the collector sent.
+      flat = map_keys(flat) -> |key| { replace(downcase(key), r'[^a-z0-9_]', "_") }
+
+      stream = string(del(."stream-name")) ?? ""
+      time = .timestamp
+      if !is_timestamp(time) { time = .observed_timestamp }
+      if !is_timestamp(time) { time = now() }
+      severity = string(.severity_text) ?? ""
+      severity_number = to_int(.severity_number) ?? 0
+      trace_id = string(.trace_id) ?? ""
+      span_id = string(.span_id) ?? ""
+
+      # scope, flags, dropped_attributes_count, observed_timestamp and
+      # source_type are dropped: one value for nearly every record.
+      . = flat
+      .timestamp = time
+      # A stream name becomes a stream field value: keep it short and
+      # plain, whatever the sender puts in the header.
+      .log_stream = if match(stream, r'^[a-z0-9_]{1,64}$') { stream } else { "default" }
+      if severity != "" { .severity = severity }
+      if severity_number > 0 { .severity_number = severity_number }
+      if trace_id != "" { .trace_id = trace_id }
+      if span_id != "" { .span_id = span_id }
+
+  route_streams:
+    type: route
+    inputs: [normalize]
+    route:
+      docker_like: '.log_stream == "docker" || .log_stream == "traefik"'
+      journald: '.log_stream == "journald"'
+
+  # Masks the values of secret-looking URL parameters (token, code,
+  # password and the like) in the container logs: OAuth codes, API keys and session
+  # IDs in request lines must not be readable by everyone with UI access.
+  redact_url_secrets:
+    type: remap
+    inputs: [route_streams.docker_like]
+    source: |
+      secret_re = r'(?i)([?&]|\b)((?:access[_-]?token|refresh[_-]?token|token|auth(?:orization)?|api[_-]?key|client[_-]?secret|credential|password|passwd|secret|session(?:[_-]?id)?|jwt|signature|sig|nonce(?:_[a-z0-9]+)?|code|key)=)([^&\s"\x27\\]*)'
+      # body: the raw line; app_msg, app_message: the message of a JSON
+      # line; app_requestpath: path and query of the Traefik access log.
+      for_each(["body", "app_msg", "app_message", "app_requestpath"]) -> |_index, name| {
+        value = get(., [name]) ?? null
+        if is_string(value) {
+          . = set!(., [name], replace(string!(value), secret_re, "$1$2[REDACTED]"))
+        }
+      }
+      # Traefik numeric fields arrive as float (302.0) or string ("302")
+      # depending on the collector: one integer type for tables and filters.
+      if .log_stream == "traefik" {
+        for_each(["app_downstreamstatus", "app_originstatus"]) -> |_index, name| {
+          value = get(., [name]) ?? null
+          number = if is_string(value) { to_float(value) ?? null } else { value }
+          if is_float(number) || is_integer(number) {
+            . = set!(., [name], to_int!(number))
+          }
+        }
+      }
+
+  route_authentik:
+    type: route
+    inputs: [redact_url_secrets]
+    route:
+      authentik: '.log_stream == "docker" && contains(string(.container_name) ?? "", "authentik_")'
+
+  # Authentik logs (server, worker, postgresql) to their own authentik
+  # stream, with ak_* fields. Runs after redact_url_secrets, which masked
+  # body, app_msg and app_message.
+  #
+  # Two formats on authentik_server:
+  # - Python/structlog: app_client_ip, app_runtime (ms), app_action for events;
+  # - Rust/axum (embedded outpost, forward auth): app_remote, app_runtime (ms, string).
+  #
+  # Fields added:
+  #   ak_component  server | worker | postgresql
+  #   ak_kind       event | forward_auth | health | http | task | log
+  #   ak_level      debug | trace | info | warning | error | critical (warn and fatal
+  #                 normalized, PostgreSQL level read from the message)
+  #   ak_client_ip  client IP, whatever the format
+  #   ak_runtime_ms request duration in ms (float)
+  #   ak_action     Authentik event action (login, login_failed, authorize_application...)
+  #   ak_user       target user (name typed for login_failed, else the event user)
+  #   ak_app_host   protected host, for forward-auth requests
+  # ak_action and ak_user stay empty outside events; VictoriaLogs does not
+  # store an empty field, so they only show on events.
+  parse_authentik:
+    type: remap
+    inputs: [route_authentik.authentik]
+    source: |
+      .log_stream = "authentik"
+      secret_re = r'(?i)([?&]|\b)((?:access[_-]?token|refresh[_-]?token|token|auth(?:orization)?|api[_-]?key|client[_-]?secret|credential|password|passwd|secret|session(?:[_-]?id)?|jwt|signature|sig|nonce(?:_[a-z0-9]+)?|code|key)=)([^&\s"\x27\\]*)'
+      if is_string(.app_event) {
+        .app_event = replace(string!(.app_event), secret_re, "$1$2[REDACTED]")
+      }
+      if is_string(.app_path) {
+        .app_path = replace(string!(.app_path), secret_re, "$1$2[REDACTED]")
+      }
+      if is_string(.app_context_http_request) {
+        .app_context_http_request = replace(string!(.app_context_http_request), secret_re, "$1$2[REDACTED]")
+      }
+
+      name = string(.container_name) ?? ""
+      .ak_component = replace(name, r'^authentik_', "")
+
+      # string() fails on null, unlike to_string() which returns "": ?? then moves to the next field.
+      lvl = downcase(string(.app_level) ?? string(.severity) ?? "")
+      # PostgreSQL: the collector sets WARN by default on LOG: lines and on
+      # continuation lines; the real level is in the "[pid] LEVEL:" prefix.
+      if .ak_component == "postgresql" {
+        m, err = parse_regex(string(.body) ?? "", r'\[\d+\] (?P<l>[A-Z0-9]+):')
+        pg = if err == null { m.l } else { "" }
+        if pg == "WARNING" {
+          lvl = "warning"
+        } else if pg == "ERROR" {
+          lvl = "error"
+        } else if pg == "FATAL" || pg == "PANIC" {
+          lvl = "critical"
+        } else {
+          lvl = "info"
+        }
+      }
+      # One vocabulary: warn -> warning, fatal/panic -> critical.
+      if lvl == "warn" { lvl = "warning" }
+      if lvl == "fatal" || lvl == "panic" { lvl = "critical" }
+      .ak_level = lvl
+
+      ip = string(.app_client_ip) ?? string(.app_remote) ?? ""
+      if ip != "" { .ak_client_ip = ip }
+
+      if exists(.app_runtime) {
+        rt, err = to_float(.app_runtime)
+        if err == null { .ak_runtime_ms = rt }
+      }
+
+      path = string(.app_path) ?? ""
+      action = string(.app_action) ?? ""
+      .ak_action = action
+      .ak_user = ""
+      if action != "" {
+        .ak_kind = "event"
+        .ak_user = string(.app_context_username) ?? string(.app_user_username) ?? ""
+      } else if starts_with(path, "/outpost.goauthentik.io/") {
+        .ak_kind = "forward_auth"
+        host = string(.app_host) ?? ""
+        if host != "" { .ak_app_host = host }
+      } else if contains(path, "/health/") || contains(path, "/-/health/") {
+        .ak_kind = "health"
+      } else if path != "" {
+        .ak_kind = "http"
+      } else if exists(.app_task_name) || exists(.app_actor_name) {
+        .ak_kind = "task"
+      } else {
+        .ak_kind = "log"
+      }
+
+  # HTTP logs in the journal, as http_* fields:
+  # - HAProxy httplog lines (syslog identifier haproxy): client, method,
+  #   path (secrets masked), status, bytes, backend, server, total time;
+  # - camera-streamer (util/http/http.c) client connections: client, event.
+  # Some journald senders (OctoPrint) give MESSAGE as an array of bytes
+  # instead of a string: it is decoded first, invalid UTF-8 replaced by
+  # U+FFFD.
+  parse_http:
+    type: remap
+    inputs: [route_streams.journald]
+    source: |
+      if is_array(.body_message) {
+        digits = "0123456789abcdef"
+        encoded = ""
+        for_each(array!(.body_message)) -> |_index, item| {
+          byte = to_int(item) ?? 63
+          if byte < 0 || byte > 255 { byte = 63 }
+          high = to_int(floor(byte / 16))
+          low = mod(byte, 16)
+          encoded = encoded + "%" + slice!(digits, high, high + 1) + slice!(digits, low, low + 1)
+        }
+        .body_message = decode_percent(encoded)
+      }
+      msg = string(.body_message) ?? ""
+      ident = string(.body_syslog_identifier) ?? ""
+
+      if ident == "haproxy" {
+        # 192.0.2.10:51234 [26/Nov/2026:10:00:00.123] fe~ be/srv 0/0/1/5/6 200 1234 - - ---- 1/1/0/0/0 0/0 "GET /path HTTP/1.1"
+        h, err = parse_regex(msg, r'^(?P<ip>[0-9A-Fa-f.:]+):\d+ \[[^\]]+\] (?P<frontend>\S+) (?P<backend>[^/\s]+)/(?P<server>\S+) -?\d+/-?\d+/-?\d+/-?\d+/\+?(?P<ta>-?\d+) (?P<status>-?\d+) \+?(?P<bytes>\d+) .*?"(?P<method>[A-Z]+) (?P<path>\S+)')
+        if err == null {
+          secret_re = r'(?i)([?&]|\b)((?:access[_-]?token|refresh[_-]?token|token|auth(?:orization)?|api[_-]?key|client[_-]?secret|credential|password|passwd|secret|session(?:[_-]?id)?|jwt|signature|sig|nonce(?:_[a-z0-9]+)?|code|key)=)([^&\s"\x27\\]*)'
+          .http_client_ip = h.ip
+          .http_frontend = h.frontend
+          .http_backend = h.backend
+          .http_server = h.server
+          .http_method = h.method
+          .http_path = replace(string!(h.path), secret_re, "$1$2[REDACTED]")
+          .http_status = to_int(h.status) ?? null
+          .http_bytes = to_int(h.bytes) ?? null
+          .http_ta_ms = to_int(h.ta) ?? null
+          # The request line of the message carries the same query string.
+          .body_message = replace(msg, secret_re, "$1$2[REDACTED]")
+        }
+      } else if starts_with(msg, "util/http/http.c: ") {
+        c, err = parse_regex(msg, r'^util/http/http\.c: (?:\S+: )?Client (?P<event>connected|disconnected) (?P<ip>[0-9A-Fa-f.:]+)')
+        if err == null {
+          .http_client_ip = c.ip
+          .http_event = c.event
+        }
+      }
+
+  # Proxmox VE daemon logs to their own proxmox stream, with pve_* fields.
+  # A journald record that does not come from a Proxmox daemon goes out
+  # unchanged, without any pve_* field.
+  #
+  # Daemons (body_syslog_identifier): pve* (pvedaemon, pveproxy, pvescheduler,
+  # pveupdate, pvestatd, pve-ha-lrm, pve-ha-crm, pve-firewall,
+  # pve-notify-worker...), pmxcfs, proxmox-*, vzdump, qmeventd, spiceproxy.
+  #
+  # Fields added, on every Proxmox record (empty when they do not apply;
+  # VictoriaLogs does not store an empty field):
+  #   pve_component  syslog identifier of the daemon
+  #   pve_level      critical | error | warning | info | debug (journald priority)
+  #   pve_kind       task | backup | auth | notification | ha | log
+  #   pve_task_type  task type of the UPID (vzdump, acmerenew, aptupdate, qmstart...)
+  #   pve_task_event start | end
+  #   pve_task_status OK, or the error message of the finished task
+  #   pve_task_failed true when the task ended with anything but OK
+  #   pve_user       PVE user (root@pam...)
+  #   pve_vmid       VMID (UPID or backup line)
+  #   pve_backup_event job_start | vm_start | vm_ok | vm_failed | job_ok | job_failed
+  #   pve_duration_s backup duration of a guest in seconds (vm_ok), else 0
+  #   pve_auth_result success | failure
+  #   pve_client_ip  client IP of an authentication failure
+  parse_proxmox:
+    type: remap
+    inputs: [parse_http]
+    source: |
+      ident = string(.body_syslog_identifier) ?? ""
+      is_pve = starts_with(ident, "pve") ||
+        starts_with(ident, "proxmox-") ||
+        includes(["pmxcfs", "vzdump", "qmeventd", "spiceproxy"], ident)
+
+      if is_pve {
+        .log_stream = "proxmox"
+        msg = string(.body_message) ?? ""
+        .pve_component = ident
+
+        # Syslog priority: 0-2 critical, 3 error, 4 warning, 5-6 info, 7 debug.
+        prio = to_int(.body_priority) ?? 6
+        .pve_level = if prio <= 2 {
+          "critical"
+        } else if prio == 3 {
+          "error"
+        } else if prio == 4 {
+          "warning"
+        } else if prio == 7 {
+          "debug"
+        } else {
+          "info"
+        }
+
+        .pve_kind = "log"
+        .pve_task_type = ""
+        .pve_task_event = ""
+        .pve_task_status = ""
+        .pve_task_failed = false
+        .pve_user = ""
+        .pve_vmid = ""
+        .pve_backup_event = ""
+        .pve_auth_result = ""
+        .pve_client_ip = ""
+        .pve_duration_s = 0
+
+        # Task start and end:
+        #   <root@pam> starting task UPID:node:pid:pstart:start:type:id:user:
+        #   <root@pam> end task UPID:node:pid:pstart:start:type:id:user: OK | <error>
+        task, err = parse_regex(msg, r'^<(?P<user>[^>]+)> (?P<event>starting|end) task UPID:[^:]*:[0-9A-Fa-f]+:[0-9A-Fa-f]+:[0-9A-Fa-f]+:(?P<type>[^:]*):(?P<id>[^:]*):[^:]*:\s*(?P<status>.*)$')
+        if err == null {
+          .pve_kind = "task"
+          .pve_user = task.user
+          .pve_task_type = task.type
+          .pve_vmid = task.id
+          if task.event == "starting" {
+            .pve_task_event = "start"
+          } else {
+            .pve_task_event = "end"
+            .pve_task_status = task.status
+            .pve_task_failed = task.status != "OK"
+          }
+        }
+
+        # vzdump backups (started by pvescheduler or vzdump).
+        if .pve_kind == "log" {
+          if match(msg, r'^INFO: starting new backup job') {
+            .pve_kind = "backup"
+            .pve_backup_event = "job_start"
+          } else if contains(msg, "Backup job finished successfully") {
+            .pve_kind = "backup"
+            .pve_backup_event = "job_ok"
+          } else if match(msg, r'Backup job finished with errors|ERROR: Backup job failed') {
+            .pve_kind = "backup"
+            .pve_backup_event = "job_failed"
+          } else {
+            vm, err = parse_regex(msg, r'^(?P<lvl>INFO|ERROR): (?P<what>Starting|Finished) Backup of VM (?P<id>\d+)(?: \((?P<h>\d+):(?P<m>\d+):(?P<s>\d+)\))?')
+            if err == null {
+              .pve_kind = "backup"
+              .pve_vmid = vm.id
+              if vm.what == "Starting" {
+                .pve_backup_event = "vm_start"
+              } else {
+                .pve_backup_event = "vm_ok"
+                if vm.h != null {
+                  .pve_duration_s = (to_int(vm.h) ?? 0) * 3600 + (to_int(vm.m) ?? 0) * 60 + (to_int(vm.s) ?? 0)
+                }
+              }
+            } else {
+              fail, err = parse_regex(msg, r'^ERROR: Backup of VM (?P<id>\d+) failed')
+              if err == null {
+                .pve_kind = "backup"
+                .pve_vmid = fail.id
+                .pve_backup_event = "vm_failed"
+              }
+            }
+          }
+          if .pve_backup_event == "job_failed" || .pve_backup_event == "vm_failed" {
+            .pve_level = "error"
+          }
+        }
+
+        # API and web UI authentication.
+        if .pve_kind == "log" {
+          ok, err = parse_regex(msg, r'^<[^>]+> successful auth for user \x27(?P<user>[^\x27]+)\x27')
+          if err == null {
+            .pve_kind = "auth"
+            .pve_auth_result = "success"
+            .pve_user = ok.user
+          } else {
+            ko, err = parse_regex(msg, r'authentication failure; rhost=(?:::ffff:)?(?P<ip>\S+) user=(?P<user>\S+)')
+            if err == null {
+              .pve_kind = "auth"
+              .pve_auth_result = "failure"
+              .pve_client_ip = ko.ip
+              .pve_user = ko.user
+              if .pve_level == "info" { .pve_level = "warning" }
+            }
+          }
+        }
+
+        if .pve_kind == "log" {
+          if ident == "pve-notify-worker" {
+            .pve_kind = "notification"
+          } else if starts_with(ident, "pve-ha-") {
+            .pve_kind = "ha"
+          }
+        }
+      }
+
+  parse_syslog:
+    type: remap
+    inputs: [syslog_udp]
+    source: |
+      parsed, err = parse_syslog(string!(.message))
+      if err == null {
+        # Device clocks drift and RFC 3164 has no year: the receive time
+        # stays the record time, the device time is kept as syslog_timestamp.
+        parsed.syslog_timestamp = del(parsed.timestamp)
+        . = merge(., parsed)
+        # RFC 5424 lets a sender put a UTF-8 BOM before the message
+        # (Synology DSM does): it would end up as the first character
+        # of _msg and break prefix matches.
+        if is_string(.message) {
+          .message = replace(string!(.message), r'^\x{FEFF}', "")
+        }
+      } else {
+        .parse_error = err
+      }
+      # UniFi CEF events. parse_syslog reads "CEF" as the appname and leaves
+      # "0|Ubiquiti|..." in message, so the "CEF:" prefix is put back before
+      # parsing. message stays untouched: the alerts match on it.
+      raw = string(.message) ?? ""
+      cef_input = if .appname == "CEF" { "CEF:" + raw } else { raw }
+      if contains(cef_input, "CEF:") {
+        cef, cef_err = parse_cef(cef_input)
+        if cef_err == null {
+          .cef_version = del(cef.cefVersion)
+          .cef_vendor = del(cef.deviceVendor)
+          .cef_product = del(cef.deviceProduct)
+          .cef_product_version = del(cef.deviceVersion)
+          .cef_signature_id = del(cef.deviceEventClassId)
+          .cef_name = del(cef.name)
+          # Numeric (0-10) for UniFi. CEF also allows Low/Medium/High/Very-High:
+          # kept apart so that cef_severity always has the same type.
+          cef_severity = del(cef.severity)
+          .cef_severity = to_int(cef_severity) ?? null
+          if .cef_severity == null {
+            .cef_severity_label = cef_severity
+          }
+          # Extension keys become cef_ext_<key in lower case> (UNIFIcategory
+          # -> cef_ext_unificategory, src -> cef_ext_src): they follow the
+          # lower case + prefix convention and never overwrite a field of
+          # the event (src, msg, appname...).
+          ext = map_keys(cef) -> |key| { "cef_ext_" + replace(downcase(key), r'[^a-z0-9_]', "_") }
+          . = merge(., ext)
+        } else {
+          .cef_parse_error = cef_err
+        }
+      }
+      # UniFi gateway firewall logs (iptables LOG lines with the rule as prefix):
+      # [LAN_WAN-D-40001] DESCR="block-dns" IN=br0 OUT=eth6 SRC=... PROTO=UDP DPT=53 LEN=40
+      # Fields get a fw_ prefix: they never collide with the CEF src/dst/proto.
+      # message stays untouched.
+      fw, fw_err = parse_regex(raw, r'^\[(?P<rule>(?P<ruleset>[A-Za-z0-9_]+)-(?P<code>[A-Z])-(?P<rule_id>\d+))\]\s+(?P<fields>.*SRC=.*)$')
+      if fw_err == null {
+        # The quoted original packet of ICMP errors ("[SRC=... ]") would repeat
+        # the keys of the packet itself: it is dropped from the fields.
+        fields = replace(string!(fw.fields), r'\s*\[[^\]]*\]', "")
+        # An empty value ("OUT= MAC=...") would make parse_key_value read the
+        # next pair as its value: it is written as "" first.
+        fields = replace(fields, "= ", "=\"\" ")
+        if ends_with(fields, "=") {
+          fields = fields + "\"\""
+        }
+        # LEN appears twice: IP length before PROTO=, layer 4 length after it.
+        parts = split(fields, " PROTO=", limit: 2)
+        ip_kv = parse_key_value(string!(parts[0]), key_value_delimiter: "=", field_delimiter: " ", accept_standalone_key: true) ?? {}
+        l4_kv = {}
+        if length(parts) == 2 {
+          l4_kv = parse_key_value("PROTO=" + string!(parts[1]), key_value_delimiter: "=", field_delimiter: " ", accept_standalone_key: true) ?? {}
+          if exists(l4_kv.LEN) {
+            l4_kv.L4_LEN = del(l4_kv.LEN)
+          }
+        }
+        kv = map_keys(merge(ip_kv, l4_kv)) -> |key| { "fw_" + downcase(key) }
+        kv.fw_rule = fw.rule
+        kv.fw_ruleset = fw.ruleset
+        kv.fw_rule_id = to_int(fw.rule_id) ?? fw.rule_id
+        kv.fw_action_code = fw.code
+        kv.fw_action = if fw.code == "A" { "accept" } else if fw.code == "D" { "drop" } else if fw.code == "R" { "reject" } else { fw.code }
+        # Numbers that are queried by range or summed; the rest stays a string.
+        for_each(["fw_spt", "fw_dpt", "fw_len", "fw_l4_len", "fw_ttl", "fw_hoplimit"]) -> |_index, name| {
+          value = get(kv, [name]) ?? null
+          if is_string(value) {
+            kv = set!(kv, [name], to_int(value) ?? value)
+          }
+        }
+        . = merge(kv, .)
+      }
+      # host_name (FQDN, as in the streams of the hosts) and device_vendor
+      # from the VECTOR_SYSLOG_SENDERS table, by source IP. A sender not
+      # listed is named by its syslog hostname, else by its IP. A short
+      # hostname gets the VECTOR_SYSLOG_DOMAIN suffix when it is set, so
+      # that the same device has one host_name whether listed or not.
+      senders = object(parse_json(s'${VECTOR_SYSLOG_SENDERS:-}') ?? {}) ?? {}
+      sender = object(get(senders, [to_string(.source_ip) ?? ""]) ?? {}) ?? {}
+      .host_name = sender.name
+      if !is_string(.host_name) {
+        hostname = downcase(to_string(.hostname) ?? "")
+        domain = downcase(s'${VECTOR_SYSLOG_DOMAIN:-}')
+        if hostname == "" || hostname == "-" {
+          .host_name = .source_ip
+        } else if domain != "" && !contains(hostname, ".") && !is_ipv4(hostname) {
+          .host_name = hostname + "." + domain
+        } else {
+          .host_name = hostname
+        }
+      }
+      if is_string(sender.vendor) {
+        .device_vendor = sender.vendor
+      }
+      # Gateway firewall logs get their own stream: they outnumber the rest
+      # of syslog and have their own fields.
+      .log_stream = if exists(.fw_rule) { "firewall" } else { "syslog" }
+      del(.source_type)
+
+  # One level field for every stream: debug, info, warn, error or crit.
+  # The sources each have their own (ak_level, pve_level, the journald
+  # priority, the syslog or OTLP severity); the error panels and queries
+  # filter on level instead. An event with no usable source has none.
+  normalize_level:
+    type: remap
+    inputs:
+      - route_streams._unmatched
+      - route_authentik._unmatched
+      - parse_authentik
+      - parse_proxmox
+      - parse_syslog
+    source: |
+      text = ""
+      if is_string(.ak_level) {
+        text = string!(.ak_level)
+      } else if is_string(.pve_level) {
+        text = string!(.pve_level)
+      }
+      # journald priority (0-7), as a number or a string.
+      priority = -1
+      if is_string(.body_priority) || is_integer(.body_priority) {
+        priority = to_int(.body_priority) ?? -1
+      }
+      if text == "" && priority >= 0 && priority <= 7 {
+        text = if priority <= 2 { "crit" } else if priority == 3 { "error" } else if priority == 4 { "warn" } else if priority <= 6 { "info" } else { "debug" }
+      }
+      # Syslog keyword (err, warning, notice...) or OTLP severity text (Error, WARN...).
+      if text == "" && is_string(.severity) {
+        text = string!(.severity)
+      }
+      text = downcase(strip_whitespace(text))
+      level = ""
+      if match(text, r'^(emerg|alert|crit|fatal|panic)') {
+        level = "crit"
+      } else if match(text, r'^err') {
+        level = "error"
+      } else if match(text, r'^warn') {
+        level = "warn"
+      } else if match(text, r'^(info|notice)') {
+        level = "info"
+      } else if match(text, r'^(debug|trace)') {
+        level = "debug"
+      }
+      # OTLP severity number: 1-8 trace/debug, 9-12 info, 13-16 warn,
+      # 17-20 error, 21-24 fatal.
+      if level == "" && is_integer(.severity_number) {
+        number = int!(.severity_number)
+        level = if number >= 21 { "crit" } else if number >= 17 { "error" } else if number >= 13 { "warn" } else if number >= 9 { "info" } else if number >= 1 { "debug" } else { "" }
+      }
+      # CEF severity (0-10) of the UniFi events.
+      if level == "" && is_integer(.cef_severity) {
+        number = int!(.cef_severity)
+        level = if number >= 9 { "crit" } else if number >= 7 { "error" } else if number >= 4 { "warn" } else { "info" }
+      }
+      # The level written in the line itself, by the formats seen in the
+      # logs (colour codes removed first):
+      #   logfmt or JSON   level=info, "level":"warn" (step-ca...)
+      #   zerolog console  <time> ERR ... (Traefik, Portainer)
+      #   Go log           ...func1() [I] ... (Forgejo: T D I W E F)
+      #   NestJS           [Nest] 59 - <date>    LOG [Context] (Immich)
+      #   bracket, colon   [debug][Jobs] (Seerr), [MONITOR] INFO: (Uptime Kuma)
+      #   Redis            1:M 27 Nov 2026 00:00:02.724 * (. - * #)
+      if level == "" {
+        line = string(.body) ?? string(.body_message) ?? string(.message) ?? ""
+        line = replace(truncate(line, 300), r'\x1b\[[0-9;]*m', "")
+        found = parse_regex(line, r'(?i)\b(?:level|lvl)"?\s*[=:]\s*"?(?P<w>[a-z]+)') ??
+          parse_regex(line, r'^(?:\S+\s+){0,2}(?P<w>TRC|DBG|INF|WRN|ERR|FTL|PNC)\s') ??
+          parse_regex(line, r'\s\[(?P<w>[TDIWEF])\]\s') ??
+          parse_regex(line, r'^\[Nest\].*?\s(?P<w>LOG|VERBOSE|DEBUG|WARN|ERROR|FATAL)\s') ??
+          parse_regex(line, r'(?i)\[(?P<w>trace|debug|info|notice|warn|warning|error|fatal|critical)\]') ??
+          parse_regex(line, r'\b(?P<w>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL):\s') ??
+          parse_regex(line, r'^\d+:[XCSM] \d{1,2} \w{3} \d{4} [\d:.]+ (?P<r>[.*#-]) ') ??
+          {}
+        word = downcase(string(found.w) ?? "")
+        marker = string(found.r) ?? ""
+        if match(word, r'^(emerg|alert|crit|critical|fatal|panic|ftl|pnc|f)$') {
+          level = "crit"
+        } else if match(word, r'^(err|error|e)$') {
+          level = "error"
+        } else if match(word, r'^(warn|warning|wrn|w)$') || marker == "#" {
+          level = "warn"
+        } else if match(word, r'^(info|notice|log|inf|i)$') || marker == "*" {
+          level = "info"
+        } else if match(word, r'^(debug|trace|verbose|dbg|trc|d|t)$') || marker == "." || marker == "-" {
+          level = "debug"
+        }
+      }
+      # Every record gets a level: one without any (an AdGuard query, a
+      # line that says nothing of its level) is info.
+      .level = if level != "" { level } else { "info" }
+
+sinks:
+  victorialogs:
+    type: http
+    inputs:
+      - normalize_level
+      - alert_rules
+    # _stream_fields: what a stream is (few values each); _msg_field: the
+    # first non-empty one becomes _msg; _time_field: the record time.
+    uri: "http://victorialogs:9428/insert/jsonline?_stream_fields=log_stream,host_name,container_name&_msg_field=body,body_message,message&_time_field=timestamp"
+    method: post
+    request:
+      headers:
+        # Without it VictoriaLogs answers 200 and stores nothing.
+        Content-Type: application/x-ndjson
+    encoding:
+      codec: json
+      timestamp_format: rfc3339
+    framing:
+      method: newline_delimited
+    batch:
+      max_events: 1000
+      # At a few events per second a batch never fills, so every OTLP
+      # request waits for this timeout before its answer: keep it short.
+      timeout_secs: 1
+    # The OTLP source answers the collector once the batch is written:
+    # while VictoriaLogs is down the collectors keep their own queue and
+    # retry, instead of Vector losing what it holds in memory.
+    acknowledgements:
+      enabled: true
+    # VictoriaLogs may still be starting; events are retried, not lost.
+    healthcheck:
+      enabled: false
+
+  # Free Mobile SMS API: one POST per SMS with a JSON body {user, pass,
+  # msg}. 200: sent; 400: missing parameter; 402: too many SMS; 403:
+  # option off or wrong credentials; 500: server error (retried).
+  free_mobile:
+    type: http
+    inputs:
+      - sms_message
+    uri: https://smsapi.free-mobile.fr/sendmsg
+    method: post
+    request:
+      headers:
+        Content-Type: application/json
+      retry_attempts: 3
+      timeout_secs: 10
+    encoding:
+      codec: json
+    # One event per request, as a bare JSON object (no array, no newline).
+    framing:
+      method: bytes
+    batch:
+      max_events: 1
+    # alertmanager gets its answer once the SMS is accepted: on a failure
+    # it retries the notification itself.
+    acknowledgements:
+      enabled: true
+    # A GET without parameters answers 400; the first SMS shows errors.
+    healthcheck:
+      enabled: false
+
+  # Scraped by victoriametrics (job vector). Reachable on the victoria
+  # and traefik_gateway networks, never routed by Traefik.
+  prometheus:
+    type: prometheus_exporter
+    inputs:
+      - vector_metrics
+    address: 0.0.0.0:9598

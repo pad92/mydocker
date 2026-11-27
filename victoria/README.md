@@ -76,6 +76,20 @@ curl -fsS "https://$VICTORIA_METRICS_DOMAIN/health"
 
 The databases, vmalert, Alertmanager and Grafana run as `PUID:PGID`. Before they start, `victoria-init` (busybox, root, no network) gives every file of the four data directories that is not owned by `PUID:PGID` to that user. Docker creates a missing bind-mount source as root, and an earlier root run leaves root-owned files; both would stop the services with `permission denied`. Symlinks are changed themselves, never their targets.
 
+### Configuration Sources
+
+The 25 configuration files of the stack (scrape config, SNMP auth, freebox-exporter config, vmalert rules, Alertmanager config, Vector pipeline, Grafana provisioning and the sixteen dashboards) live under [`config/`](./config/). Edit them there, then regenerate the compose file:
+
+```bash
+python3 build.py
+```
+
+[`build.py`](./build.py) writes each source into the `content:` block of its entry under `configs:` in [`docker-compose.yml`](./docker-compose.yml), and leaves every other line as written. The compose file stays committed and self-contained because Portainer deploys from its own clone of the repository: outside Swarm, a `file:` config is a bind mount from the host, where that clone does not exist.
+
+A source holds the text that the container reads. `build.py` doubles each `$` for Compose, except the `${VAR}` that Compose must interpolate, listed per config in `INTERPOLATED` (`SYNOLOGY_SNMP_TARGET`, `ALERTMANAGER_WATCHDOG_URL`, `VECTOR_SYSLOG_DOMAIN`, `VECTOR_SYSLOG_SENDERS`, `VECTOR_WEBHOOK_PASSWORD`). The `${...}` that the container expands (the SNMP credentials, the Grafana data link variables) are listed in `LITERAL`. Any other `${NAME}` stops the build with exit code 2, so a new variable must be added to one of the two lists first.
+
+The pre-commit hook of the repository runs `build.py --check` on the staged files and refuses a commit whose `docker-compose.yml` does not match its staged sources. It needs `git config core.hooksPath .githooks` once per clone (see the root README).
+
 ### Memory Limits and Health Checks
 
 | Service | `mem_limit` | Health check |
@@ -263,7 +277,7 @@ syslog_udp -> parse_syslog
 
 Every branch ends in the `victorialogs` sink.
 
-The pipeline is the `vector_config` entry under `configs:` at the end of [`docker-compose.yml`](./docker-compose.yml), mounted on `/etc/vector/vector.yaml`. It is inline rather than a `./vector.yaml` bind mount because Portainer resolves relative paths on its own disk: Docker then creates an empty directory on the host and the deployment fails with `mkdirat etc/vector/vector.yaml: file exists`. Compose interpolates `$` in this block, so write `$$` for a literal `$`. Inline `configs` need Docker Compose 2.23 or later. Vector 0.61 does not expand `${VAR}` in its configuration, so Compose writes `VECTOR_SYSLOG_SENDERS` and `VECTOR_SYSLOG_DOMAIN` into the pipeline.
+The pipeline lives in [`config/vector/vector.yaml`](./config/vector/vector.yaml), which `build.py` writes into the `vector_config` entry of [`docker-compose.yml`](./docker-compose.yml), mounted on `/etc/vector/vector.yaml` (see [Configuration Sources](#configuration-sources)). It is inline rather than a `./vector.yaml` bind mount because Portainer resolves relative paths on its own disk: Docker then creates an empty directory on the host and the deployment fails with `mkdirat etc/vector/vector.yaml: file exists`. Inline `configs` need Docker Compose 2.23 or later. Vector 0.61 does not expand `${VAR}` in its configuration, so Compose writes `VECTOR_SYSLOG_SENDERS` and `VECTOR_SYSLOG_DOMAIN` into the pipeline.
 
 ### External Links
 - **Official Project**: [https://vector.dev/](https://vector.dev/)
@@ -698,6 +712,8 @@ Switch-over order:
 
 ## 6. Tests
 
+[`tests/test_build.sh`](./tests/test_build.sh) checks the generator of [Configuration Sources](#configuration-sources) without starting anything: the compose file is up to date, `docker compose config` with `.env.example` renders each of the 25 configs to its source with only the listed variables interpolated (each listed variable must be used), an edited source fails `--check` until `build.py` runs, a `$` becomes `$$`, and an unknown `${VAR}`, a variable in the wrong config, a missing source, a config without source or a trailing blank line stop the build with the compose file untouched. In a throwaway git repository, the pre-commit check must refuse a source staged without its regenerated compose file, and accept it once both are staged. It needs Python 3, Docker Compose 2.23 or later and git.
+
 [`tests/test_stack.sh`](./tests/test_stack.sh) renders the compose file with `.env.example` and checks the exposure without starting anything: forward auth first on the three UI routers, the ingestion and health routers limited to their method, path, middleware and service, forward auth on every other router of the three hosts, no published port except the UDP syslog port, the Grafana auth proxy settings (no login form, Basic auth, anonymous access or `GF_AUTH_DISABLE_LOGIN`), vmalert on the internal `victoria` network only, Alertmanager on `victoria` and alone on the non-internal `alertmanager` network with the host CA bundle read-only, the `ALERTMANAGER_WATCHDOG_URL` placeholder in `.env.example`, the self-scrape jobs of the six components and the Vector metrics sink on port `9598` (a wrong target makes the check fail), unpoller without route or port, as `65534:65534`, with TLS verification, InfluxDB and DPI off, no password in `.env.example` and alone on the `unpoller` network, the scrape config that targets `unpoller:9130`, snmp-exporter without route or port, as `65534:65534`, alone on the `snmp` network, with SNMPv3 authPriv (SHA, AES), no password in `.env.example` and the `${...}` references that the exporter expands, the `synology` job sent to `snmp-exporter:9116`, the `victoria_grafana_mcp` router (no middleware, `POST`, `GET` and `DELETE` on `/mcp` of the Grafana host only, to port `8000`) and grafana-mcp (`--disable-write`, `--allowed-hosts` set to the Grafana host, no `--allowed-origins`, the token length check, no port, empty tokens in `.env.example`), the `victoria-ingest-auth` middleware in `management/traefik_dynamic.toml.example`, the retention defaults (`30d` for logs, `1y` for metrics), the memory limits, healthchecks and `depends_on` conditions of [Memory Limits and Health Checks](#memory-limits-and-health-checks), the drop of `vector_*_bucket` in the `vector` scrape job with no rule or dashboard that reads those buckets, and the SMS webhook auth: `VECTOR_WEBHOOK_PASSWORD` empty in `.env.example`, a render that fails without it, and the same Basic auth on the `sms` receiver and on the `alertmanager_webhook` source. It needs Docker Compose 2.23 or later, `jq` and Python 3.11 or later with PyYAML.
 
 [`tests/test_vector.sh`](./tests/test_vector.sh) renders the compose file with `.env.example`, runs `vector validate` on the pipeline, then the Vector unit tests of [`otlp_test.yaml`](./tests/otlp_test.yaml) (normalization, routing, secret masking, HAProxy), [`authentik_test.yaml`](./tests/authentik_test.yaml), [`proxmox_test.yaml`](./tests/proxmox_test.yaml), [`syslog_test.yaml`](./tests/syslog_test.yaml) (syslog, CEF, firewall, Synology byte order mark), [`level_test.yaml`](./tests/level_test.yaml) (the common `level` of every source), [`alert_rules_test.yaml`](./tests/alert_rules_test.yaml) (the alert state records: reason of a firing, inactive and failing rule, empty answer) and [`sms_test.yaml`](./tests/sms_test.yaml) (SMS text, truncation, missing credentials). It needs Docker, Docker Compose 2.23 or later and `jq`, and makes no network call.
@@ -715,6 +731,7 @@ Switch-over order:
 [`tests/test_grafana_mcp.sh`](./tests/test_grafana_mcp.sh) runs the real mcp-grafana image with its rendered entrypoint, command and environment on a throwaway internal network, with test tokens. With an empty server token, a 31 character one or an empty service account token, the container must keep running, log why and leave port `8000` closed. With valid tokens, `POST /mcp` must get `401` without a bearer token or with a wrong one, `200` on `initialize` with the right one, `403` with another `Host` or with an `Origin` header, and `tools/list` must hold the read tools and none of the write tools. It does not cover Grafana itself (no tool is called), the Traefik router (see `test_stack.sh`) or the service account permissions. It needs Docker, Docker Compose 2.23 or later and `jq`, uses `python:3.14-alpine` as client (`CLIENT_IMAGE` overrides it), makes no Internet call, and takes about 20 seconds.
 
 ```bash
+./tests/test_build.sh
 ./tests/test_stack.sh
 ./tests/test_grafana_mcp.sh
 ./tests/test_vector.sh

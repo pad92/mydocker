@@ -6,4 +6,7 @@
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
 # Run the analyzer on indexed (staged) changes
-python3 "$REPO_ROOT/.githooks/git-leak-shield.py" --staged
+python3 "$REPO_ROOT/.githooks/git-leak-shield.py" --staged || exit
+
+# victoria: the staged compose file must match its staged config sources
+"$REPO_ROOT/.githooks/victoria-build-check.sh"
