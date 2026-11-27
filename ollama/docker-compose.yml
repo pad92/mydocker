@@ -8,15 +8,18 @@ services:
     container_name: open-webui
     image: ghcr.io/open-webui/open-webui:main
     environment:
-      - MODEL_DOWNLOAD_DIR=${MODEL_DOWNLOAD_DIR}
-      - OLLAMA_API_BASE_URL=${OLLAMA_API_BASE_URL}
-      - OLLAMA_API_URL=${OLLAMA_API_URL}
-      - LOG_LEVEL=${LOG_LEVEL}
-      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      MODEL_DOWNLOAD_DIR: "${MODEL_DOWNLOAD_DIR:-}"
+      # Reach Ollama on the internal network. Without it Open WebUI falls back
+      # to the host gateway on port 11434, which no longer answers once the
+      # published port is bound to the LAN address only.
+      OLLAMA_BASE_URL: "http://ollama:11434"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      # Signs the session tokens: a known value lets anyone forge them.
+      WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY:?Set WEBUI_SECRET_KEY}"
     volumes:
-      - ${OLLAMA_OPEN_WEBUI_DATA_DIR}:/data
-      - ${OLLAMA_MODELS_DATA_DIR}:/models
-      - ${OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR}:/app/backend/data
+      - ${OLLAMA_OPEN_WEBUI_DATA_DIR:?Set OLLAMA_OPEN_WEBUI_DATA_DIR}:/data
+      - ${OLLAMA_MODELS_DATA_DIR:?Set OLLAMA_MODELS_DATA_DIR}:/models
+      - ${OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR:?Set OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR}:/app/backend/data
 
     depends_on:
       - ollama
@@ -29,7 +32,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik_gateway"
-      - "traefik.http.routers.webui.rule=Host(`${OLLAMA_DOMAIN}`) && PathPrefix(`/`)"
+      - "traefik.http.routers.webui.rule=Host(`${OLLAMA_DOMAIN:?Set OLLAMA_DOMAIN}`) && PathPrefix(`/`)"
       - "traefik.http.services.webui.loadbalancer.server.port=8080"
     logging: *default-logging
   ollama:
@@ -38,8 +41,8 @@ services:
     runtime: nvidia
     restart: unless-stopped
     volumes:
-      - ${OLLAMA_OLLAMA_DATA_DIR}:/root/.ollama
-      - ${OLLAMA_MODELS_DATA_DIR}:/models
+      - ${OLLAMA_OLLAMA_DATA_DIR:?Set OLLAMA_OLLAMA_DATA_DIR}:/root/.ollama
+      - ${OLLAMA_MODELS_DATA_DIR:?Set OLLAMA_MODELS_DATA_DIR}:/models
     deploy:
       resources:
         reservations:
@@ -48,12 +51,25 @@ services:
               capabilities: [gpu]
               count: all
     environment:
-      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE}
-      - OLLAMA_HOST=${OLLAMA_HOST}
-      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES}
-      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES}
+      OLLAMA_KEEP_ALIVE: "${OLLAMA_KEEP_ALIVE:-5m}"
+      # Listen on every interface of the container; the published port below
+      # decides who reaches it from outside.
+      OLLAMA_HOST: "0.0.0.0:11434"
+      # Context window in tokens. Set explicitly: Ollama otherwise picks it
+      # from the free VRAM, and a short one silently truncates long prompts
+      # (Gramps Web sends about 5k tokens of tree context). 8192 fits next to
+      # a 7B model in Q4 on a 6 GB card.
+      OLLAMA_CONTEXT_LENGTH: "${OLLAMA_CONTEXT_LENGTH:-8192}"
+      # An empty NVIDIA_VISIBLE_DEVICES hides the GPU from the container.
+      NVIDIA_DRIVER_CAPABILITIES: "${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}"
+      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-all}"
+    # The API has no authentication: publish it on one host address (the LAN
+    # one that Gramps Web uses), never on every interface.
     ports:
-      - 11434:11434
+      - target: 11434
+        published: "11434"
+        host_ip: "${OLLAMA_BIND_ADDRESS:?Set OLLAMA_BIND_ADDRESS}"
+        protocol: tcp
     networks:
       - ollama
 
