@@ -87,7 +87,7 @@ for name, rel in build.SOURCES.items():
 listed = {(n, v) for n, vs in build.INTERPOLATED.items() for v in vs}
 assert used == listed, f"listed but not used: {sorted(listed - used)}"
 PY
-pass "Compose renders the 25 configs to their sources, interpolations included"
+pass "Compose renders the 26 configs to their sources, interpolations included"
 
 # 3. Mutations.
 dash="$work_dir/stack/config/grafana/dashboards/hosts.json"
