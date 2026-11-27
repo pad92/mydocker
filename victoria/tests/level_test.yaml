@@ -539,3 +539,312 @@ tests:
           - type: vrl
             source: |
               assert_eq!(.level, "info")
+
+  # Known benign messages become info; the same source keeps the level
+  # of any other message.
+  - name: Portainer docker CLI progress becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "portainer"
+          severity: "WARN"
+          severity_number: 13
+          body: "\e[90m2026/11/27 03:56AM\e[0m ??? \e[1mgithub.com/docker/cli@v28.5.1+incompatible/cli/streams/out.go:20\e[0m\e[36m >\e[0m  tautulli Pulling  |"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: Portainer configuration warning stays warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "portainer"
+          severity: "WARN"
+          severity_number: 13
+          body: '2026/11/27 03:56AM INF github.com/portainer/portainer/api/stacks/deployments/logwriter.go:55 > level=warning msg="The \"RUSTFS_S3_HOST\" variable is not set. Defaulting to a blank string."'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: Portainer docker CLI pull failure keeps its level
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "portainer"
+          severity: "WARN"
+          severity_number: 13
+          body: "\e[90m2026/11/27 03:56AM\e[0m ??? \e[1mgithub.com/docker/cli@v28.5.1+incompatible/cli/streams/out.go:20\e[0m\e[36m >\e[0m  tautulli Error  pull access denied for tautulli"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: Portainer error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "portainer"
+          body: '2026/11/27 03:56AM ERR github.com/portainer/portainer/api/http/handler/stacks/create.go:120 > unable to deploy stack'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: UniFi access point kernel warning becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "784558fade31,UAP-nanoHD-6.7.57+15670"
+          facility: "kern"
+          severity: "warning"
+          message: "kernel: [318455.360134] rai0: (CFG80211_OpsStaDel)80211> Delete STA(02:00:00:00:00:01), reason:8 ==>"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: UniFi access point kernel WARN_ON backtrace stays warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "784558fade31,UAP-nanoHD-6.7.57+15670"
+          facility: "kern"
+          severity: "warning"
+          message: "kernel: [318455.360134] WARNING: CPU: 0 PID: 0 at net/sched/sch_generic.c:468 dev_watchdog+0x1f0/0x1f8"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: UniFi access point radio timeout warning stays warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "784558fade31,UAP-nanoHD-6.7.57+15670"
+          facility: "kern"
+          severity: "warning"
+          message: "kernel: [318455.360134] ra0: TX timeout, beacon stuck"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: UniFi access point kernel error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "784558fade31,UAP-nanoHD-6.7.57+15670"
+          facility: "kern"
+          severity: "err"
+          message: "kernel: [318354.438720] ra0: firmware crashed"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: UniFi gateway kernel warning stays warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "gw"
+          facility: "kern"
+          severity: "warning"
+          message: "kernel: [12.345678] eth8: link down"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: UniFi gateway mq-broker DNS helper becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "gw"
+          severity: "warning"
+          message: '/usr/bin/unifi-mq-broker[3652213]: Failed to send request to coredns: Post "http://localhost/api/get_domain_by_ip": dial unix /run/utm/.cd_dl.sock: connect: resource temporarily unavailable'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: UniFi gateway systemd generator notice becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "gw"
+          severity: "warning"
+          message: "systemd-sysv-generator: SysV service '/etc/init.d/stunnel4' lacks a native systemd unit file, automatically generating a unit file for compatibility."
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: inadyn error from a syslog sender stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "inadyn"
+          severity: "err"
+          message: "inadyn[1234]: Failed updating DNS record, zone not found"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: Beszel bad memory stats becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "beszel-agent"
+          severity: "ERROR"
+          severity_number: 17
+          body: '2026/11/27 03:56:01 ERROR Error getting container stats err="watchtower - bad memory stats - see https://github.com/henrygd/beszel/issues/144"'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: Beszel other error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "beszel-agent"
+          severity: "ERROR"
+          severity_number: 17
+          body: '2026/11/27 03:56:01 ERROR WebSocket connection error err="dial tcp: connection refused"'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: Immich ONNX shape notice becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "immich_machine_learning"
+          severity: "ERROR"
+          severity_number: 17
+          body: "\e[0;93m2026-11-27 03:56:01.123 [W:onnxruntime:, graph.cc:3490 MergeShapeInfo] Error merging shape info for output. 'Add.1' source:{1,2,3,4} target:{1,2,3,-1}. Falling back to lenient merge.\e[m"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: Grafana context canceled becomes info
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "victoria-grafana"
+          severity: "ERROR"
+          severity_number: 17
+          body: 'logger=cleanup t=2026-11-27T03:56:01Z level=error msg="job cleanup controller failed" error="context canceled"'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "info")
+
+  - name: Grafana other error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "victoria-grafana"
+          severity: "ERROR"
+          severity_number: 17
+          body: 'logger=plugin.victoriametrics-logs-datasource level=error msg="Partial data response error" error="dial tcp: connection refused"'
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: su pam_wtmpdb read-only database stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          log_stream: "journald"
+          body_syslog_identifier: "su"
+          body_priority: "3"
+          body_message: "pam_wtmpdb(su:session): add_entry: Adding an entry did not return SQLITE_DONE: 8"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+
+  - name: su other error stays error
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          log_stream: "journald"
+          body_syslog_identifier: "su"
+          body_priority: "3"
+          body_message: "pam_unix(su:auth): authentication failure; logname=user uid=1000 euid=0 tty=pts/0 ruser=user rhost=  user=root"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")

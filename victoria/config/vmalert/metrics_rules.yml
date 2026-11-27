@@ -63,6 +63,21 @@ groups:
         annotations:
           summary: "Aucune donnee UniFi collectee par unpoller depuis 10 minutes"
           description: "unpoller ne remonte aucun equipement UniFi : URL, compte ou controleur injoignable, ou unpoller arrete"
+      # When a poll of the controller fails, unpoller keeps serving its
+      # last good snapshot: unpoller_device_info stays present and the
+      # rule above stays silent. A device uptime moves on every poll
+      # (about 15 changes in 15 minutes), so no change at all across
+      # every device means the data is frozen. max() keeps the alert
+      # to one instance.
+      - alert: unpoller_unifi_data_stale
+        expr: max(changes(unpoller_device_uptime_seconds{job="unpoller"}[15m])) == 0
+        for: 5m
+        keep_firing_for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Donnees UniFi figees dans unpoller depuis 20 minutes"
+          description: "unpoller repond mais l'uptime d'aucun equipement UniFi n'a change : la collecte aupres du controleur echoue (TLS, compte, API)"
       # A device that unpoller listed in the last 24 hours and no
       # longer reports: offline, or removed from the controller.
       - alert: unifi_device_down

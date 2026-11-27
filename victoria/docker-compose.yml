@@ -1072,6 +1072,21 @@ configs:
               annotations:
                 summary: "Aucune donnee UniFi collectee par unpoller depuis 10 minutes"
                 description: "unpoller ne remonte aucun equipement UniFi : URL, compte ou controleur injoignable, ou unpoller arrete"
+            # When a poll of the controller fails, unpoller keeps serving its
+            # last good snapshot: unpoller_device_info stays present and the
+            # rule above stays silent. A device uptime moves on every poll
+            # (about 15 changes in 15 minutes), so no change at all across
+            # every device means the data is frozen. max() keeps the alert
+            # to one instance.
+            - alert: unpoller_unifi_data_stale
+              expr: max(changes(unpoller_device_uptime_seconds{job="unpoller"}[15m])) == 0
+              for: 5m
+              keep_firing_for: 30m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Donnees UniFi figees dans unpoller depuis 20 minutes"
+                description: "unpoller repond mais l'uptime d'aucun equipement UniFi n'a change : la collecte aupres du controleur echoue (TLS, compte, API)"
             # A device that unpoller listed in the last 24 hours and no
             # longer reports: offline, or removed from the controller.
             - alert: unifi_device_down
@@ -1537,6 +1552,8 @@ configs:
             repeat_interval: 80m
           - matchers: [alertname="unpoller_no_unifi_data"]
             repeat_interval: 65m
+          - matchers: [alertname="unpoller_unifi_data_stale"]
+            repeat_interval: 50m
           - matchers: [alertname="host_logs_silent"]
             repeat_interval: 125m
           - matchers: [alertname="kernel_critical"]
@@ -1655,9 +1672,10 @@ configs:
           target_matchers:
             - alertname=~"victorialogs_ingestion_stopped|vector_component_errors"
         # No data from the UniFi controller at all: every device would look
-        # down.
+        # down, and a stale alert still held by keep_firing_for adds nothing.
         - source_matchers: [alertname="unpoller_no_unifi_data"]
-          target_matchers: [alertname="unifi_device_down"]
+          target_matchers:
+            - alertname=~"unifi_device_down|unpoller_unifi_data_stale"
         # The Internet connection of the Freebox down: its API may go
         # unreachable with it (mafreebox.freebox.fr is a public address) and
         # the collectors fail.
@@ -2429,6 +2447,52 @@ configs:
             # Every record gets a level: one without any (an AdGuard query, a
             # line that says nothing of its level) is info.
             .level = if level != "" { level } else { "info" }
+            # Known benign messages, logged as warnings or errors by their
+            # source, become info so the error panels show real problems only.
+            # Each match is narrow (source and text): any other message of the
+            # same source keeps its level.
+            if .level == "warn" || .level == "error" || .level == "crit" {
+              line = string(.body) ?? string(.body_message) ?? string(.message) ?? ""
+              line = replace(truncate(line, 300), r'\x1b\[[0-9;]*m', "")
+              container = string(.container_name) ?? ""
+              vendor = string(.device_vendor) ?? ""
+              benign = false
+              # Portainer: the docker CLI progress (Pulling, Pulled...) written
+              # to stderr with an unknown level (???). A progress line that
+              # reports a failure (pull access denied...) keeps its level.
+              if container == "portainer" && match(line, r'^\S+ \S+ \?\?\? ') && !match(line, r'(?i)\b(error|denied|failed|unhealthy)\b') {
+                benign = true
+              }
+              # UniFi access points and switches: Wi-Fi driver chatter (station
+              # left, multicast counters) sent as kernel warnings. A kernel
+              # WARN_ON backtrace or a failing radio keeps its level.
+              if vendor == "unifi" && (string(.severity) ?? "") == "warning" && match(string(.appname) ?? "", r'^[0-9a-f]{12},') && starts_with(line, "kernel: ") && !match(line, r'(?i)WARNING:|call trace|cut here|oops|bug|timeout|stuck|crash|fail|error') {
+                benign = true
+              }
+              # UniFi gateway: the internal DNS helper socket of the
+              # unifi-mq-broker, and systemd generator notices.
+              if vendor == "unifi" && contains(line, "unifi-mq-broker") && contains(line, "Failed to send request to coredns") {
+                benign = true
+              }
+              if vendor == "unifi" && contains(line, "systemd-sysv-generator") {
+                benign = true
+              }
+              # Beszel agent: memory stats the cgroup does not provide.
+              if container == "beszel-agent" && contains(line, "bad memory stats - see https://github.com/henrygd/beszel/issues/") {
+                benign = true
+              }
+              # Immich machine learning: ONNX runtime model shape notice.
+              if container == "immich_machine_learning" && contains(line, "[W:onnxruntime:") && contains(line, "MergeShapeInfo") {
+                benign = true
+              }
+              # Grafana: a query or job stopped because the browser left.
+              if container == "victoria-grafana" && contains(line, "context canceled") {
+                benign = true
+              }
+              if benign {
+                .level = "info"
+              }
+            }
 
       sinks:
         victorialogs:

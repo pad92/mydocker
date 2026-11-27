@@ -190,7 +190,7 @@ ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- 'http://victoriametri
 
 `up` must be `1` and the count above zero. The metric names start with `unpoller_` (`unpoller_device_*`, `unpoller_client_*`, `unpoller_site_*`).
 
-`up` alone proves nothing: unpoller answers its scrape with `up` at `1` even when it cannot log in to UniFi, and then exports none of these series. The `unpoller_no_unifi_data` alert covers that case. It fires when no `unpoller_device_info` series has reached VictoriaMetrics for 10 minutes, whether the URL, the account or the controller is wrong, or unpoller is down.
+`up` alone proves nothing: unpoller answers its scrape with `up` at `1` even when it cannot log in to UniFi, and then exports none of these series. The `unpoller_no_unifi_data` alert covers that case. It fires when no `unpoller_device_info` series has reached VictoriaMetrics for 10 minutes, whether the URL, the account or the controller is wrong, or unpoller is down. When a poll of the controller fails after a good one (a certificate that no longer matches, for example), unpoller keeps serving its last snapshot and `unpoller_device_info` stays present. The `unpoller_unifi_data_stale` alert covers that case: it fires when no `unpoller_device_uptime_seconds` series has changed in 15 minutes, for 5 more minutes. In normal operation every uptime changes on each poll, about 15 times in 15 minutes.
 
 The *UniFi* dashboard (uid `victoria-unifi`) shows the scrape state, the device and client counts, the disconnected devices, the pending firmware updates and the Internet latency, then CPU, memory, temperature and clients per device, the WAN, per-device and top 10 client traffic, and the Internet latency over time. Its queries use the names of the unpoller Prometheus exporter source (`unpoller_device_info`, `unpoller_device_cpu_utilization_ratio`, `unpoller_device_wan_receive_bytes_total`, `unpoller_client_receive_bytes_total`, `unpoller_site_disconnected`, `unpoller_site_latency_seconds` and the like). They are not yet checked against real data: when the dashboard was written, unpoller exported only its own `unpoller_prometheus_*` metrics. Once the count above is not zero, check that each panel shows data and fix the names that differ.
 
@@ -318,6 +318,17 @@ Records of every stream get a `level` field with one of five values: `debug`, `i
    A word inside the text (`Sync failed: error while syncing`) is not a level.
 
 A record with none of these is `info`: every record has a `level`, so `level:in(error,crit)` misses only what its source does not mark as an error (a Trilium stack trace, a raw kernel line). The `alerts` stream skips this transform: `alert_rules` gives `error` to a rule that cannot be evaluated, `warn` to a firing or pending one and `info` to the others. The source fields are kept as they are. Records stored before `level` existed have none; the error panels of the *Logs* and *Docker* dashboards filter on `level`, so errors stored before that change do not show there.
+
+Some messages are known to be harmless even though their source marks them `warn` or `error`. They become `info`, so the error panels show only real problems. Each rule matches both the source and the text, so other messages from the same source keep their level. The source fields are not changed.
+
+| Source | Message |
+| --- | --- |
+| `portainer` | docker CLI progress written with the unknown level `???` (`Pulling`, `Pulled`), unless it reports `error`, `denied`, `failed` or `unhealthy` |
+| UniFi access points and switches (`appname` `<mac>,<model>`) | `kernel:` lines at `warning`: Wi-Fi driver chatter (station left, multicast counters). A `WARNING:` backtrace, `call trace`, `oops`, `bug`, `timeout`, `stuck`, `crash`, `fail` or `error` keeps its level |
+| UniFi gateway | `unifi-mq-broker` failing to reach its internal coredns socket; `systemd-sysv-generator` notices |
+| `beszel-agent` | `bad memory stats - see https://github.com/henrygd/beszel/issues/...` |
+| `immich_machine_learning` | ONNX runtime `[W:onnxruntime:...MergeShapeInfo]` |
+| `victoria-grafana` | `context canceled`: a query or job stopped because the browser left |
 
 ### Sink Notes
 - The sink sends `Content-Type: application/x-ndjson`. Without it VictoriaLogs answers `200` and stores nothing.
@@ -465,6 +476,7 @@ The rules carry over the OpenObserve alerts and add alerts on hosts, DNS, UniFi,
 | `proxmox_node_cpu_high` | metrics | node CPU above 90% on a 15 minute average | 140m |
 | `proxmox_guest_restarted` | metrics | a running guest with an uptime under 10 minutes | 45m |
 | `unpoller_no_unifi_data` | metrics | no `unpoller_device_info` series from unpoller for 10 minutes | 65m |
+| `unpoller_unifi_data_stale` | metrics | no UniFi device uptime changed for 20 minutes (unpoller serves its last snapshot) | 50m |
 | `host_logs_silent` | logs | no `journald`, `files` or `docker` record from a host for 30 minutes, for a host seen in the last 24 hours | 125m |
 | `kernel_critical` | logs | a kernel message with `I/O error`, `EXT4-fs error`, `Hardware Error` or `blocked for more than` (hung task) in 15 minutes | 80m |
 | `oom_kill` | logs | a kernel `Killed process <pid> (<process>)` message (OOM killer, cgroup included) in 15 minutes, per host and process | 80m |
@@ -505,7 +517,7 @@ Grouping by host as well would send one SMS per host when an outage hits all of 
 | Firing alert | Drops | On the same |
 | :--- | :--- | :--- |
 | `host_metrics_silent` | `host_logs_silent`, `smart_data_missing`, `zfs_data_missing`, `dns_resolver_silent` | `host_name` |
-| `unpoller_no_unifi_data` | `unifi_device_down` | (any) |
+| `unpoller_no_unifi_data` | `unifi_device_down`, `unpoller_unifi_data_stale` | (any) |
 | `filesystem_usage_critical` | `filesystem_usage_high` | `device`, `type` |
 | `smart_status_failed` | `smart_attribute_failing`, `smart_sectors_growing`, `smart_crc_errors_growing` | `host_name`, `device` |
 | `victorialogs_ingestion_stopped` | `host_logs_silent`, `dns_resolver_silent`, `authentik_logs_silent` | (any) |
