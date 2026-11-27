@@ -31,9 +31,8 @@
 # wrong one; the SMS lines below prove that Alertmanager gets through.
 # Proxmox records already parsed (pve_* fields, as the Vector unit tests
 # produce them) go straight into VictoriaLogs: a failed vzdump job, a failed
-# acmerenew task and a failed qmstart task, with a journald record of a
-# failed systemd unit. The test expects proxmox_backup_failed,
-# proxmox_task_failed for both tasks and systemd_unit_failed in
+# acmerenew task and a failed qmstart task. The test expects
+# proxmox_backup_failed and proxmox_task_failed for both tasks in
 # Alertmanager, then one SMS body per alertname with the test credentials
 # and the context labels in its text.
 # Then the watchdog: every component scraped (up == 1), the watchdog
@@ -418,8 +417,6 @@ jq -cn --arg t "$record_time" --arg a "$shim_a" --arg b "$shim_b" --arg r "$shim
     pve_task_status: "Failed to initialize HTTP daemon"},
   {_time: $t, _msg: "qmstart failed", log_stream: "proxmox", pve_task_failed: "true", pve_task_type: "qmstart",
     pve_vmid: "101", pve_task_status: "start failed"},
-  {_time: $t, log_stream: "journald", host_name: "pve.test", body_syslog_identifier: "systemd",
-    body_message: "proxmox-tls-renew.service: Failed with result '\''exit-code'\''."},
   {_time: $t, log_stream: "journald", host_name: "pve.test", body_syslog_identifier: "kernel",
     body_message: "INFO: task kworker/0:1:123 blocked for more than 122 seconds."},
   {_time: $t, log_stream: "journald", host_name: "pve.test", body_syslog_identifier: "kernel",
@@ -449,10 +446,10 @@ logsql() {
 stored=""
 for _ in $(seq 1 15); do
   stored="$(logsql 'log_stream:in(proxmox, journald, authentik, syslog, docker, traefik)' | wc -l)"
-  [[ "$stored" -eq 40 ]] && break
+  [[ "$stored" -eq 39 ]] && break
   sleep 1
 done
-[[ "$stored" -eq 40 ]] || fail "expected 40 records in VictoriaLogs, got $stored"
+[[ "$stored" -eq 39 ]] || fail "expected 39 records in VictoriaLogs, got $stored"
 
 # vmalert last: its first evaluation finds the records.
 docker run -d --name "$vmalert_name" --network "$network" --network-alias vmalert-logs \
@@ -463,7 +460,7 @@ deadline=$((SECONDS + timeout_s))
 alerts=""
 until [[ $SECONDS -ge $deadline ]]; do
   alerts="$(client wget -q -O - http://alertmanager:9093/api/v2/alerts 2>/dev/null || true)"
-  if jq -e '[.[].labels.alertname] | index("proxmox_backup_failed") and index("proxmox_task_failed") and index("systemd_unit_failed")
+  if jq -e '[.[].labels.alertname] | index("proxmox_backup_failed") and index("proxmox_task_failed")
     and index("authentik_sensitive_event") and index("unifi_ips_event") and index("kernel_critical") and index("oom_kill")
     and index("container_restart_loop") and index("traefik_5xx_burst")' \
     <<<"${alerts:-[]}" >/dev/null 2>&1; then
@@ -476,16 +473,13 @@ jq -e '[.[] | select(.labels.alertname == "proxmox_backup_failed")] | length == 
 task_types="$(jq -c '[.[] | select(.labels.alertname == "proxmox_task_failed") | .labels.pve_task_type] | sort' <<<"$alerts")"
 [[ "$task_types" == '["acmerenew","qmstart"]' ]] \
   || fail "proxmox_task_failed for $task_types, expected [\"acmerenew\",\"qmstart\"]"
-units="$(jq -c '[.[] | select(.labels.alertname == "systemd_unit_failed") | .labels | [.host_name, .systemd_unit, .unit_result]]' <<<"$alerts")"
-[[ "$units" == '[["pve.test","proxmox-tls-renew.service","exit-code"]]' ]] \
-  || fail "systemd_unit_failed labels: $units"
 loops="$(jq -c '[.[] | select(.labels.alertname == "container_restart_loop") | .labels.container_id[0:4]] | sort' <<<"$alerts")"
 [[ "$loops" == '["aaaa","bbbb"]' ]] || fail "container_restart_loop for $loops, expected [\"aaaa\",\"bbbb\"]"
 
 # One SMS per alertname (group_by), after group_wait, one line per alert. A
 # task alert that joins its group late comes in a second SMS: compare the
 # distinct lines of all the SMS bodies, sorted.
-expected='["1 erreurs noyau critiques sur pve.test en 15 minutes","1 evenements IPS UniFi (Threat detected) en 15 minutes","15 erreurs 5xx de app@docker en 30 minutes","Conteneur app redemarre en boucle sur docker.test (5 demarrages en 15 minutes)","Conteneur bbbbbbbbbbbb redemarre en boucle sur docker.test (5 demarrages en 15 minutes)","Evenement Authentik sensible suspicious_request (1 en 5 minutes) pour akadmin","Processus java tue par manque de memoire sur pve.test (1 en 15 minutes)","Sauvegarde vzdump Proxmox en echec (job_failed, 1 en 15 minutes)","Tache Proxmox acmerenew en erreur (1 en 24 heures) : Failed to initialize HTTP daemon","Tache Proxmox qmstart VM 101 en erreur (1 en 24 heures) : start failed","Unit proxmox-tls-renew.service en echec (exit-code) sur pve.test"]'
+expected='["1 erreurs noyau critiques sur pve.test en 15 minutes","1 evenements IPS UniFi (Threat detected) en 15 minutes","15 erreurs 5xx de app@docker en 30 minutes","Conteneur app redemarre en boucle sur docker.test (5 demarrages en 15 minutes)","Conteneur bbbbbbbbbbbb redemarre en boucle sur docker.test (5 demarrages en 15 minutes)","Evenement Authentik sensible suspicious_request (1 en 5 minutes) pour akadmin","Processus java tue par manque de memoire sur pve.test (1 en 15 minutes)","Sauvegarde vzdump Proxmox en echec (job_failed, 1 en 15 minutes)","Tache Proxmox acmerenew en erreur (1 en 24 heures) : Failed to initialize HTTP daemon","Tache Proxmox qmstart VM 101 en erreur (1 en 24 heures) : start failed"]'
 sms=""
 messages=""
 until [[ $SECONDS -ge $deadline ]]; do

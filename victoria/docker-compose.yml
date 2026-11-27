@@ -347,7 +347,7 @@ services:
       - source: vmalert_logs_rules
         target: /etc/vmalert/rules.yml
     labels:
-      mydocker.config-hash: "62ba74d7dc8570f8c4273a0faaec4e59425e46f914dcffd3698c8a0e63477ee0"
+      mydocker.config-hash: "ae59ee9b6da124e0423c01931802cda9eaedbb3d0f650ba182593c106539eeb7"
     networks:
       - victoria
     mem_limit: 128m
@@ -386,7 +386,7 @@ services:
       - source: vmalert_metrics_rules
         target: /etc/vmalert/rules.yml
     labels:
-      mydocker.config-hash: "efe0de51f78d0d7039d70545ed30d688cd92a1b07a4acde345894849fe98a2e2"
+      mydocker.config-hash: "ee03b66f2b815ae2eeaa5ae937931b59fa367881c9b6ce7c76ddd881f351532c"
     networks:
       - victoria
     mem_limit: 128m
@@ -922,24 +922,6 @@ configs:
               annotations:
                 summary: "Processus {{ $$labels.process }} tue par manque de memoire sur {{ $$labels.host_name }} ({{ $$value }} en 15 minutes)"
                 description: "Le noyau a tue un processus faute de memoire (OOM killer), sur l'hote ou dans la limite memoire d'un conteneur"
-            # A unit that ends in the failed state ("<unit>: Failed with
-            # result '<result>'." from systemd), system or user manager. It
-            # covers the timers of the hosts too, such as proxmox-tls-renew.
-            # The message is in _msg: vector names body_message in _msg_field.
-            # A 24 hour window, as proxmox_task_failed, survives a restart.
-            - alert: systemd_unit_failed
-              expr: >-
-                _time:24h {log_stream="journald"} body_syslog_identifier:=systemd
-                "Failed with result"
-                | extract "<systemd_unit>: Failed with result '<unit_result>'" from _msg
-                | stats by (host_name, systemd_unit, unit_result) count() as failures
-                | filter failures:>=1
-              keep_firing_for: 5m
-              labels:
-                severity: warning
-              annotations:
-                summary: "Unit {{ $$labels.systemd_unit }} en echec ({{ $$labels.unit_result }}) sur {{ $$labels.host_name }}"
-                description: "Une unit systemd se termine en etat failed"
             # A container that restarts again and again. containerd logs
             # "connecting to shim <container id>" at each start, and the id
             # stays the same across the restarts of a restart policy. Docker
@@ -1151,6 +1133,24 @@ configs:
               annotations:
                 summary: "Systeme de fichiers {{ $$labels.device }} occupe a {{ $$value | humanizePercentage }}"
                 description: "Un systeme de fichiers depasse 95% d'occupation"
+            # A system unit in the failed state, from the systemd receiver of
+            # the collector (systemd hosts only, user units not included). The
+            # series is 1 while the unit stays failed and drops to 0 once it
+            # restarts or is reset, so the alert follows the unit. max by drops
+            # scope_version, which changes with a collector upgrade. The for
+            # skips a unit that fails and restarts at once; vmalert restores
+            # it after a restart (-remoteRead.url), keep_firing_for does not.
+            - alert: systemd_unit_failed
+              expr: >-
+                max by (host_name, systemd_unit_name)
+                (systemd_unit_state_ratio{systemd_unit_active_state="failed"}) == 1
+              for: 5m
+              keep_firing_for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Unit {{ $$labels.systemd_unit_name }} en echec sur {{ $$labels.host_name }}"
+                description: "Une unit systemd est en etat failed depuis 5 minutes"
         - name: zfs
           interval: 1m
           rules:
