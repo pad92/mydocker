@@ -228,7 +228,7 @@ cef = [
 # the same path three times. A line without a host (a bare TLS probe) must be
 # excluded; 172.18.0.1 is the Docker bridge, unknown to UniFi.
 def http(host, service, method, client, path, status, duration, origin, size,
-         proto="HTTP/2.0", tls="1.3"):
+         proto="HTTP/2.0", tls="1.3", router=None):
     r = {"host_name": "proxy.home.lan", "app_clienthost": client,
          "app_requestmethod": method, "app_requestpath": path,
          "app_downstreamstatus": status, "app_duration": duration,
@@ -236,6 +236,8 @@ def http(host, service, method, client, path, status, duration, origin, size,
          "app_servicename": service, "app_requestprotocol": proto, "app_tlsversion": tls}
     if host:
         r["app_requesthost"] = host
+    if router:
+        r["app_routername"] = router
     return r
 traefik = [
     http("cloud.home.lan", "nextcloud@docker", "GET", "192.168.0.57", "/status.php", "200.0",
@@ -260,6 +262,16 @@ traefik += [http("grafana.home.lan", "grafana@docker", "GET", "192.168.0.10", "/
 traefik += [http("git.home.lan", "forgejo@docker", "GET", "192.168.0.10", "/user/events",
                  status, 600000000000, 599000000000, 4096)
             for status in ("200.0", 200, "200.0")]
+# Ingestion routers: the collectors drop their own successful requests from
+# the access log (myansible otel_collector), so only the 502 of a Vector
+# restart remain. Counted, they would show the ingestion as 100 % 5xx: every
+# panel must leave them out, so the expected values below do not move.
+traefik += [http("logs.example", "vector@docker", "POST", "198.51.100.57", "/v1/logs", "502.0",
+                 2000000, 200000, 11, router="vector_ingest@docker")
+            for _ in range(3)]
+traefik += [http("metrics.example", "victoriametrics@docker", "POST", "198.51.100.57",
+                 "/opentelemetry/v1/metrics", 502, 2000000, 200000, 11,
+                 router="victoriametrics_ingest@docker")]
 records = [{"log_stream": "proxmox", "host_name": "pve.home.lan", "_msg": "pve", **r} for r in proxmox]
 records += [{"log_stream": "authentik", "host_name": "sso.home.lan", "_msg": "ak", **r} for r in authentik]
 records += [{"log_stream": "docker", **r} for r in docker]

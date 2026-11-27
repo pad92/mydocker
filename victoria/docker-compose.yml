@@ -12074,7 +12074,7 @@ configs:
               "query": {
                 "type": "fieldValue",
                 "field": "app_requesthost",
-                "query": "{log_stream=\"traefik\"} app_requesthost:*",
+                "query": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\"",
                 "refId": "requesthost"
               },
               "multi": true,
@@ -12101,7 +12101,7 @@ configs:
               "query": {
                 "type": "fieldValue",
                 "field": "app_servicename",
-                "query": "{log_stream=\"traefik\"} app_requesthost:*",
+                "query": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\"",
                 "refId": "service"
               },
               "multi": true,
@@ -12128,7 +12128,7 @@ configs:
               "query": {
                 "type": "fieldValue",
                 "field": "app_requestmethod",
-                "query": "{log_stream=\"traefik\"} app_requesthost:*",
+                "query": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\"",
                 "refId": "method"
               },
               "multi": true,
@@ -12155,7 +12155,7 @@ configs:
               "query": {
                 "type": "fieldValue",
                 "field": "app_clienthost",
-                "query": "{log_stream=\"traefik\"} app_requesthost:*",
+                "query": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\"",
                 "refId": "client"
               },
               "multi": true,
@@ -12215,7 +12215,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats count() as n",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats count() as n",
                 "queryType": "stats"
               }
             ],
@@ -12265,7 +12265,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats count() as total, count() if (app_downstreamstatus:>=400 app_downstreamstatus:<500) as e | math e*100/total as pct | fields pct",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats count() as total, count() if (app_downstreamstatus:>=400 app_downstreamstatus:<500) as e | math e*100/total as pct | fields pct",
                 "queryType": "stats"
               }
             ],
@@ -12316,7 +12316,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats count() as total, count() if (app_downstreamstatus:>=500) as e | math e*100/total as pct | fields pct",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats count() as total, count() if (app_downstreamstatus:>=500) as e | math e*100/total as pct | fields pct",
                 "queryType": "stats"
               }
             ],
@@ -12367,7 +12367,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | filter app_downstreamstatus:>0 not app_requestpath:=\"/user/events\" | stats quantile(0.95, app_duration) as p95",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | filter app_downstreamstatus:>0 not app_requestpath:=\"/user/events\" | stats quantile(0.95, app_duration) as p95",
                 "queryType": "stats"
               }
             ],
@@ -12418,7 +12418,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats sum(app_downstreamcontentsize) as bytes",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats sum(app_downstreamcontentsize) as bytes",
                 "queryType": "stats"
               }
             ],
@@ -12468,7 +12468,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats count_uniq(app_clienthost) as n",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats count_uniq(app_clienthost) as n",
                 "queryType": "stats"
               }
             ],
@@ -12531,7 +12531,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats by (app_servicename) count() as n",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats by (app_servicename) count() as n",
                 "queryType": "statsRange",
                 "step": "5m",
                 "legendFormat": "{{app_servicename}}"
@@ -12587,7 +12587,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | math floor(app_downstreamstatus/100) as classe | stats by (classe) count() as n",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | math floor(app_downstreamstatus/100) as classe | stats by (classe) count() as n",
                 "queryType": "statsRange",
                 "step": "5m",
                 "legendFormat": "{{classe}}xx"
@@ -12643,7 +12643,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | filter app_downstreamstatus:>0 not app_requestpath:=\"/user/events\" | stats by (app_servicename) quantile(0.95, app_duration) as p95",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | filter app_downstreamstatus:>0 not app_requestpath:=\"/user/events\" | stats by (app_servicename) quantile(0.95, app_duration) as p95",
                 "queryType": "statsRange",
                 "step": "5m",
                 "legendFormat": "{{app_servicename}}"
@@ -12699,7 +12699,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | app_downstreamstatus:>=500 | stats by (app_servicename) count() as n",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | app_downstreamstatus:>=500 | stats by (app_servicename) count() as n",
                 "queryType": "statsRange",
                 "step": "5m",
                 "legendFormat": "{{app_servicename}}"
@@ -12768,7 +12768,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats by (app_requesthost) count() as n, count() if (app_downstreamstatus:>=400 app_downstreamstatus:<500) as e4xx, count() if (app_downstreamstatus:>=500) as e5xx, quantile(0.95, app_duration) if (app_downstreamstatus:>0 not app_requestpath:=\"/user/events\") as p95 | math round(p95/1000000, 0.1) as ms | sort by (n desc) | limit 30",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats by (app_requesthost) count() as n, count() if (app_downstreamstatus:>=400 app_downstreamstatus:<500) as e4xx, count() if (app_downstreamstatus:>=500) as e5xx, quantile(0.95, app_duration) if (app_downstreamstatus:>0 not app_requestpath:=\"/user/events\") as p95 | math round(p95/1000000, 0.1) as ms | sort by (n desc) | limit 30",
                 "queryType": "instant"
               }
             ],
@@ -12868,7 +12868,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | app_downstreamstatus:>=400 | stats by (app_requesthost, app_requestpath, app_downstreamstatus) count() as n | sort by (n desc) | limit 30",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | app_downstreamstatus:>=400 | stats by (app_requesthost, app_requestpath, app_downstreamstatus) count() as n | sort by (n desc) | limit 30",
                 "queryType": "instant"
               }
             ],
@@ -12948,7 +12948,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats by (app_clienthost) count() as n, count() if (app_downstreamstatus:>=400) as erreurs, count_uniq(app_requesthost) as hosts | sort by (n desc) | limit 30",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats by (app_clienthost) count() as n, count() if (app_downstreamstatus:>=400) as erreurs, count_uniq(app_requesthost) as hosts | sort by (n desc) | limit 30",
                 "queryType": "instant"
               },
               {
@@ -13114,7 +13114,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | filter app_downstreamstatus:>0 not app_requestpath:=\"/user/events\" | stats by (app_requesthost, app_requestpath) count() as n, quantile(0.95, app_duration) as p95 | filter n:>=3 | math round(p95/1000000, 0.1) as ms | sort by (ms desc) | limit 30",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | filter app_downstreamstatus:>0 not app_requestpath:=\"/user/events\" | stats by (app_requesthost, app_requestpath) count() as n, quantile(0.95, app_duration) as p95 | filter n:>=3 | math round(p95/1000000, 0.1) as ms | sort by (ms desc) | limit 30",
                 "queryType": "instant"
               }
             ],
@@ -13204,7 +13204,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats by (app_servicename) count() as n, count() if (app_downstreamstatus:>=500) as e5xx, quantile(0.95, app_originduration) if (app_downstreamstatus:>0 not app_requestpath:=\"/user/events\") as p95 | math round(p95/1000000, 0.1) as ms | sort by (n desc) | limit 30",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats by (app_servicename) count() as n, count() if (app_downstreamstatus:>=500) as e5xx, quantile(0.95, app_originduration) if (app_downstreamstatus:>0 not app_requestpath:=\"/user/events\") as p95 | math round(p95/1000000, 0.1) as ms | sort by (n desc) | limit 30",
                 "queryType": "instant"
               }
             ],
@@ -13298,7 +13298,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats by (app_requestprotocol, app_tlsversion) count() as n | sort by (n desc)",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search | stats by (app_requestprotocol, app_tlsversion) count() as n | sort by (n desc)",
                 "queryType": "instant"
               }
             ],
@@ -13389,7 +13389,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search app_downstreamstatus:>=400 | format \"<app_downstreamstatus> <app_requestmethod> <app_requesthost><app_requestpath> client=<app_clienthost> service=<app_servicename>\" as _msg | sort by (_time desc) | limit 200",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_requesthost:in($$requesthost) app_servicename:in($$service) app_requestmethod:in($$method) app_clienthost:in($$client) $$search app_downstreamstatus:>=400 | format \"<app_downstreamstatus> <app_requestmethod> <app_requesthost><app_requestpath> client=<app_clienthost> service=<app_servicename>\" as _msg | sort by (_time desc) | limit 200",
                 "queryType": "instant"
               }
             ],
@@ -17504,7 +17504,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* | stats count() as n",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" | stats count() as n",
                 "queryType": "stats"
               }
             ],
@@ -17561,7 +17561,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* | stats count() as total, count() if (app_downstreamstatus:>=500) as e | math e*100/total as pct | fields pct",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" | stats count() as total, count() if (app_downstreamstatus:>=500) as e | math e*100/total as pct | fields pct",
                 "queryType": "stats"
               }
             ],
@@ -17634,7 +17634,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* | filter app_downstreamstatus:>0 not app_requestpath:=\"/user/events\" | stats quantile(0.95, app_duration) as p95",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" | filter app_downstreamstatus:>0 not app_requestpath:=\"/user/events\" | stats quantile(0.95, app_duration) as p95",
                 "queryType": "stats"
               }
             ],
@@ -18207,7 +18207,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "{log_stream=\"traefik\"} app_requesthost:* app_servicename:* | stats by (app_servicename) count() as n, count() if (app_downstreamstatus:>=400 app_downstreamstatus:<500) as e4xx, count() if (app_downstreamstatus:>=500) as e5xx, quantile(0.95, app_duration) if (app_downstreamstatus:>0 not app_requestpath:=\"/user/events\") as p95, max(_time) as last | math round(e4xx*100/n, 0.1) as pct4, round(e5xx*100/n, 0.1) as pct5, round(p95/1000000, 0.1) as ms | fields app_servicename, n, pct4, pct5, ms, last | sort by (pct5 desc, n desc) | limit 50",
+                "expr": "{log_stream=\"traefik\"} app_requesthost:* -app_routername:~\"_ingest@\" app_servicename:* | stats by (app_servicename) count() as n, count() if (app_downstreamstatus:>=400 app_downstreamstatus:<500) as e4xx, count() if (app_downstreamstatus:>=500) as e5xx, quantile(0.95, app_duration) if (app_downstreamstatus:>0 not app_requestpath:=\"/user/events\") as p95, max(_time) as last | math round(e4xx*100/n, 0.1) as pct4, round(e5xx*100/n, 0.1) as pct5, round(p95/1000000, 0.1) as ms | fields app_servicename, n, pct4, pct5, ms, last | sort by (pct5 desc, n desc) | limit 50",
                 "queryType": "instant"
               }
             ],
