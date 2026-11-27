@@ -11,9 +11,10 @@
 #   no DT_OAUTH2_ADMIN_GROUPS / DT_OAUTH2_MANAGER_GROUPS;
 # - the host CA bundle is mounted read-only where Go looks for it, so the token
 #   and userinfo calls trust Authentik's internal-CA certificate;
-# - the SQLite file defaults to /donetick-data/donetick.db, and its directory
-#   is a volume in the container (else Donetick crash-loops on SQLite error 14,
-#   or writes the database outside any volume).
+# - the SQLite file is /donetick-data/donetick.db even when a DT_SQLITE_PATH
+#   stack variable is set, and its directory is a volume in the container
+#   (else Donetick crash-loops on SQLite error 14, or writes the database
+#   outside any volume).
 # Rendering fails without the client secret, the Authentik domain, the todo
 # domain or the data directory, and the Traefik routers are not behind forward auth (the mobile app
 # and the external API call Donetick directly).
@@ -65,10 +66,10 @@ db_dir_mounted() {
     | length > 0' <<<"$config" >/dev/null
 }
 db_dir_mounted || fail "the directory of DT_SQLITE_PATH ($(getenv DT_SQLITE_PATH)) is not a volume"
-# A host path, the usual mistake, must trip the same check.
+# A stack variable (a host path set in Portainer broke it once) must not
+# override the path.
 config="$(compose env DT_SQLITE_PATH=/srv/donetick/donetick.db)"
-expect DT_SQLITE_PATH /srv/donetick/donetick.db
-db_dir_mounted && fail "a host path in DT_SQLITE_PATH passes the volume check"
+expect DT_SQLITE_PATH /donetick-data/donetick.db
 config="$(compose env)"
 
 middlewares="$(jq -r '.services.donetick.labels | to_entries[]

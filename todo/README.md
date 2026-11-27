@@ -17,15 +17,15 @@ Define these environment variables which are unique to this service:
 | Variable Name | Description | Placeholder / Default |
 | :--- | :--- | :--- |
 | `DT_ENV` | Configuration settings value for Dt env. | *None (empty)* |
-| `DT_SQLITE_PATH` | SQLite file **inside the container**, not a host path. Its directory must exist in the container, so keep it under `/donetick-data`. | `/donetick-data/donetick.db` |
 | `TODO_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
-| `TODO_DONETICK_DATA_DIR` | Host directory mounted on `/donetick-data` and `/config`. It holds the database and must also hold `selfhosted.yaml`, since the mount hides the image's copy. | *None (required)* |
+| `TODO_DONETICK_DATA_DIR` | Host directory mounted on `/donetick-data` and `/config`. It holds the database (`donetick.db`) and must also hold `selfhosted.yaml`, since the mount hides the image's copy. | *None (required)* |
 
 If Donetick crash-loops on `unable to open database file: out of memory (14)`,
 the message is misleading: it is SQLite error 14 (CANTOPEN), not a memory
-problem. The directory of `DT_SQLITE_PATH` does not exist in the container,
-usually because the variable holds a host path. Leave it empty or set it to a
-path under `/donetick-data`.
+problem: the database directory does not exist in the container. The path is
+now fixed to `/donetick-data/donetick.db` in `docker-compose.yml`, so a
+`DT_SQLITE_PATH` set in Portainer is ignored; check that the stack was
+redeployed from a recent commit and that `TODO_DONETICK_DATA_DIR` exists.
 
 ---
 
