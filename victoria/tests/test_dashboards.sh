@@ -8,8 +8,8 @@
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
 # - with the header a new user is created with the Viewer role and sees the
-#   twelve provisioned dashboards (Authentik, Proxmox, UniFi, Synology, hosts,
-#   logs, Docker, DNS, firewall, HTTP, alerts, disks);
+#   thirteen provisioned dashboards (services, Authentik, Proxmox, UniFi,
+#   Synology, hosts, logs, Docker, DNS, firewall, HTTP, alerts, disks);
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
 # - every VictoriaLogs target of the dashboards, sent as the viewer to
@@ -111,7 +111,7 @@ while IFS=$'\t' read -r source target; do
     "$work_dir/compose.json" > "$work_dir/configs/$source"
   mounts+=(-v "$work_dir/configs/$source:$target:ro")
 done < <(jq -r '.services.grafana.configs[] | [.source, .target] | @tsv' "$work_dir/compose.json")
-[[ ${#mounts[@]} -eq 28 ]] || fail "expected 14 Grafana configs, got $((${#mounts[@]} / 2))"
+[[ ${#mounts[@]} -eq 30 ]] || fail "expected 15 Grafana configs, got $((${#mounts[@]} / 2))"
 
 pinned="$(jq -r '.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC' "$work_dir/compose.json")"
 [[ "$pinned" == "$plugin_id@"* ]] || fail "GF_PLUGINS_PREINSTALL_SYNC is '$pinned', expected $plugin_id@<version>"
@@ -385,7 +385,7 @@ def substitute(expr, datasource, variables, variant, all_values):
 
 index = []
 for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
-             "docker", "dns", "firewall", "http", "alerts", "disks"):
+             "docker", "dns", "firewall", "http", "alerts", "disks", "services"):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     declared = {v["name"] for v in dash.get("templating", {}).get("list", [])}
     all_values = {v["name"]: v.get("allValue") for v in dash.get("templating", {}).get("list", [])
@@ -538,8 +538,8 @@ if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
 
 expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-disks", "victoria-dns", "victoria-docker",
                  "victoria-firewall",
-                 "victoria-hosts", "victoria-http", "victoria-logs", "victoria-proxmox", "victoria-synology",
-                 "victoria-unifi"]
+                 "victoria-hosts", "victoria-http", "victoria-logs", "victoria-proxmox", "victoria-services",
+                 "victoria-synology", "victoria-unifi"]
 # Host S.M.A.R.T. panels of the disks dashboard, which must return the
 # smartctl_exporter series imported before (the NAS targets only parse).
 smart_panels = {("victoria-disks", title) for title in (
@@ -558,7 +558,11 @@ expected_values = {("victoria-http", "Requêtes", "value"): 4,
                    ("victoria-http", "Taux de 5xx", "value"): 25,
                    ("victoria-http", "Taux de 5xx", "all"): 100 / 11,
                    ("victoria-http", "Latence p95", "value"): 900000000,
-                   ("victoria-http", "Latence p95", "all"): 900000000}
+                   ("victoria-http", "Latence p95", "all"): 900000000,
+                   # The global view must agree with the HTTP dashboard.
+                   ("victoria-services", "Requêtes HTTP", "value"): 11,
+                   ("victoria-services", "Taux de 5xx", "value"): 100 / 11,
+                   ("victoria-services", "Latence HTTP p95", "value"): 900000000}
 # No number returned by the HTTP dashboard may come from a stream: the
 # shortest one lasts 599 s, 5.99e11 in ns and 5.99e5 in ms, while the largest
 # legitimate number is the 900 ms p95 in ns.
@@ -697,7 +701,7 @@ for q in index:
                        if field.get("name") == "labels"
                        for row in f.get("data", {}).get("values", [])[i] if isinstance(row, dict)
                        for v in row.values() if isnumber(v)]
-        if q["dashboard"] == "victoria-http" and any(x >= stream_floor for x in stats):
+        if q["dashboard"] in ("victoria-http", "victoria-services") and any(x >= stream_floor for x in stats):
             errors.append(f"{label}: {max(stats)} counts a long-lived stream")
         if key in expected_values:
             if len(got) != 1 or abs(got[0] - expected_values[key]) > 0.01:
