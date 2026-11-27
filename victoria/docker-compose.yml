@@ -1296,7 +1296,7 @@ configs:
                 severity: warning
               annotations:
                 summary: "L'exporter Freebox ne repond plus depuis 10 minutes"
-                description: "freebox-exporter arrete, sans token, token revoque ou API de la Freebox injoignable"
+                description: "freebox-exporter arrete, sans token ou API de la Freebox injoignable (un token refuse declenche freebox_auth_failed)"
             # pwr_rx is in hundredths of dBm. GPON receivers lose the link
             # around -28 dBm: below -26 the fibre or a connector is degrading.
             - alert: freebox_fiber_signal_low
@@ -1317,6 +1317,31 @@ configs:
               annotations:
                 summary: "Freebox : processeur a {{ $$value }} degres"
                 description: "Temperature CPU de la Freebox au-dessus de 85 degres depuis 15 minutes : ventilation ou ventilateur a verifier"
+            # Exporter v0.0.29+: authenticated drops to 0 only when the box
+            # answers the login with an error_code (token revoked, pending,
+            # rights removed); an unreachable box leaves it at 1. While it is
+            # 0 the exporter serves no box metric: the connection and
+            # temperature alerts stay silent and the scrape stays up.
+            - alert: freebox_auth_failed
+              expr: fbx_exporter_authenticated{job="freebox"} == 0
+              for: 10m
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Freebox : l'exporter n'est plus autorise depuis 10 minutes"
+                description: "La Freebox refuse le login de freebox-exporter (code dans fbx_exporter_authentication_error et le log) : token revoque ou droits retires, l'enregistrer a nouveau"
+            # One collector (connection, system) failing while the login
+            # works: its metrics stop updating without the scrape failing.
+            - alert: freebox_collector_failed
+              expr: fbx_exporter_collector_success{job="freebox"} == 0
+              for: 30m
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Freebox : le collecteur {{ $$labels.collector }} echoue depuis 30 minutes"
+                description: "freebox-exporter ne lit plus ce module de l'API de la Freebox : ses metriques ne sont plus a jour, voir le log de l'exporter"
         # Health of the stack itself (job per component in
         # victoriametrics_scrape).
         - name: victoria_stack
@@ -1572,6 +1597,10 @@ configs:
             repeat_interval: 125m
           - matchers: [alertname="freebox_temperature_high"]
             repeat_interval: 125m
+          - matchers: [alertname="freebox_auth_failed"]
+            repeat_interval: 65m
+          - matchers: [alertname="freebox_collector_failed"]
+            repeat_interval: 65m
           - matchers: [alertname="victoria_component_down"]
             repeat_interval: 65m
           - matchers: [alertname="vmalert_rule_errors"]
@@ -1629,6 +1658,11 @@ configs:
         # down.
         - source_matchers: [alertname="unpoller_no_unifi_data"]
           target_matchers: [alertname="unifi_device_down"]
+        # The Internet connection of the Freebox down: its API may go
+        # unreachable with it (mafreebox.freebox.fr is a public address) and
+        # the collectors fail.
+        - source_matchers: [alertname="freebox_connection_down"]
+          target_matchers: [alertname="freebox_collector_failed"]
         # The critical threshold of the same filesystem says it all.
         - source_matchers: [alertname="filesystem_usage_critical"]
           target_matchers: [alertname="filesystem_usage_high"]
