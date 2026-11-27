@@ -10,8 +10,9 @@ services:
     image: donetick/donetick:latest
     restart: unless-stopped
     volumes:
-      - ${TODO_DONETICK_DATA_DIR}:/donetick-data
-      - ${TODO_DONETICK_DATA_DIR}:/config
+      - ${TODO_DONETICK_DATA_DIR:?Set TODO_DONETICK_DATA_DIR}:/donetick-data
+      # Hides the image's /config: the data directory must hold selfhosted.yaml.
+      - ${TODO_DONETICK_DATA_DIR:?Set TODO_DONETICK_DATA_DIR}:/config
       # Authentik's certificate comes from the internal CA: Go reads this
       # bundle by default, so the host one (with the CA) replaces the image's.
       - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
@@ -19,7 +20,12 @@ services:
       - traefik_gateway
     environment:
       DT_ENV: "${DT_ENV}"
-      DT_SQLITE_PATH: "${DT_SQLITE_PATH}"
+      # Path inside the container, not on the host. Empty, Donetick would use
+      # donetick.db in its working directory (/), outside any volume, and lose
+      # the data on recreate. A directory that does not exist in the container
+      # makes it crash-loop on "unable to open database file: out of memory
+      # (14)" (SQLite CANTOPEN, mislabelled by the driver).
+      DT_SQLITE_PATH: "${DT_SQLITE_PATH:-/donetick-data/donetick.db}"
       # Sign-in with Authentik (OpenID Connect), next to the local accounts.
       # Donetick reads DT_OAUTH2_* over the oauth2 block of the YAML file in
       # /config. The provider is the "donetick" application of the management
