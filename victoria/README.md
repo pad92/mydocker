@@ -593,13 +593,15 @@ Setup:
 1. In Grafana, as the admin, open *Administration > Users and access > Service accounts*, create `mcp` with the `Viewer` role, then add a token to it. Put the token in `GRAFANA_MCP_SA_TOKEN`.
 2. Generate the client token with `openssl rand -hex 32` and put it in `GRAFANA_MCP_SERVER_TOKEN`.
 3. Redeploy the stack. The log of `victoria-grafana-mcp` shows `Caller authentication enabled`.
-4. Add the server to the client:
+4. Add the server to the client, in the user scope so that it loads from any directory (without `-s user`, Claude Code uses the local scope, tied to the current directory only). `read -rs` keeps the token off the screen and out of the shell history:
 
 ```bash
-claude mcp add --transport http grafana "https://$VICTORIA_GRAFANA_DOMAIN/mcp" --header "Authorization: Bearer $GRAFANA_MCP_SERVER_TOKEN"
+read -rs GRAFANA_MCP_SERVER_TOKEN
+claude mcp add -s user --transport http grafana "https://$VICTORIA_GRAFANA_DOMAIN/mcp" --header "Authorization: Bearer $GRAFANA_MCP_SERVER_TOKEN"
+unset GRAFANA_MCP_SERVER_TOKEN
 ```
 
-Claude Code stores the header in clear in its configuration file (`~/.claude.json`, or `.mcp.json` with `--scope project`, which must stay out of Git).
+`claude mcp list`, run from any directory, then shows `grafana` as connected. Claude Code stores the header in clear in its configuration file (`~/.claude.json`, or `.mcp.json` with `-s project`, which must stay out of Git), and in its backups under `~/.claude/backups/`.
 
 mcp-grafana serves every request without authentication when its server token is empty. The compose file therefore replaces its entrypoint with a shell check: while either token is empty or the server token is shorter than 32 characters, the container logs `... is missing, see the README` and waits without listening, so it neither serves openly nor restarts in a loop.
 
