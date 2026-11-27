@@ -48,6 +48,9 @@ Copy `.env.example` to `.env`, fill it in and run `chmod 600 .env`.
 | `GRAMPSWEB_EMAIL_HOST_USER` | empty | SMTP user: the Proton address of the token |
 | `GRAMPSWEB_EMAIL_HOST_PASSWORD` | empty | SMTP password: the Proton SMTP token |
 | `GRAMPSWEB_DEFAULT_FROM_EMAIL` | empty | Sender of the e-mails, the same address |
+| `GRAMPSWEB_LLM_BASE_URL` | required | Ollama OpenAI-compatible API, ending in `/v1/` |
+| `GRAMPSWEB_LLM_MODEL` | `ollama:qwen2.5:7b` | Chat model, with the `ollama:` prefix |
+| `GRAMPSWEB_LLM_MAX_CONTEXT_LENGTH` | `20000` | Characters of tree context per question |
 
 Subdirectories of `GRAMPSWEB_DATA_DIR`, created by Docker on first start:
 
@@ -70,7 +73,7 @@ address, with an SMTP token generated in Settings > IMAP/SMTP > SMTP tokens
 (the account password does not work). Under Portainer, enter these values in
 the stack's environment variables, then redeploy the stack.
 
-Other settings (registration, AI chat) are
+Other settings (registration, for example) are
 `GRAMPSWEB_*` variables listed in the
 [configuration page](https://www.grampsweb.org/install_setup/configuration/).
 Add them to the `x-grampsweb` block of `docker-compose.yml` so the worker gets
@@ -123,6 +126,43 @@ uses a certificate of the internal CA: the host bundle
 `tests/test_stack.sh` renders the Compose file with test values and checks
 this configuration (OIDC settings, roles, CA bundle, no forward auth, local
 login kept, failure without the secret). It needs Docker Compose and `jq`.
+
+## AI chat
+
+The assistant of Gramps Web answers through the Ollama of the `ollama`
+stack, which runs on the GTX 1060 (6 GB) of chataigne. This stack runs no
+model itself: a second Ollama would compete for the same 6 GB of VRAM.
+Gramps Web 3.25 dropped semantic search, so there is no embedding model and
+no index to build.
+
+- `GRAMPSWEB_LLM_MODEL` keeps the `ollama:` prefix, so Pydantic AI uses its
+  Ollama provider and no `OPENAI_API_KEY` is needed.
+- The assistant relies on tool calling. `qwen2.5:7b` (about 4.7 GB in Q4)
+  supports it and fits the card; larger models spill onto the CPU and become
+  too slow.
+- `GRAMPSWEB_LLM_MAX_CONTEXT_LENGTH` is lowered from 50000 to 20000
+  characters (about 5k tokens). Ollama cuts longer prompts to its own
+  context size, set by `OLLAMA_CONTEXT_LENGTH` on the `ollama` service.
+
+Setup:
+
+1. Pull the model in the `ollama` stack:
+   `docker exec ollama ollama pull qwen2.5:7b`.
+2. Check that the Gramps Web containers reach the API:
+   `docker exec grampsweb python3 -c 'import os, urllib.request; print(urllib.request.urlopen(os.environ["GRAMPSWEB_LLM_BASE_URL"] + "models").read()[:300])'`.
+3. Redeploy this stack, then in Gramps Web (as owner) open the user
+   settings and allow the chat for the wanted user groups. It is off for
+   everyone until then.
+4. Ask a question, then run `docker exec ollama ollama ps`: the
+   `PROCESSOR` column must read `100% GPU`. A CPU share means the model or
+   its context does not fit in VRAM.
+
+Port 11434 of the `ollama` stack has no authentication: anyone on the LAN
+can use the GPU through it.
+
+`tests/test_stack.sh` also checks the AI settings on both services (URL
+ending in `/v1/`, `ollama:` prefix, integer context, no OpenAI key) and that
+rendering fails without `GRAMPSWEB_LLM_BASE_URL`.
 
 ## First start
 
