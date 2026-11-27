@@ -47,6 +47,11 @@ services:
       # Docker records reach 1 MiB (otel_collector_docker_max_log_size in
       # myansible); the 256 KiB default would drop the longest ones.
       - -insert.maxLineSizeBytes=2MiB
+    # Memory ceiling, well above the observed use. VictoriaLogs sizes its
+    # caches from the cgroup limit; past it the kernel kills the process and
+    # the container_oom alert fires. No healthcheck: the image has no shell
+    # and no wget (see the README).
+    mem_limit: 1g
     volumes:
       - ${VICTORIA_LOGS_DATA_DIR:?Set VICTORIA_LOGS_DATA_DIR}:/data
     networks:
@@ -100,7 +105,7 @@ services:
         condition: service_completed_successfully
     command:
       - -storageDataPath=/data
-      - -retentionPeriod=${VICTORIA_METRICS_RETENTION:-30d}
+      - -retentionPeriod=${VICTORIA_METRICS_RETENTION:-1y}
       - -httpListenAddr=:8428
       # system.cpu.time becomes system_cpu_time_seconds_total, as the
       # Prometheus exporters name it, so that usual queries work.
@@ -108,6 +113,18 @@ services:
       # Pull targets (unpoller, snmp-exporter), in the victoriametrics_scrape entry under
       # configs: at the end of this file.
       - -promscrape.config=/etc/victoria/scrape.yml
+    # Same reasoning as victorialogs. The healthcheck gates the start of the
+    # vmalert instances (depends_on: service_healthy).
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8428/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      # Probe every 5s during start_period, so the vmalert instances
+      # waiting on service_healthy start within seconds, not a minute.
+      start_interval: 5s
     volumes:
       - ${VICTORIA_METRICS_DATA_DIR:?Set VICTORIA_METRICS_DATA_DIR}:/data
     configs:
@@ -283,6 +300,7 @@ services:
     networks:
       - traefik_gateway
       - victoria
+    # No healthcheck: the distroless image has no shell and no wget.
     depends_on:
       - victorialogs
     security_opt:
@@ -324,10 +342,21 @@ services:
         target: /etc/vmalert/rules.yml
     networks:
       - victoria
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8880/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    # victorialogs has no healthcheck: started is the best Compose can check.
     depends_on:
-      - victorialogs
-      - victoriametrics
-      - alertmanager
+      victorialogs:
+        condition: service_started
+      victoriametrics:
+        condition: service_healthy
+      alertmanager:
+        condition: service_healthy
     security_opt:
       - no-new-privileges:true
     logging: *default-logging
@@ -350,9 +379,18 @@ services:
         target: /etc/vmalert/rules.yml
     networks:
       - victoria
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8880/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     depends_on:
-      - victoriametrics
-      - alertmanager
+      victoriametrics:
+        condition: service_healthy
+      alertmanager:
+        condition: service_healthy
     security_opt:
       - no-new-privileges:true
     logging: *default-logging
@@ -381,6 +419,16 @@ services:
       # receiver_name on alertmanager_notifications_failed_total, read by
       # the alertmanager_notifications_failed rule.
       - --enable-feature=receiver-name-in-metrics
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9093/-/healthy"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      # Probe every 5s during start_period, so the vmalert instances
+      # waiting on service_healthy start within seconds, not a minute.
+      start_interval: 5s
     configs:
       - source: alertmanager_config
         target: /etc/alertmanager/alertmanager.yml
@@ -605,6 +653,13 @@ configs:
           scrape_interval: 30s
           static_configs:
             - targets: ["vector:9598"]
+          # The histogram buckets are about 85 % of the vector series and no
+          # dashboard or rule reads them (tests/test_stack.sh checks it).
+          # _sum and _count stay, enough for average durations and sizes.
+          metric_relabel_configs:
+            - source_labels: [__name__]
+              regex: "vector_.*_bucket"
+              action: drop
         - job_name: unpoller
           scrape_interval: 60s
           static_configs:
@@ -1466,6 +1521,13 @@ configs:
             - url: http://vector:8080/alertmanager
               send_resolved: false
               max_alerts: 10
+              # Same credentials as the auth of the vector source. Compose
+              # writes the value into this file: hex only (openssl rand -hex
+              # 32), so that it cannot break the YAML.
+              http_config:
+                basic_auth:
+                  username: alertmanager
+                  password: "${VECTOR_WEBHOOK_PASSWORD:?Set VECTOR_WEBHOOK_PASSWORD}"
         # Push URL of an Uptime Kuma push monitor (see the README). The token
         # in the URL is secret and goes in the environment of the stack only.
         # send_resolved false: a resolved watchdog must not count as a push.
@@ -1540,6 +1602,14 @@ configs:
           path: /alertmanager
           strict_path: true
           method: POST
+          # Any container on the victoria and traefik_gateway networks reaches
+          # port 8080: without auth, any of them could send SMS. Vector 0.61
+          # no longer expands environment variables in its config, so Compose
+          # writes the password here, as in alertmanager_config.
+          auth:
+            strategy: basic
+            username: alertmanager
+            password: "${VECTOR_WEBHOOK_PASSWORD:?Set VECTOR_WEBHOOK_PASSWORD}"
           decoding:
             codec: json
 
@@ -3298,7 +3368,7 @@ configs:
                 "editorMode": "code",
                 "expr": "proxmox_node_cpustat_cpu_percent",
                 "legendFormat": "{{host_name}}",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -3350,7 +3420,7 @@ configs:
                 "editorMode": "code",
                 "expr": "(proxmox_node_memory_memused_bytes - proxmox_node_memory_arcsize_bytes) / proxmox_node_memory_memtotal_bytes",
                 "legendFormat": "{{host_name}}",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -3402,7 +3472,7 @@ configs:
                 "editorMode": "code",
                 "expr": "proxmox_node_cpustat_avg5_ratio",
                 "legendFormat": "{{host_name}} 5m",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -3454,7 +3524,7 @@ configs:
                 "editorMode": "code",
                 "expr": "proxmox_node_uptime_seconds",
                 "legendFormat": "{{host_name}}",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -5258,7 +5328,7 @@ configs:
                 "editorMode": "code",
                 "expr": "up{job=\"unpoller\"}",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -5309,7 +5379,7 @@ configs:
                 "editorMode": "code",
                 "expr": "count(unpoller_device_info)",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -5360,7 +5430,7 @@ configs:
                 "editorMode": "code",
                 "expr": "sum(unpoller_site_disconnected)",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -5411,7 +5481,7 @@ configs:
                 "editorMode": "code",
                 "expr": "count(unpoller_client_uptime_seconds)",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -5462,7 +5532,7 @@ configs:
                 "editorMode": "code",
                 "expr": "sum(unpoller_device_upgradable)",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -5513,7 +5583,7 @@ configs:
                 "editorMode": "code",
                 "expr": "max(unpoller_site_latency_seconds{subsystem=\"www\"})",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -6049,7 +6119,7 @@ configs:
                 "editorMode": "code",
                 "expr": "up{job=\"synology\"}",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -6100,7 +6170,7 @@ configs:
                 "editorMode": "code",
                 "expr": "sum((systemStatus != bool 1) + (powerStatus != bool 1) + (systemFanStatus != bool 1) + (cpuFanStatus != bool 1) + (thermalStatus != bool 1))",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -6151,7 +6221,7 @@ configs:
                 "editorMode": "code",
                 "expr": "sum(clamp_max((diskStatus != bool 1) + (diskHealthStatus != bool 1), 1))",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -6202,7 +6272,7 @@ configs:
                 "editorMode": "code",
                 "expr": "sum(raidStatus != bool 1)",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -6253,7 +6323,7 @@ configs:
                 "editorMode": "code",
                 "expr": "max(temperature)",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -6304,7 +6374,7 @@ configs:
                 "editorMode": "code",
                 "expr": "max(sysUpTime) / 100",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -6979,7 +7049,7 @@ configs:
                 "editorMode": "code",
                 "expr": "count(count by (host_name) (system_memory_utilization_ratio{host_name=~\"$$host_name\"}))",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -7030,7 +7100,7 @@ configs:
                 "editorMode": "code",
                 "expr": "count(host_name:metrics_age_seconds:max{host_name=~\"$$host_name\"} > 600)",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -7081,7 +7151,7 @@ configs:
                 "editorMode": "code",
                 "expr": "max(system_filesystem_utilization_ratio{host_name=~\"$$host_name\", type!~\"vfat|tmpfs|squashfs|overlay\"})",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {
@@ -7133,7 +7203,7 @@ configs:
                 "editorMode": "code",
                 "expr": "count(zfs_pool_health != 0)",
                 "legendFormat": "__auto",
-                "range": true
+                "instant": true
               }
             ],
             "fieldConfig": {

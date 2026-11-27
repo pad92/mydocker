@@ -37,7 +37,7 @@ fail() {
 }
 
 # Same rendering as test_vector.sh: the file the container really receives.
-PUID="${PUID:-1000}" PGID="${PGID:-1000}" docker compose \
+PUID="${PUID:-1000}" PGID="${PGID:-1000}" VECTOR_WEBHOOK_PASSWORD="${VECTOR_WEBHOOK_PASSWORD:-0123456789abcdef}" docker compose \
   --project-directory "$stack_dir" --env-file "$env_file" \
   config --format json | jq -er '.configs.vector_config.content | gsub("\\$\\$"; "$")' > "$work_dir/vector.yaml"
 chmod -R a+rX "$work_dir"
