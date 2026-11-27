@@ -240,7 +240,7 @@ services:
   # (see the README). TLS to the box is verified against the Freebox CAs
   # built into the exporter. The freebox network gives it a route to the box.
   freebox-exporter:
-    image: ghcr.io/shackerd/freebox-exporter-rs:${FREEBOX_EXPORTER_VERSION:-v0.0.26}
+    image: ghcr.io/shackerd/freebox-exporter-rs:${FREEBOX_EXPORTER_VERSION:-v0.0.29-beta2@sha256:7da4b43dc9d1c6c87d4e561d4db274ab7e8766d62a390638b70368b324dbee0a}
     container_name: freebox-exporter
     restart: unless-stopped
     user: "65534:65534"
@@ -720,6 +720,10 @@ configs:
       system = true
       nas = false
       download = false
+      vm = false
+      raid = false
+      vpn = false
+      ddns = false
       prefix = "fbx_exporter"
 
       [policies]
