@@ -112,7 +112,7 @@ while IFS=$'\t' read -r source target; do
     "$work_dir/compose.json" > "$work_dir/configs/$source"
   mounts+=(-v "$work_dir/configs/$source:$target:ro")
 done < <(jq -r '.services.grafana.configs[] | [.source, .target] | @tsv' "$work_dir/compose.json")
-[[ ${#mounts[@]} -eq 34 ]] || fail "expected 17 Grafana configs, got $((${#mounts[@]} / 2))"
+[[ ${#mounts[@]} -eq 36 ]] || fail "expected 18 Grafana configs, got $((${#mounts[@]} / 2))"
 
 pinned="$(jq -r '.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC' "$work_dir/compose.json")"
 [[ "$pinned" == "$plugin_id@"* ]] || fail "GF_PLUGINS_PREINSTALL_SYNC is '$pinned', expected $plugin_id@<version>"
@@ -280,6 +280,13 @@ records += [{"log_stream": "dns_queries", "_msg": "dns", **r} for r in dns_queri
 records += [{"log_stream": "firewall", "severity": "notice", "level": "info", **r} for r in firewall]
 records += [{"log_stream": "syslog", "facility": "user", **r} for r in cef]
 records += [{"log_stream": "traefik", "_msg": "http", **r} for r in traefik]
+# Syslog of the UniFi devices, for the Réseau dashboard: one warning from the
+# switch, routine lines from an AP. Another host must stay out of both panels.
+records += [{"log_stream": "syslog", "facility": "daemon", "host_name": h, "level": lvl, "_msg": msg}
+            for h, lvl, msg in (("sw24poe", "warning", "port 21 link down"),
+                                ("wifi-rdc.example", "info", "station associated"),
+                                ("wifi-rdc.example", "info", "station left"),
+                                ("other.example", "error", "not a network device"))]
 # The rule states Vector polls from vmalert every minute (see alert_rules):
 # the Alertes dashboard reads the last 3 minutes, so they are fresh. One rule
 # per state, and one whose evaluation fails.
@@ -379,6 +386,33 @@ unifi = [("unpoller_client_uptime_seconds", "192.168.0.10", "aa:bb:cc:00:00:10",
 for name, ip, mac, label, value, minutes in unifi:
     series(name, {"ip": ip, "mac": mac, "name": label, "site_name": "default"},
            [(m, value) for m in minutes])
+# Réseau dashboard: the Freebox is up, its Synology exporter answers 0, unpoller
+# sees four of the five UniFi devices (wifi-etage-nuit is down) and chataigne
+# sends host metrics. Exporter series carry their job label, like the scrapes.
+fbx = {"job": "freebox"}
+series("up", fbx, [(m, 1) for m in recent])
+series("up", {"job": "synology"}, [(m, 0) for m in recent])
+series("fbx_exporter_connection_state", {**fbx, "state": "up"}, [(m, 1) for m in recent])
+series("fbx_exporter_connection_ftth_link", fbx, [(m, 1) for m in recent])
+series("fbx_exporter_connection_rate_down", fbx, [(m, 125000) for m in recent])
+series("fbx_exporter_connection_rate_up", fbx, [(m, 25000) for m in recent])
+up = {"job": "unpoller", "site_name": "default"}
+for device, kind in (("gw", "udm"), ("sw24poe", "usw"), ("wifi-rdc", "uap"), ("wifi-etage-vie", "uap")):
+    dev = {**up, "name": device}
+    series("unpoller_device_info", {**dev, "type": kind}, [(m, 1) for m in recent])
+    series("unpoller_device_uptime_seconds", dev, [(m, 86400 + 60 * (20 - m)) for m in recent])
+    series("unpoller_device_cpu_utilization_ratio", dev, [(m, 0.1) for m in recent])
+    series("unpoller_device_memory_utilization_ratio", dev, [(m, 0.5) for m in recent])
+    series("unpoller_device_temperature_celsius", dev, [(m, 45) for m in recent])
+    series("unpoller_device_stations", dev, [(m, 3) for m in recent])
+    series("unpoller_device_upgradable", dev, [(m, int(device == "sw24poe")) for m in recent])
+series("unpoller_device_wan_status", {**up, "name": "gw", "status": "online"}, [(m, 1) for m in recent])
+for direction in ("receive", "transmit"):
+    series(f"unpoller_device_wan_{direction}_bytes_total", {**up, "name": "gw"},
+           [(m, (20 - m) * 60000) for m in recent])
+series("unpoller_site_latency_seconds", {**up, "subsystem": "www"}, [(m, 0.012) for m in recent])
+series("system_memory_utilization_ratio", {"host_name": "chataigne.example", "state": "used"},
+       [(m, 0.7) for m in recent])
 with open(f"{work}/metrics.txt", "w") as f:
     f.write("\n".join(lines) + "\n")
 
@@ -414,7 +448,8 @@ def substitute(expr, datasource, variables, variant, all_values):
 
 index = []
 for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
-             "docker", "dns", "firewall", "http", "alerts", "disks", "services", "stack", "freebox"):
+             "docker", "dns", "firewall", "http", "alerts", "disks", "services", "stack", "freebox",
+             "network"):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     declared = {v["name"] for v in dash.get("templating", {}).get("list", [])}
     all_values = {v["name"]: v.get("allValue") for v in dash.get("templating", {}).get("list", [])
@@ -431,7 +466,8 @@ for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
                     continue
                 query = dict(target)
                 query["expr"] = substitute(target["expr"], datasource, variables, variant, all_values)
-                assert "$" not in re.sub(r"\$__range\b", "", query["expr"]), \
+                # $__range and a regex end anchor ($ before a closing quote) are not variables.
+                assert "$" not in re.sub(r'\$__range\b|\$(?=")', "", query["expr"]), \
                     f'{dash["uid"]} / {panel["title"]}: {query["expr"]}'
                 n = len(index) + 1
                 json.dump({"from": "now-24h", "to": "now", "queries": [query]},
@@ -567,7 +603,7 @@ if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
 
 expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-disks", "victoria-dns", "victoria-docker",
                  "victoria-firewall", "victoria-freebox",
-                 "victoria-hosts", "victoria-http", "victoria-logs", "victoria-proxmox", "victoria-services",
+                 "victoria-hosts", "victoria-http", "victoria-logs", "victoria-network", "victoria-proxmox", "victoria-services",
                  "victoria-stack", "victoria-synology", "victoria-unifi"]
 # Host S.M.A.R.T. panels of the disks dashboard, which must return the
 # smartctl_exporter series imported before (the NAS targets only parse).
@@ -575,12 +611,20 @@ smart_panels = {("victoria-disks", title) for title in (
     "Disques des hôtes", "Température des disques des hôtes",
     "Secteurs défectueux des disques des hôtes", "Vie restante des SSD des hôtes")}
 # Targets that must return nothing: test.example is not silent.
+# Réseau tree, by refId of the Canvas panel: 1 up, 0 down, -1 no collection.
+# wifi-etage-nuit (I) is down while unpoller answers, pads918 (K) is down by
+# its exporter.
+tree_panel = ("victoria-network", "Internet → Freebox → gw → sw24poe → équipements")
+tree_expected = dict(zip("ABCDEFGHIJK", (1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0)))
 expected_empty = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "value")}
 # Exact values from the Traefik records: 4 lines match the four values (one
 # 404, one 503), 11 lines have a host (the hostless 404 probe must not count,
 # the 6 long-lived streams do). The p95 latency leaves out the streams: 900 ms
 # is the slowest short request, in both variants.
-expected_values = {("victoria-http", "Requêtes", "value"): 4,
+expected_values = {("victoria-network", "Synology", "value"): 0,
+                   ("victoria-network", "UniFi", "value"): 4,
+                   ("victoria-network", "Hôtes OpenTelemetry", "value"): 2,
+                   ("victoria-http", "Requêtes", "value"): 4,
                    ("victoria-http", "Requêtes", "all"): 11,
                    ("victoria-http", "Taux de 4xx", "value"): 25,
                    ("victoria-http", "Taux de 4xx", "all"): 100 / 11,
@@ -711,15 +755,24 @@ for q in index:
         elif ips["192.168.0.10"][0] != ("aa:bb:cc:00:00:10", "laptop"):
             errors.append(f"{label}: 192.168.0.10 maps to {ips['192.168.0.10'][0]}, expected the MAC seen last")
         continue
-    if (q["datasource"] == "victorialogs" or q["dashboard"] == "victoria-hosts"
+    if (q["dashboard"], q["panel"]) == tree_panel:
+        got = [float(x) for f in result.get("frames", [])
+               for i, field in enumerate(f.get("schema", {}).get("fields", []))
+               if field.get("type") == "number"
+               for x in f.get("data", {}).get("values", [])[i] if x is not None]
+        if got != [tree_expected[q["refId"]]]:
+            errors.append(f"{label}: {got}, expected [{tree_expected[q['refId']]}]")
+        continue
+    if (q["datasource"] == "victorialogs" or q["dashboard"] in ("victoria-hosts", "victoria-network")
             or (q["dashboard"], q["panel"]) in smart_panels):
         found = any(has_data(f) for f in result.get("frames", []))
-        if (q["dashboard"], q["panel"], q["variant"]) in expected_empty:
+        key = (q["dashboard"], q["panel"], q["variant"])
+        if key in expected_empty:
             if found:
                 errors.append(f"{label}: data returned, expected none")
-        elif not found:
+        elif not found and expected_values.get(key) != 0:
+            # A value expected to be 0 is checked against expected_values below.
             errors.append(f"{label}: no data returned")
-        key = (q["dashboard"], q["panel"], q["variant"])
         got = [float(x) for f in result.get("frames", [])
                for i, field in enumerate(f.get("schema", {}).get("fields", []))
                if field.get("type") == "number"

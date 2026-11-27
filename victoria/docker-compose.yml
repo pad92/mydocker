@@ -468,6 +468,8 @@ services:
         target: /etc/grafana/dashboards/stack.json
       - source: grafana_dashboard_freebox
         target: /etc/grafana/dashboards/freebox.json
+      - source: grafana_dashboard_network
+        target: /etc/grafana/dashboards/network.json
     volumes:
       - ${GRAFANA_DATA_DIR:?Set GRAFANA_DATA_DIR}:/var/lib/grafana
     # traefik_gateway for Traefik and to download the plugin; victoria for
@@ -21814,6 +21816,2032 @@ configs:
               "y": 23,
               "w": 12,
               "h": 8
+            }
+          }
+        ]
+      }
+  grafana_dashboard_network:
+    content: |
+      {
+        "uid": "victoria-network",
+        "title": "Réseau",
+        "tags": [
+          "reseau",
+          "victoria"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          },
+          {
+            "type": "link",
+            "title": "Services rendus",
+            "tooltip": "Vue globale",
+            "icon": "dashboard",
+            "url": "/d/victoria-services/services-rendus",
+            "keepTime": true,
+            "targetBlank": false
+          },
+          {
+            "type": "link",
+            "title": "UniFi",
+            "icon": "dashboard",
+            "url": "/d/victoria-unifi",
+            "keepTime": true,
+            "targetBlank": false
+          },
+          {
+            "type": "link",
+            "title": "Freebox",
+            "icon": "dashboard",
+            "url": "/d/victoria-freebox",
+            "keepTime": true,
+            "targetBlank": false
+          }
+        ],
+        "templating": {
+          "list": []
+        },
+        "annotations": {
+          "list": []
+        },
+        "panels": [
+          {
+            "type": "row",
+            "title": "Arbre réseau",
+            "collapsed": false,
+            "panels": [],
+            "id": 1,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "canvas",
+            "title": "Internet → Freebox → gw → sw24poe → équipements",
+            "description": "Vert : en ligne. Rouge : tombé (l'équipement n'est plus vu par sa sonde alors que la sonde répond). Gris : la sonde elle-même ne remonte rien, l'état est inconnu. Liens : fibre (Freebox), WAN de la gw, puis état de l'équipement en aval. Sources : fbx_exporter, unpoller, OpenTelemetry (chataigne), exporteur Synology (pads918).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(fbx_exporter_connection_state{job=\"freebox\", state=\"up\"}) or on() vector(-1)",
+                "legendFormat": "internet",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(up{job=\"freebox\"}) or on() vector(-1)",
+                "legendFormat": "freebox",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(fbx_exporter_connection_ftth_link{job=\"freebox\"}) or on() vector(-1)",
+                "legendFormat": "fibre",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "D",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "(max(unpoller_device_uptime_seconds{job=\"unpoller\", name=\"gw\"}) > bool 0) or on() (0 * max(unpoller_device_info{job=\"unpoller\"})) or on() vector(-1)",
+                "legendFormat": "gw",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "E",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(unpoller_device_wan_status{job=\"unpoller\", name=\"gw\"}) or on() (0 * max(unpoller_device_info{job=\"unpoller\"})) or on() vector(-1)",
+                "legendFormat": "wan",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "F",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "(max(unpoller_device_uptime_seconds{job=\"unpoller\", name=\"sw24poe\"}) > bool 0) or on() (0 * max(unpoller_device_info{job=\"unpoller\"})) or on() vector(-1)",
+                "legendFormat": "sw24poe",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "G",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "(max(unpoller_device_uptime_seconds{job=\"unpoller\", name=\"wifi-rdc\"}) > bool 0) or on() (0 * max(unpoller_device_info{job=\"unpoller\"})) or on() vector(-1)",
+                "legendFormat": "wifi_rdc",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "H",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "(max(unpoller_device_uptime_seconds{job=\"unpoller\", name=\"wifi-etage-vie\"}) > bool 0) or on() (0 * max(unpoller_device_info{job=\"unpoller\"})) or on() vector(-1)",
+                "legendFormat": "wifi_etage_vie",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "I",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "(max(unpoller_device_uptime_seconds{job=\"unpoller\", name=\"wifi-etage-nuit\"}) > bool 0) or on() (0 * max(unpoller_device_info{job=\"unpoller\"})) or on() vector(-1)",
+                "legendFormat": "wifi_etage_nuit",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "J",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "(count(last_over_time(system_memory_utilization_ratio{host_name=~\"chataigne([.].*)?\"}[5m])) > bool 0) or on() (0 * count(last_over_time(system_memory_utilization_ratio{host_name=~\"chataigne([.].*)?\"}[24h]))) or on() vector(-1)",
+                "legendFormat": "chataigne",
+                "instant": true,
+                "range": false
+              },
+              {
+                "refId": "K",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(up{job=\"synology\"}) or on() vector(-1)",
+                "legendFormat": "pads918",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "-1",
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "#6e6e6e"
+                },
+                "mappings": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "? : OK",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "0": {
+                        "text": "? : HS",
+                        "color": "red",
+                        "index": 1
+                      },
+                      "-1": {
+                        "text": "? : aucune donnée",
+                        "color": "#6e6e6e",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "internet"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "Internet : OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "Internet : HS",
+                              "color": "red",
+                              "index": 1
+                            },
+                            "-1": {
+                              "text": "Internet : aucune donnée",
+                              "color": "#6e6e6e",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "freebox"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "Freebox : OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "Freebox : HS",
+                              "color": "red",
+                              "index": 1
+                            },
+                            "-1": {
+                              "text": "Freebox : aucune donnée",
+                              "color": "#6e6e6e",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "fibre"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "Fibre : OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "Fibre : HS",
+                              "color": "red",
+                              "index": 1
+                            },
+                            "-1": {
+                              "text": "Fibre : aucune donnée",
+                              "color": "#6e6e6e",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "gw"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "gw : OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "gw : HS",
+                              "color": "red",
+                              "index": 1
+                            },
+                            "-1": {
+                              "text": "gw : aucune donnée",
+                              "color": "#6e6e6e",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "wan"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "WAN gw : OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "WAN gw : HS",
+                              "color": "red",
+                              "index": 1
+                            },
+                            "-1": {
+                              "text": "WAN gw : aucune donnée",
+                              "color": "#6e6e6e",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "sw24poe"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "sw24poe : OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "sw24poe : HS",
+                              "color": "red",
+                              "index": 1
+                            },
+                            "-1": {
+                              "text": "sw24poe : aucune donnée",
+                              "color": "#6e6e6e",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "wifi_rdc"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "wifi-rdc : OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "wifi-rdc : HS",
+                              "color": "red",
+                              "index": 1
+                            },
+                            "-1": {
+                              "text": "wifi-rdc : aucune donnée",
+                              "color": "#6e6e6e",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "wifi_etage_vie"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "wifi-etage-vie : OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "wifi-etage-vie : HS",
+                              "color": "red",
+                              "index": 1
+                            },
+                            "-1": {
+                              "text": "wifi-etage-vie : aucune donnée",
+                              "color": "#6e6e6e",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "wifi_etage_nuit"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "wifi-etage-nuit : OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "wifi-etage-nuit : HS",
+                              "color": "red",
+                              "index": 1
+                            },
+                            "-1": {
+                              "text": "wifi-etage-nuit : aucune donnée",
+                              "color": "#6e6e6e",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "chataigne"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "chataigne : OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "chataigne : HS",
+                              "color": "red",
+                              "index": 1
+                            },
+                            "-1": {
+                              "text": "chataigne : aucune donnée",
+                              "color": "#6e6e6e",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "pads918"
+                  },
+                  "properties": [
+                    {
+                      "id": "mappings",
+                      "value": [
+                        {
+                          "type": "value",
+                          "options": {
+                            "1": {
+                              "text": "pads918 : OK",
+                              "color": "green",
+                              "index": 0
+                            },
+                            "0": {
+                              "text": "pads918 : HS",
+                              "color": "red",
+                              "index": 1
+                            },
+                            "-1": {
+                              "text": "pads918 : aucune donnée",
+                              "color": "#6e6e6e",
+                              "index": 2
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "inlineEditing": false,
+              "showAdvancedTypes": true,
+              "panZoom": false,
+              "infinitePan": false,
+              "root": {
+                "type": "frame",
+                "name": "root",
+                "elements": [
+                  {
+                    "type": "rectangle",
+                    "name": "Internet",
+                    "config": {
+                      "text": {
+                        "mode": "field",
+                        "field": "internet",
+                        "fixed": ""
+                      },
+                      "color": {
+                        "fixed": "#000000"
+                      },
+                      "size": 16,
+                      "align": "center",
+                      "valign": "middle"
+                    },
+                    "background": {
+                      "color": {
+                        "field": "internet",
+                        "fixed": "#6e6e6e"
+                      }
+                    },
+                    "border": {
+                      "color": {
+                        "fixed": "transparent"
+                      },
+                      "width": 0,
+                      "radius": 8
+                    },
+                    "constraint": {
+                      "horizontal": "scale",
+                      "vertical": "scale"
+                    },
+                    "placement": {
+                      "left": 2,
+                      "right": 84,
+                      "top": 42,
+                      "bottom": 43
+                    },
+                    "connections": [
+                      {
+                        "source": {
+                          "x": 1,
+                          "y": 0
+                        },
+                        "target": {
+                          "x": -1,
+                          "y": 0
+                        },
+                        "targetName": "Freebox",
+                        "color": {
+                          "field": "fibre",
+                          "fixed": "#6e6e6e"
+                        },
+                        "size": {
+                          "fixed": 3,
+                          "min": 1,
+                          "max": 10
+                        },
+                        "path": "straight",
+                        "direction": "forward"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "rectangle",
+                    "name": "Freebox",
+                    "config": {
+                      "text": {
+                        "mode": "field",
+                        "field": "freebox",
+                        "fixed": ""
+                      },
+                      "color": {
+                        "fixed": "#000000"
+                      },
+                      "size": 16,
+                      "align": "center",
+                      "valign": "middle"
+                    },
+                    "background": {
+                      "color": {
+                        "field": "freebox",
+                        "fixed": "#6e6e6e"
+                      }
+                    },
+                    "border": {
+                      "color": {
+                        "fixed": "transparent"
+                      },
+                      "width": 0,
+                      "radius": 8
+                    },
+                    "constraint": {
+                      "horizontal": "scale",
+                      "vertical": "scale"
+                    },
+                    "placement": {
+                      "left": 20,
+                      "right": 66,
+                      "top": 42,
+                      "bottom": 43
+                    },
+                    "connections": [
+                      {
+                        "source": {
+                          "x": 1,
+                          "y": 0
+                        },
+                        "target": {
+                          "x": -1,
+                          "y": 0
+                        },
+                        "targetName": "gw",
+                        "color": {
+                          "field": "wan",
+                          "fixed": "#6e6e6e"
+                        },
+                        "size": {
+                          "fixed": 3,
+                          "min": 1,
+                          "max": 10
+                        },
+                        "path": "straight",
+                        "direction": "forward"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "rectangle",
+                    "name": "gw",
+                    "config": {
+                      "text": {
+                        "mode": "field",
+                        "field": "gw",
+                        "fixed": ""
+                      },
+                      "color": {
+                        "fixed": "#000000"
+                      },
+                      "size": 16,
+                      "align": "center",
+                      "valign": "middle"
+                    },
+                    "background": {
+                      "color": {
+                        "field": "gw",
+                        "fixed": "#6e6e6e"
+                      }
+                    },
+                    "border": {
+                      "color": {
+                        "fixed": "transparent"
+                      },
+                      "width": 0,
+                      "radius": 8
+                    },
+                    "constraint": {
+                      "horizontal": "scale",
+                      "vertical": "scale"
+                    },
+                    "placement": {
+                      "left": 38,
+                      "right": 48,
+                      "top": 42,
+                      "bottom": 43
+                    },
+                    "connections": [
+                      {
+                        "source": {
+                          "x": 1,
+                          "y": 0
+                        },
+                        "target": {
+                          "x": -1,
+                          "y": 0
+                        },
+                        "targetName": "sw24poe",
+                        "color": {
+                          "field": "sw24poe",
+                          "fixed": "#6e6e6e"
+                        },
+                        "size": {
+                          "fixed": 3,
+                          "min": 1,
+                          "max": 10
+                        },
+                        "path": "straight",
+                        "direction": "forward"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "rectangle",
+                    "name": "sw24poe",
+                    "config": {
+                      "text": {
+                        "mode": "field",
+                        "field": "sw24poe",
+                        "fixed": ""
+                      },
+                      "color": {
+                        "fixed": "#000000"
+                      },
+                      "size": 16,
+                      "align": "center",
+                      "valign": "middle"
+                    },
+                    "background": {
+                      "color": {
+                        "field": "sw24poe",
+                        "fixed": "#6e6e6e"
+                      }
+                    },
+                    "border": {
+                      "color": {
+                        "fixed": "transparent"
+                      },
+                      "width": 0,
+                      "radius": 8
+                    },
+                    "constraint": {
+                      "horizontal": "scale",
+                      "vertical": "scale"
+                    },
+                    "placement": {
+                      "left": 56,
+                      "right": 30,
+                      "top": 42,
+                      "bottom": 43
+                    },
+                    "connections": [
+                      {
+                        "source": {
+                          "x": 1,
+                          "y": 0
+                        },
+                        "target": {
+                          "x": -1,
+                          "y": 0
+                        },
+                        "targetName": "wifi-rdc",
+                        "color": {
+                          "field": "wifi_rdc",
+                          "fixed": "#6e6e6e"
+                        },
+                        "size": {
+                          "fixed": 3,
+                          "min": 1,
+                          "max": 10
+                        },
+                        "path": "straight",
+                        "direction": "forward"
+                      },
+                      {
+                        "source": {
+                          "x": 1,
+                          "y": 0
+                        },
+                        "target": {
+                          "x": -1,
+                          "y": 0
+                        },
+                        "targetName": "wifi-etage-vie",
+                        "color": {
+                          "field": "wifi_etage_vie",
+                          "fixed": "#6e6e6e"
+                        },
+                        "size": {
+                          "fixed": 3,
+                          "min": 1,
+                          "max": 10
+                        },
+                        "path": "straight",
+                        "direction": "forward"
+                      },
+                      {
+                        "source": {
+                          "x": 1,
+                          "y": 0
+                        },
+                        "target": {
+                          "x": -1,
+                          "y": 0
+                        },
+                        "targetName": "wifi-etage-nuit",
+                        "color": {
+                          "field": "wifi_etage_nuit",
+                          "fixed": "#6e6e6e"
+                        },
+                        "size": {
+                          "fixed": 3,
+                          "min": 1,
+                          "max": 10
+                        },
+                        "path": "straight",
+                        "direction": "forward"
+                      },
+                      {
+                        "source": {
+                          "x": 1,
+                          "y": 0
+                        },
+                        "target": {
+                          "x": -1,
+                          "y": 0
+                        },
+                        "targetName": "chataigne",
+                        "color": {
+                          "field": "chataigne",
+                          "fixed": "#6e6e6e"
+                        },
+                        "size": {
+                          "fixed": 3,
+                          "min": 1,
+                          "max": 10
+                        },
+                        "path": "straight",
+                        "direction": "forward"
+                      },
+                      {
+                        "source": {
+                          "x": 1,
+                          "y": 0
+                        },
+                        "target": {
+                          "x": -1,
+                          "y": 0
+                        },
+                        "targetName": "pads918",
+                        "color": {
+                          "field": "pads918",
+                          "fixed": "#6e6e6e"
+                        },
+                        "size": {
+                          "fixed": 3,
+                          "min": 1,
+                          "max": 10
+                        },
+                        "path": "straight",
+                        "direction": "forward"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "rectangle",
+                    "name": "wifi-rdc",
+                    "config": {
+                      "text": {
+                        "mode": "field",
+                        "field": "wifi_rdc",
+                        "fixed": ""
+                      },
+                      "color": {
+                        "fixed": "#000000"
+                      },
+                      "size": 16,
+                      "align": "center",
+                      "valign": "middle"
+                    },
+                    "background": {
+                      "color": {
+                        "field": "wifi_rdc",
+                        "fixed": "#6e6e6e"
+                      }
+                    },
+                    "border": {
+                      "color": {
+                        "fixed": "transparent"
+                      },
+                      "width": 0,
+                      "radius": 8
+                    },
+                    "constraint": {
+                      "horizontal": "scale",
+                      "vertical": "scale"
+                    },
+                    "placement": {
+                      "left": 78,
+                      "right": 2,
+                      "top": 4,
+                      "bottom": 81
+                    },
+                    "connections": []
+                  },
+                  {
+                    "type": "rectangle",
+                    "name": "wifi-etage-vie",
+                    "config": {
+                      "text": {
+                        "mode": "field",
+                        "field": "wifi_etage_vie",
+                        "fixed": ""
+                      },
+                      "color": {
+                        "fixed": "#000000"
+                      },
+                      "size": 16,
+                      "align": "center",
+                      "valign": "middle"
+                    },
+                    "background": {
+                      "color": {
+                        "field": "wifi_etage_vie",
+                        "fixed": "#6e6e6e"
+                      }
+                    },
+                    "border": {
+                      "color": {
+                        "fixed": "transparent"
+                      },
+                      "width": 0,
+                      "radius": 8
+                    },
+                    "constraint": {
+                      "horizontal": "scale",
+                      "vertical": "scale"
+                    },
+                    "placement": {
+                      "left": 78,
+                      "right": 2,
+                      "top": 23,
+                      "bottom": 62
+                    },
+                    "connections": []
+                  },
+                  {
+                    "type": "rectangle",
+                    "name": "wifi-etage-nuit",
+                    "config": {
+                      "text": {
+                        "mode": "field",
+                        "field": "wifi_etage_nuit",
+                        "fixed": ""
+                      },
+                      "color": {
+                        "fixed": "#000000"
+                      },
+                      "size": 16,
+                      "align": "center",
+                      "valign": "middle"
+                    },
+                    "background": {
+                      "color": {
+                        "field": "wifi_etage_nuit",
+                        "fixed": "#6e6e6e"
+                      }
+                    },
+                    "border": {
+                      "color": {
+                        "fixed": "transparent"
+                      },
+                      "width": 0,
+                      "radius": 8
+                    },
+                    "constraint": {
+                      "horizontal": "scale",
+                      "vertical": "scale"
+                    },
+                    "placement": {
+                      "left": 78,
+                      "right": 2,
+                      "top": 42,
+                      "bottom": 43
+                    },
+                    "connections": []
+                  },
+                  {
+                    "type": "rectangle",
+                    "name": "chataigne",
+                    "config": {
+                      "text": {
+                        "mode": "field",
+                        "field": "chataigne",
+                        "fixed": ""
+                      },
+                      "color": {
+                        "fixed": "#000000"
+                      },
+                      "size": 16,
+                      "align": "center",
+                      "valign": "middle"
+                    },
+                    "background": {
+                      "color": {
+                        "field": "chataigne",
+                        "fixed": "#6e6e6e"
+                      }
+                    },
+                    "border": {
+                      "color": {
+                        "fixed": "transparent"
+                      },
+                      "width": 0,
+                      "radius": 8
+                    },
+                    "constraint": {
+                      "horizontal": "scale",
+                      "vertical": "scale"
+                    },
+                    "placement": {
+                      "left": 78,
+                      "right": 2,
+                      "top": 61,
+                      "bottom": 24
+                    },
+                    "connections": []
+                  },
+                  {
+                    "type": "rectangle",
+                    "name": "pads918",
+                    "config": {
+                      "text": {
+                        "mode": "field",
+                        "field": "pads918",
+                        "fixed": ""
+                      },
+                      "color": {
+                        "fixed": "#000000"
+                      },
+                      "size": 16,
+                      "align": "center",
+                      "valign": "middle"
+                    },
+                    "background": {
+                      "color": {
+                        "field": "pads918",
+                        "fixed": "#6e6e6e"
+                      }
+                    },
+                    "border": {
+                      "color": {
+                        "fixed": "transparent"
+                      },
+                      "width": 0,
+                      "radius": 8
+                    },
+                    "constraint": {
+                      "horizontal": "scale",
+                      "vertical": "scale"
+                    },
+                    "placement": {
+                      "left": 78,
+                      "right": 2,
+                      "top": 80,
+                      "bottom": 5
+                    },
+                    "connections": []
+                  }
+                ],
+                "background": {
+                  "color": {
+                    "fixed": "transparent"
+                  }
+                },
+                "border": {
+                  "color": {
+                    "fixed": "transparent"
+                  }
+                },
+                "constraint": {
+                  "horizontal": "left",
+                  "vertical": "top"
+                },
+                "placement": {
+                  "left": 0,
+                  "top": 0,
+                  "width": 100,
+                  "height": 100
+                }
+              }
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 0,
+              "y": 1,
+              "w": 24,
+              "h": 14
+            }
+          },
+          {
+            "type": "row",
+            "title": "Collecte",
+            "collapsed": false,
+            "panels": [],
+            "id": 3,
+            "gridPos": {
+              "x": 0,
+              "y": 15,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Freebox",
+            "description": "Dernière collecte de l'exporteur Freebox (1 = réussie).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(up{job=\"freebox\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 0,
+              "y": 16,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "UniFi",
+            "description": "Équipements UniFi vus par unpoller. Aucune donnée : unpoller ne lit plus le contrôleur.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "count(unpoller_device_info{job=\"unpoller\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 6,
+              "y": 16,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Synology",
+            "description": "Dernière collecte de l'exporteur Synology (1 = réussie).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(up{job=\"synology\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 6,
+            "gridPos": {
+              "x": 12,
+              "y": 16,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Hôtes OpenTelemetry",
+            "description": "Hôtes dont les métriques système sont arrivées dans les 5 dernières minutes.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "count(count by (host_name) (last_over_time(system_memory_utilization_ratio[5m])))",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 7,
+            "gridPos": {
+              "x": 18,
+              "y": 16,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "row",
+            "title": "Équipements UniFi",
+            "collapsed": false,
+            "panels": [],
+            "id": 8,
+            "gridPos": {
+              "x": 0,
+              "y": 20,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "table",
+            "title": "Équipements vus par unpoller",
+            "description": "Un équipement absent de cette liste n'est plus vu par le contrôleur UniFi.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (name) (unpoller_device_uptime_seconds{job=\"unpoller\"})",
+                "legendFormat": "uptime",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (name) (unpoller_device_cpu_utilization_ratio{job=\"unpoller\"})",
+                "legendFormat": "cpu",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (name) (unpoller_device_memory_utilization_ratio{job=\"unpoller\"})",
+                "legendFormat": "memoire",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "D",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (name) (unpoller_device_temperature_celsius{job=\"unpoller\"})",
+                "legendFormat": "temperature",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "E",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (name) (unpoller_device_stations{job=\"unpoller\"})",
+                "legendFormat": "clients",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "F",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (name) (unpoller_device_upgradable{job=\"unpoller\"})",
+                "legendFormat": "maj",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "merge",
+                "options": {}
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "excludeByName": {
+                    "Time": true
+                  },
+                  "indexByName": {
+                    "name": 0,
+                    "Value #A": 1,
+                    "Value #B": 2,
+                    "Value #C": 3,
+                    "Value #D": 4,
+                    "Value #E": 5,
+                    "Value #F": 6
+                  },
+                  "renameByName": {
+                    "name": "équipement",
+                    "Value #A": "démarré depuis",
+                    "Value #B": "CPU",
+                    "Value #C": "mémoire",
+                    "Value #D": "température",
+                    "Value #E": "clients",
+                    "Value #F": "mise à jour"
+                  }
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": false
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Value #A"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "s"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Value #B"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "percentunit"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Value #C"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "percentunit"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Value #D"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "celsius"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Value #E"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "short"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Value #F"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "short"
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 9,
+            "gridPos": {
+              "x": 0,
+              "y": 21,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Latence du site",
+            "description": "Latence mesurée par le contrôleur UniFi vers Internet.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(unpoller_site_latency_seconds{job=\"unpoller\", subsystem=\"www\"})",
+                "legendFormat": "latence",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 10,
+            "gridPos": {
+              "x": 12,
+              "y": 21,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Débit WAN de la gw",
+            "description": "Débit reçu et émis sur le WAN de la gw UniFi.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(rate(unpoller_device_wan_receive_bytes_total{job=\"unpoller\", name=\"gw\"}[5m])) * 8",
+                "legendFormat": "reçu",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(rate(unpoller_device_wan_transmit_bytes_total{job=\"unpoller\", name=\"gw\"}[5m])) * 8",
+                "legendFormat": "émis",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bps",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 11,
+            "gridPos": {
+              "x": 0,
+              "y": 29,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Débit de la Freebox",
+            "description": "Débit reçu et émis par la Freebox.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(fbx_exporter_connection_rate_down{job=\"freebox\"}) * 8",
+                "legendFormat": "reçu",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(fbx_exporter_connection_rate_up{job=\"freebox\"}) * 8",
+                "legendFormat": "émis",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bps",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 12,
+            "gridPos": {
+              "x": 12,
+              "y": 29,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Logs des équipements UniFi",
+            "collapsed": false,
+            "panels": [],
+            "id": 13,
+            "gridPos": {
+              "x": 0,
+              "y": 37,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "table",
+            "title": "Dernier log syslog par équipement",
+            "description": "Un équipement qui n'envoie plus de syslog depuis longtemps est peut-être tombé.",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "queryType": "instant",
+                "expr": "{log_stream=\"syslog\"} host_name:~\"^(unifi|wifi-[a-z-]+|sw24poe)([.].+)?$$\" | stats by (host_name) max(_time) as dernier, count() as logs | sort by (dernier)"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "extractFields",
+                "options": {
+                  "source": "labels",
+                  "format": "json",
+                  "replace": true,
+                  "keepTime": false
+                }
+              },
+              {
+                "id": "convertFieldType",
+                "options": {
+                  "conversions": [
+                    {
+                      "targetField": "logs",
+                      "destinationType": "number"
+                    },
+                    {
+                      "targetField": "dernier",
+                      "destinationType": "time"
+                    }
+                  ],
+                  "fields": {}
+                }
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "indexByName": {
+                    "host_name": 0,
+                    "dernier": 1,
+                    "logs": 2
+                  },
+                  "renameByName": {
+                    "host_name": "équipement",
+                    "dernier": "dernier log"
+                  },
+                  "excludeByName": {}
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "filterable": false
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "id": 14,
+            "gridPos": {
+              "x": 0,
+              "y": 38,
+              "w": 8,
+              "h": 10
+            }
+          },
+          {
+            "type": "logs",
+            "title": "Avertissements et erreurs",
+            "datasource": {
+              "type": "victoriametrics-logs-datasource",
+              "uid": "victorialogs"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "editorMode": "code",
+                "queryType": "instant",
+                "expr": "{log_stream=\"syslog\"} host_name:~\"^(unifi|wifi-[a-z-]+|sw24poe)([.].+)?$$\" level:in(warning,error,crit,alert,emerg) | sort by (_time desc) | limit 200"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "enableLogDetails": true,
+              "dedupStrategy": "none",
+              "prettifyLogMessage": false,
+              "showCommonLabels": false,
+              "showLabels": false
+            },
+            "id": 15,
+            "gridPos": {
+              "x": 8,
+              "y": 38,
+              "w": 16,
+              "h": 10
             }
           }
         ]
