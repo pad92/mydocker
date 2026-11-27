@@ -13526,7 +13526,7 @@ configs:
                   "uid": "victorialogs"
                 },
                 "editorMode": "code",
-                "expr": "_time:3m {log_stream=\"alerts\"} | last 1 by (_time) partition by (alert_source, alert_rule) | format \"3\" as prio | format if (alert_state:=pending) \"2\" as prio | format if (alert_health:=err) \"1\" as prio | format if (alert_state:=firing alert_severity:!=none) \"0\" as prio | sort by (prio, alert_rule) | fields alert_rule, alert_state, alert_health, _msg, alert_active_since, alert_severity, alert_source, alert_group, alert_last_evaluation",
+                "expr": "_time:3m {log_stream=\"alerts\"} | last 1 by (_time) partition by (alert_source, alert_rule) | format \"3\" as prio | format if (alert_state:=pending) \"2\" as prio | format if (alert_health:=err) \"1\" as prio | format if (alert_state:=firing alert_severity:!=none) \"0\" as prio | format if (alert_state:=firing alert_severity:=none) \"veille\" as alert_state | sort by (prio, alert_rule) | fields alert_rule, alert_state, alert_health, _msg, alert_active_since, alert_severity, alert_source, alert_group, alert_last_evaluation",
                 "queryType": "instant"
               }
             ],
@@ -13602,6 +13602,11 @@ configs:
                               "text": "OK",
                               "color": "green",
                               "index": 2
+                            },
+                            "veille": {
+                              "text": "en service",
+                              "color": "green",
+                              "index": 3
                             }
                           }
                         }

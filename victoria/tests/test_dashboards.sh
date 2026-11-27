@@ -702,6 +702,22 @@ for q in index:
         if key in expected_values:
             if len(got) != 1 or abs(got[0] - expected_values[key]) > 0.01:
                 errors.append(f"{label}: {got}, expected {expected_values[key]}")
+        if (q["dashboard"], q["panel"]) == ("victoria-alerts", "État des règles"):
+            # The firing watchdog is the healthy state: shown as "veille" (green),
+            # while a real firing rule keeps "firing" (red).
+            states = {}
+            for f in result.get("frames", []):
+                fields = f.get("schema", {}).get("fields", [])
+                columns = f.get("data", {}).get("values", [])
+                for r in range(len(columns[0]) if columns else 0):
+                    row = {}
+                    for i, field in enumerate(fields):
+                        v = columns[i][r]
+                        row.update(v if isinstance(v, dict) else {field.get("name"): v})
+                    states[row.get("alert_rule")] = row.get("alert_state")
+            want = {"watchdog": "veille", "proxmox_backup_failed": "firing"}
+            if any(states.get(k) != v for k, v in want.items()):
+                errors.append(f"{label}: states {states}, expected {want}")
 
 seen = sorted({q["dashboard"] for q in index})
 if seen != expected_uids:
