@@ -8,6 +8,12 @@
 #   target the right service (logs to vector, metrics to victoriametrics);
 # - the health check bypass routers match only GET/HEAD /health and target
 #   the database of their host;
+# - the MCP bypass router matches only POST, GET and DELETE /mcp on the
+#   Grafana host, has no middleware and targets grafana-mcp on 8000; the
+#   server is read-only (--disable-write), accepts only the Grafana host,
+#   no browser origin, reaches Grafana on the internal network, has no port,
+#   joins traefik_gateway and victoria only, refuses to start with an empty
+#   or short token, and its two tokens are empty in .env.example;
 # - every other router on the three hosts, in any service, carries the forward
 #   auth middleware, except the HTTP to HTTPS redirects;
 # - Grafana trusts only the X-authentik-username header (auth proxy) and has
@@ -91,6 +97,40 @@ check_bypass victoriametrics_health \
   "Host(\`$metrics_host\`) && (Method(\`GET\`) || Method(\`HEAD\`)) && Path(\`/health\`)" \
   "" victoriametrics victoriametrics
 
+# MCP server: POST/GET/DELETE /mcp only, no forward auth (the bearer token of
+# mcp-grafana is the barrier), port 8000 of the grafana-mcp container.
+check_bypass victoria_grafana_mcp \
+  "Host(\`$grafana_host\`) && (Method(\`POST\`) || Method(\`GET\`) || Method(\`DELETE\`)) && Path(\`/mcp\`)" \
+  "" victoria_grafana_mcp grafana-mcp
+[ "$(label traefik.http.services.victoria_grafana_mcp.loadbalancer.server.port)" = 8000 ] \
+  || fail "victoria_grafana_mcp does not target port 8000"
+[ "$(owner traefik.http.services.victoria_grafana_mcp.loadbalancer.server.port)" = grafana-mcp ] \
+  || fail "the victoria_grafana_mcp service is not defined on the grafana-mcp container"
+# Read-only, Host limited to the Grafana domain, Grafana reached on the
+# internal network, no port, and a start that refuses an empty or short token
+# (mcp-grafana serves without authentication when its token is empty).
+mcp_cmd="$(jq -r '.services."grafana-mcp".command | join("\n")' <<<"$config")"
+mcp_env() { jq -r --arg k "$1" '.services."grafana-mcp".environment[$k] // ""' <<<"$config"; }
+grep -q -- '--disable-write' <<<"$mcp_cmd" || fail "grafana-mcp is not read-only (--disable-write)"
+# docker compose config keeps the $$ escape of the compose file.
+grep -q -- '--allowed-hosts "$${MCP_ALLOWED_HOST}"' <<<"$mcp_cmd" \
+  || fail "grafana-mcp does not limit the Host header to MCP_ALLOWED_HOST"
+[ "$(mcp_env MCP_ALLOWED_HOST)" = "$grafana_host" ] \
+  || fail "grafana-mcp allows the host '$(mcp_env MCP_ALLOWED_HOST)', expected $grafana_host"
+grep -q -- '--allowed-origins' <<<"$mcp_cmd" && fail "grafana-mcp allows browser origins"
+grep -q '"$${#MCP_GRAFANA_SERVER_TOKEN}" -lt 32' <<<"$mcp_cmd" \
+  || fail "grafana-mcp starts without checking the length of its server token"
+[ "$(jq -r '.services."grafana-mcp".entrypoint | join(" ")' <<<"$config")" = "/bin/sh -c" ] \
+  || fail "grafana-mcp does not start through the token check"
+[ "$(mcp_env GRAFANA_URL)" = "http://grafana:3000" ] \
+  || fail "grafana-mcp does not reach Grafana on the internal network"
+jq -e '.services."grafana-mcp" | (.ports // []) == []
+  and (.networks | keys) == ["traefik_gateway", "victoria"]' <<<"$config" >/dev/null \
+  || fail "grafana-mcp publishes a port or joins unexpected networks"
+for secret in GRAFANA_MCP_SA_TOKEN GRAFANA_MCP_SERVER_TOKEN; do
+  grep -q "^$secret=$" "$stack_dir/.env.example" || fail "$secret has a value in .env.example"
+done
+
 [ "$(label traefik.http.routers.victoria_grafana.rule)" = "Host(\`$grafana_host\`)" ] \
   || fail "victoria_grafana rule is other than the Grafana host"
 [ "$(owner traefik.http.routers.victoria_grafana.rule)" = grafana ] \
@@ -112,7 +152,7 @@ for router in $routers; do
       [ "$(label "traefik.http.routers.$router.middlewares")" = redirect-https ] \
         || fail "$router does not only redirect to HTTPS"
       continue ;;
-    vector_ingest|victoriametrics_ingest|victorialogs_health|victoriametrics_health) continue ;;
+    vector_ingest|victoriametrics_ingest|victorialogs_health|victoriametrics_health|victoria_grafana_mcp) continue ;;
   esac
   label "traefik.http.routers.$router.middlewares" | grep -q '^authentik@docker' \
     || fail "router $router bypasses forward auth"

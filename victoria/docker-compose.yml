@@ -497,6 +497,61 @@ services:
       traefik.http.routers.victoria_grafana.middlewares: "authentik@docker"
       traefik.http.routers.victoria_grafana.service: "victoria_grafana"
     logging: *default-logging
+
+  # MCP server for Grafana (dashboards, datasource queries), read-only. Served
+  # on the Grafana domain under /mcp, without Authentik: MCP clients cannot
+  # follow the OAuth redirect of the forward auth. The bearer token
+  # GRAFANA_MCP_SERVER_TOKEN is the only barrier, so keep it long and secret.
+  # It reaches Grafana on the internal network with the token of a Viewer
+  # service account (see the README). The image has no wget or curl, hence no
+  # healthcheck.
+  grafana-mcp:
+    image: grafana/mcp-grafana:${GRAFANA_MCP_VERSION:-2.4.0}
+    container_name: victoria-grafana-mcp
+    restart: unless-stopped
+    depends_on:
+      - grafana
+    # The image entrypoint forces --transport sse; replaced as a whole.
+    # mcp-grafana serves without any client authentication when its server
+    # token is empty, so the shell refuses to start it with an empty or short
+    # token (fail closed). It waits and logs why, instead of restarting in a
+    # loop. The tokens default to empty here, not ${...:?}, so that the tests
+    # can render the compose file with .env.example.
+    # --allowed-hosts: the default (loopback) rejects requests that come
+    # through Traefik. No --allowed-origins: requests with an Origin header
+    # (browsers) are rejected.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ "$${#MCP_GRAFANA_SERVER_TOKEN}" -lt 32 ] || [ -z "$${GRAFANA_SERVICE_ACCOUNT_TOKEN}" ]; then
+          echo "GRAFANA_MCP_SERVER_TOKEN (32 characters or more) or GRAFANA_MCP_SA_TOKEN is missing, see the README" >&2
+          exec sleep 2147483647
+        fi
+        exec /app/mcp-grafana --transport streamable-http --address 0.0.0.0:8000 \
+          --disable-write --allowed-hosts "$${MCP_ALLOWED_HOST}"
+    environment:
+      GRAFANA_URL: http://grafana:3000
+      MCP_ALLOWED_HOST: "${VICTORIA_GRAFANA_DOMAIN:?Set VICTORIA_GRAFANA_DOMAIN}"
+      GRAFANA_SERVICE_ACCOUNT_TOKEN: "${GRAFANA_MCP_SA_TOKEN:-}"
+      MCP_GRAFANA_SERVER_TOKEN: "${GRAFANA_MCP_SERVER_TOKEN:-}"
+    # traefik_gateway for Traefik; victoria to reach Grafana.
+    networks:
+      - traefik_gateway
+      - victoria
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.victoria_grafana_mcp.loadbalancer.server.port: "8000"
+      # More specific than victoria_grafana, so Traefik tries it first. The
+      # HTTP redirect of victoria_grafana_http covers this path too.
+      traefik.http.routers.victoria_grafana_mcp.rule: "Host(`${VICTORIA_GRAFANA_DOMAIN:?Set VICTORIA_GRAFANA_DOMAIN}`) && (Method(`POST`) || Method(`GET`) || Method(`DELETE`)) && Path(`/mcp`)"
+      traefik.http.routers.victoria_grafana_mcp.entrypoints: "websecure"
+      traefik.http.routers.victoria_grafana_mcp.tls: "true"
+      traefik.http.routers.victoria_grafana_mcp.tls.certresolver: "stepca"
+      traefik.http.routers.victoria_grafana_mcp.service: "victoria_grafana_mcp"
+    logging: *default-logging
 networks:
   traefik_gateway:
     external: true
