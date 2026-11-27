@@ -81,7 +81,7 @@ SOURCES: dict[str, str] = {
 # Variables that Compose interpolates, per config: the only ${...} written
 # with a single $ in docker-compose.yml.
 INTERPOLATED: dict[str, frozenset[str]] = {
-    "victoriametrics_scrape": frozenset({"SYNOLOGY_SNMP_TARGET"}),
+    "victoriametrics_scrape": frozenset({"SYNOLOGY_SNMP_TARGET", "NVIDIA_GPU_HOST_NAME"}),
     "alertmanager_config": frozenset(
         {"ALERTMANAGER_WATCHDOG_URL", "VECTOR_WEBHOOK_PASSWORD"}
     ),

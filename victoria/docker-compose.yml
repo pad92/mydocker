@@ -137,7 +137,7 @@ services:
     security_opt:
       - no-new-privileges:true
     labels:
-      mydocker.config-hash: "f5f5ee6244a7889cbac55aa3e1bae58f8db8ffae37e9180210f587f57b72688f"
+      mydocker.config-hash: "44b75a753c0b3dfc990097063197e8cca613f8f34bf36e46aa875936c6e68da3"
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.victoriametrics.loadbalancer.server.port: "8428"
@@ -577,7 +577,7 @@ services:
     security_opt:
       - no-new-privileges:true
     labels:
-      mydocker.config-hash: "8cc1de8fbaf7d19c0096c79157660616c257df02ae100d80605fd2fe94a612e3"
+      mydocker.config-hash: "8885d9acf81f225038cfeb91d54c14a807f6ed7d6dbc9c6b2175efb902f0081b"
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.victoria_grafana.loadbalancer.server.port: "3000"
@@ -743,11 +743,16 @@ configs:
           static_configs:
             - targets: ["freebox-exporter:9102"]
         # nvidia-gpu-exporter (NVML): GPU totals and the VRAM of each process
-        # on the GPU, with its container_id.
+        # on the GPU, with its container_id. The exporter runs on the Docker host
+        # that holds the GPU; host_name ties its series to that host so the Hosts
+        # dashboard can filter them like the OpenTelemetry host metrics.
+        # NVIDIA_GPU_HOST_NAME must match that host_name.
         - job_name: nvidia-gpu
           scrape_interval: 30s
           static_configs:
             - targets: ["nvidia-gpu-exporter:9835"]
+              labels:
+                host_name: "${NVIDIA_GPU_HOST_NAME:?Set NVIDIA_GPU_HOST_NAME}"
   # SNMPv3 auth of snmp-exporter. The exporter expands the ${...}
   # references from its own environment, not Compose.
   snmp_exporter_auth:
@@ -8301,6 +8306,673 @@ configs:
             "gridPos": {
               "x": 12,
               "y": 40,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "GPU",
+            "collapsed": false,
+            "panels": [],
+            "id": 19,
+            "gridPos": {
+              "x": 0,
+              "y": 48,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Utilisation GPU",
+            "description": "Part du temps où au moins un noyau de calcul tournait sur le GPU, au dernier relevé de nvidia-gpu-exporter (30 s). Le maximum des GPU sélectionnés.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(nvidia_smi_utilization_gpu_ratio{host_name=~\"$$host_name\"})",
+                "legendFormat": "__auto",
+                "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 0,
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.8
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 20,
+            "gridPos": {
+              "x": 0,
+              "y": 49,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "VRAM GPU utilisée",
+            "description": "Mémoire du GPU occupée sur sa capacité, le GPU le plus rempli. Au-delà de la capacité, un modèle Ollama passe en partie sur le CPU et un job Immich ML échoue.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(nvidia_smi_memory_used_bytes{host_name=~\"$$host_name\"} / nvidia_smi_memory_total_bytes{host_name=~\"$$host_name\"})",
+                "legendFormat": "__auto",
+                "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 1,
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.8
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.95
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 21,
+            "gridPos": {
+              "x": 6,
+              "y": 49,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Température GPU",
+            "description": "Température du cœur, le GPU le plus chaud. Une GTX 1060 commence à réduire ses fréquences vers 83 °C.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(nvidia_smi_temperature_gpu{host_name=~\"$$host_name\"})",
+                "legendFormat": "__auto",
+                "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "celsius",
+                "decimals": 0,
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 75
+                    },
+                    {
+                      "color": "red",
+                      "value": 83
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 22,
+            "gridPos": {
+              "x": 12,
+              "y": 49,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Puissance GPU",
+            "description": "Consommation électrique instantanée moyennée par le pilote, somme des GPU sélectionnés.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(nvidia_smi_power_draw_watts{host_name=~\"$$host_name\"})",
+                "legendFormat": "__auto",
+                "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "watt",
+                "decimals": 0,
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 100
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 23,
+            "gridPos": {
+              "x": 18,
+              "y": 49,
+              "w": 6,
+              "h": 4
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Utilisation du GPU",
+            "description": "Calcul : temps où un noyau tournait. Mémoire : temps où la VRAM était lue ou écrite. Encodeur et décodeur : unités vidéo NVENC/NVDEC (transcodage Immich ou Jellyfin).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "nvidia_smi_utilization_gpu_ratio{host_name=~\"$$host_name\"}",
+                "legendFormat": "{{host_name}} calcul",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "nvidia_smi_utilization_memory_ratio{host_name=~\"$$host_name\"}",
+                "legendFormat": "{{host_name}} mémoire",
+                "range": true
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "nvidia_smi_utilization_encoder_ratio{host_name=~\"$$host_name\"}",
+                "legendFormat": "{{host_name}} encodeur",
+                "range": true
+              },
+              {
+                "refId": "D",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "nvidia_smi_utilization_decoder_ratio{host_name=~\"$$host_name\"}",
+                "legendFormat": "{{host_name}} décodeur",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                },
+                "min": 0,
+                "max": 1
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 24,
+            "gridPos": {
+              "x": 0,
+              "y": 53,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "VRAM par conteneur",
+            "description": "VRAM de chaque processus du GPU, nommée d'après son conteneur (record container:nvidia_smi_compute_app_used_memory_bytes, évalué chaque minute). « hors conteneur ou inconnu » : processus hors Docker, ou conteneur sans log depuis un jour. Pointillés : VRAM utilisée au total (pilote compris) et capacité.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "label_replace(sum by (host_name, container_name) (container:nvidia_smi_compute_app_used_memory_bytes{host_name=~\"$$host_name\"}), \"container_name\", \"hors conteneur ou inconnu\", \"container_name\", \"\")",
+                "legendFormat": "{{host_name}} {{container_name}}",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (host_name) (nvidia_smi_memory_used_bytes{host_name=~\"$$host_name\"})",
+                "legendFormat": "{{host_name}} utilisée (total)",
+                "range": true
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (host_name) (nvidia_smi_memory_total_bytes{host_name=~\"$$host_name\"})",
+                "legendFormat": "{{host_name}} capacité",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bytes",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 30,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  }
+                },
+                "min": 0
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byRegexp",
+                    "options": ".* (utilisée \\(total\\)|capacité)$$"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.stacking",
+                      "value": {
+                        "mode": "none",
+                        "group": "A"
+                      }
+                    },
+                    {
+                      "id": "custom.fillOpacity",
+                      "value": 0
+                    },
+                    {
+                      "id": "custom.lineStyle",
+                      "value": {
+                        "fill": "dash",
+                        "dash": [
+                          10,
+                          10
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 25,
+            "gridPos": {
+              "x": 12,
+              "y": 53,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Température et ventilateur du GPU",
+            "description": "Température du cœur (axe de gauche) et vitesse du ventilateur demandée par le pilote (axe de droite).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "nvidia_smi_temperature_gpu{host_name=~\"$$host_name\"}",
+                "legendFormat": "{{host_name}} température",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "nvidia_smi_fan_speed_ratio{host_name=~\"$$host_name\"}",
+                "legendFormat": "{{host_name}} ventilateur",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "celsius",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byRegexp",
+                    "options": ".* ventilateur$$"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "percentunit"
+                    },
+                    {
+                      "id": "custom.axisPlacement",
+                      "value": "right"
+                    },
+                    {
+                      "id": "min",
+                      "value": 0
+                    },
+                    {
+                      "id": "max",
+                      "value": 1
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 26,
+            "gridPos": {
+              "x": 0,
+              "y": 61,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Puissance du GPU",
+            "description": "Consommation électrique et limite appliquée par le pilote (pointillés). Une consommation collée à la limite indique un GPU bridé par sa puissance.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "nvidia_smi_power_draw_watts{host_name=~\"$$host_name\"}",
+                "legendFormat": "{{host_name}} consommation",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "nvidia_smi_enforced_power_limit_watts{host_name=~\"$$host_name\"}",
+                "legendFormat": "{{host_name}} limite",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "watt",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                },
+                "min": 0
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byRegexp",
+                    "options": ".* limite$$"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.stacking",
+                      "value": {
+                        "mode": "none",
+                        "group": "A"
+                      }
+                    },
+                    {
+                      "id": "custom.fillOpacity",
+                      "value": 0
+                    },
+                    {
+                      "id": "custom.lineStyle",
+                      "value": {
+                        "fill": "dash",
+                        "dash": [
+                          10,
+                          10
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 27,
+            "gridPos": {
+              "x": 12,
+              "y": 61,
               "w": 12,
               "h": 8
             }
