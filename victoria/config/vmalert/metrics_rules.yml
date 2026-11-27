@@ -245,6 +245,71 @@ groups:
         annotations:
           summary: "Plus de donnee SMART de {{ $labels.host_name }} depuis 30 minutes"
           description: "smartctl_exporter ou sa collecte par le collecteur OpenTelemetry est arrete"
+  # The UPS is on USB on the Synology NAS, whose NUT server reads it; the
+  # job synology reads it in the SYNOLOGY-UPS-MIB. instance is the NAS,
+  # not the UPS. upsInfoStatus is 1, with the NUT status in its label of
+  # the same name: several flags in one string ("OB DISCHRG", "OL CHRG
+  # RB"), so the regexes match one flag as a whole word.
+  - name: ups
+    interval: 1m
+    rules:
+      # 1m: a transfer of a few seconds is no outage.
+      - alert: ups_on_battery
+        expr: max by (instance) (upsInfoStatus{upsInfoStatus=~"(.* )?OB( .*)?"}) == 1
+        for: 1m
+        keep_firing_for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Onduleur sur batterie (lu par {{ $labels.instance }})"
+          description: "Coupure secteur : l'onduleur alimente les equipements sur sa batterie"
+      # The UPS's own low battery flag: the NAS starts its shutdown.
+      - alert: ups_low_battery
+        expr: max by (instance) (upsInfoStatus{upsInfoStatus=~"(.* )?LB( .*)?"}) == 1
+        keep_firing_for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Onduleur batterie faible (lu par {{ $labels.instance }})"
+          description: "La batterie de l'onduleur est presque vide : arret imminent des equipements"
+      # On line power too: a load that leaves less than 10 minutes.
+      - alert: ups_runtime_low
+        expr: min by (instance) (upsBatteryRuntimeValue) < 600
+        for: 5m
+        keep_firing_for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Autonomie de l'onduleur a {{ $value | humanizeDuration }} (lu par {{ $labels.instance }})"
+          description: "L'autonomie estimee sur batterie est sous 10 minutes"
+      - alert: ups_overload
+        expr: max by (instance) (upsInfoLoadValue) >= 80
+        for: 10m
+        keep_firing_for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Onduleur charge a {{ $value }}% (lu par {{ $labels.instance }})"
+          description: "La charge de l'onduleur depasse 80% depuis 10 minutes"
+      # Set by the UPS self-test: the battery no longer holds its charge.
+      - alert: ups_replace_battery
+        expr: max by (instance) (upsInfoStatus{upsInfoStatus=~"(.* )?RB( .*)?"}) == 1
+        keep_firing_for: 1440m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Batterie de l'onduleur a remplacer (lu par {{ $labels.instance }})"
+          description: "Le test de l'onduleur signale une batterie usee"
+      # Without fresh data the rules above go quiet: the UPS unplugged
+      # from the NAS or the NAS unreachable would hide a power outage.
+      - alert: ups_data_missing
+        expr: max by (instance) (lag(upsBatteryChargeValue[24h])) > 1800
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plus de donnee de l'onduleur via {{ $labels.instance }} depuis 30 minutes"
+          description: "Le NAS ne voit plus l'onduleur en USB, ou sa collecte SNMP est arretee"
   # Synology status OIDs are 1 when normal. diskBadSector is -1 on
   # cache devices, so only a positive count fires.
   - name: synology_metrics

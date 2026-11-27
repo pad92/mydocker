@@ -84,6 +84,18 @@ route:
       repeat_interval: 125m
     - matchers: [alertname="zfs_data_missing"]
       repeat_interval: 125m
+    - matchers: [alertname="ups_on_battery"]
+      repeat_interval: 15m
+    - matchers: [alertname="ups_low_battery"]
+      repeat_interval: 15m
+    - matchers: [alertname="ups_runtime_low"]
+      repeat_interval: 35m
+    - matchers: [alertname="ups_overload"]
+      repeat_interval: 35m
+    - matchers: [alertname="ups_replace_battery"]
+      repeat_interval: 1445m
+    - matchers: [alertname="ups_data_missing"]
+      repeat_interval: 125m
     - matchers: [alertname="synology_system_failed"]
       repeat_interval: 65m
     - matchers: [alertname="synology_raid_degraded"]
@@ -178,3 +190,17 @@ inhibit_rules:
     target_matchers:
       - alertname=~"smart_attribute_failing|smart_sectors_growing|smart_crc_errors_growing"
     equal: [host_name, device]
+  # The UPS low on battery says it all: it runs on battery with little
+  # runtime left.
+  - source_matchers: [alertname="ups_low_battery"]
+    target_matchers:
+      - alertname=~"ups_on_battery|ups_runtime_low"
+    equal: [instance]
+  # On battery the runtime falls by design: ups_low_battery follows.
+  - source_matchers: [alertname="ups_on_battery"]
+    target_matchers: [alertname="ups_runtime_low"]
+    equal: [instance]
+  # The NAS not answering SNMP at all: the UPS data stops with it.
+  - source_matchers: [alertname="synology_scrape_down"]
+    target_matchers: [alertname="ups_data_missing"]
+    equal: [instance]

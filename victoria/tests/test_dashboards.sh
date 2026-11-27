@@ -8,9 +8,9 @@
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
 # - with the header a new user is created with the Viewer role and sees the
-#   seventeen provisioned dashboards (services, Authentik, Proxmox, UniFi,
+#   eighteen provisioned dashboards (services, Authentik, Proxmox, UniFi,
 #   Synology, hosts, logs, Docker, DNS, firewall, HTTP, alerts, disks, stack,
-#   Freebox, network, Wi-Fi), each in its folder: the overview ones (services, hosts,
+#   Freebox, network, Wi-Fi, UPS), each in its folder: the overview ones (services, hosts,
 #   logs, alerts, network) at the root (General), the detail ones in
 #   Infrastructure, "Équipements réseau" and Applications;
 # - static rules of the dashboards: every rate() of a range panel uses
@@ -132,7 +132,7 @@ while IFS=$'\t' read -r source target; do
     "$work_dir/compose.json" > "$work_dir/configs/$source"
   mounts+=(-v "$work_dir/configs/$source:$target:ro")
 done < <(jq -r '.services.grafana.configs[] | [.source, .target] | @tsv' "$work_dir/compose.json")
-[[ ${#mounts[@]} -eq 38 ]] || fail "expected 19 Grafana configs, got $((${#mounts[@]} / 2))"
+[[ ${#mounts[@]} -eq 40 ]] || fail "expected 20 Grafana configs, got $((${#mounts[@]} / 2))"
 
 pinned="$(jq -r '.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC' "$work_dir/compose.json")"
 [[ "$pinned" == "$plugin_id@"* ]] || fail "GF_PLUGINS_PREINSTALL_SYNC is '$pinned', expected $plugin_id@<version>"
@@ -429,6 +429,26 @@ series("smartctl_device_error_log_count", {**smart, "device": "sda", "error_log_
        [(m, 4) for m in recent])
 series("smartctl_device_attribute", {**smart, "device": "sdb", "attribute_name": "Wear_Leveling_Count",
                                      "attribute_value_type": "value"}, [(m, 92) for m in recent])
+# SNMP of the Synology NAS: ups-test.example reads a UPS on mains power,
+# ups-down.example one on battery with a low battery, both flags in one
+# upsInfoStatus string. The UPS dashboard keeps the worst value over the
+# selected NAS (lowest charge and runtime, highest load).
+for nas, status, values in (
+        ("ups-test.example", "OL",
+         {"BatteryCharge": 87, "BatteryRuntime": 1500, "InfoLoad": 23, "InputVoltage": 230,
+          "BatteryVoltage": 27.3}),
+        ("ups-down.example", "OB LB",
+         {"BatteryCharge": 40, "BatteryRuntime": 500, "InfoLoad": 50, "InputVoltage": 0,
+          "BatteryVoltage": 24.1})):
+    ups = {"instance": nas}
+    for name, value in values.items():
+        series(f"ups{name}Value", ups, [(m, value) for m in recent])
+    series("upsInfoRealPowerNominal", ups, [(m, 720) for m in recent])
+    # SNMP strings: the value is 1, the string is a label of the same name.
+    for name, text in (("upsInfoStatus", status), ("upsDeviceModel", "Back-UPS RS 1200G"),
+                       ("upsBatteryMfrDate", "2022/11/20"),
+                       ("upsInfoTestResult", "No test initiated")):
+        series(name, {**ups, name: text}, [(m, 1) for m in recent])
 # UnPoller clients and devices, which name the IPs of the DNS and firewall
 # tables. DHCP gave 192.0.2.10 to "old-pc" until 3 h ago, then to "laptop":
 # the mapping keeps one row per IP, the MAC seen last, although old-pc has the
@@ -494,6 +514,7 @@ values = {
     "victoria-unifi": {"device": "gw"},
     "victoria-disks": {"host_name": "smart-test.example"},
     "victoria-wifi": {"ap": "wifi-rdc", "ssid": "PadNathFBX"},
+    "victoria-ups": {"instance": "ups-test.example"},
 }
 
 def panels_of(dash):
@@ -549,7 +570,7 @@ assert time_interval and seconds(time_interval.group(1)) >= longest, \
 index = []
 for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
              "docker", "dns", "firewall", "http", "alerts", "disks", "services", "stack", "freebox",
-             "network", "wifi"):
+             "network", "wifi", "ups"):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     declared = {v["name"] for v in dash.get("templating", {}).get("list", [])}
     all_values = {v["name"]: v.get("allValue") for v in dash.get("templating", {}).get("list", [])
@@ -723,19 +744,27 @@ if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
 expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-disks", "victoria-dns", "victoria-docker",
                  "victoria-firewall", "victoria-freebox",
                  "victoria-hosts", "victoria-http", "victoria-logs", "victoria-network", "victoria-proxmox", "victoria-services",
-                 "victoria-stack", "victoria-synology", "victoria-unifi", "victoria-wifi"]
+                 "victoria-stack", "victoria-synology", "victoria-unifi", "victoria-ups",
+                 "victoria-wifi"]
 # Host S.M.A.R.T. panels of the disks dashboard, which must return the
 # smartctl_exporter series imported before (the NAS targets only parse).
 smart_panels = {("victoria-disks", title) for title in (
     "Disques des hôtes", "Température des disques des hôtes",
     "Secteurs défectueux des disques des hôtes", "Vie restante des SSD des hôtes")}
+# Every panel of the UPS dashboard reads the SNMP series imported before,
+# for one NAS and for all of them.
+ups_panels = {("victoria-ups", p["title"])
+              for p in json.load(open(f"{work}/configs/grafana_dashboard_ups"))["panels"]
+              if p["type"] != "row"}
 # Targets that must return nothing: test.example is not silent.
 # Réseau tree, by refId of the Canvas panel: 1 up, 0 down, -1 no collection.
 # wifi-etage-nuit (I) is down while unpoller answers, pads918 (K) is down by
 # its exporter.
 tree_panel = ("victoria-network", "Internet → Freebox → gw → sw24poe → équipements")
 tree_expected = dict(zip("ABCDEFGHIJK", (1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0)))
-expected_empty = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "value")}
+expected_empty = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "value"),
+                  # ups-test.example is at OL, which the Événements panel leaves out.
+                  ("victoria-ups", "Événements", "value")}
 # Host panels of the services dashboard, which read the imported record.
 services_hosts = {("victoria-services", "Hôtes silencieux"), ("victoria-services", "Hôtes")}
 # Exact values from the Traefik records: 4 lines match the four values (one
@@ -762,7 +791,18 @@ expected_values = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "all"): 1,
                    # The global view must agree with the HTTP dashboard.
                    ("victoria-services", "Requêtes HTTP", "value"): 11,
                    ("victoria-services", "Taux de 5xx", "value"): 100 / 11,
-                   ("victoria-services", "Latence HTTP p95", "value"): 900000000}
+                   ("victoria-services", "Latence HTTP p95", "value"): 900000000,
+                   # UPS: ups-test.example alone, then the worst of both NAS.
+                   # Alimentation is 1 on mains, 2 on battery, 3 with a low battery.
+                   **{("victoria-ups", panel, variant): value
+                      for panel, one, both in (("Alimentation", 1, 3),
+                                               ("Charge de la batterie", 87, 40),
+                                               ("Autonomie estimée", 1500, 500),
+                                               ("Charge de l'onduleur", 23, 50),
+                                               ("Puissance estimée", 165.6, 360),
+                                               ("Tension d'entrée", 230, 230),
+                                               ("Batterie à remplacer", 0, 0))
+                      for variant, value in (("value", one), ("all", both))}}
 # No number returned by the HTTP dashboard may come from a stream: the
 # shortest one lasts 599 s, 5.99e11 in ns and 5.99e5 in ms, while the largest
 # legitimate number is the 900 ms p95 in ns.
@@ -779,6 +819,7 @@ if search is not None:
         "victoria-alerts": None, "victoria-network": None,
         "victoria-proxmox": "Infrastructure", "victoria-synology": "Infrastructure",
         "victoria-disks": "Infrastructure", "victoria-stack": "Infrastructure",
+        "victoria-ups": "Infrastructure",
         "victoria-unifi": "Équipements réseau", "victoria-freebox": "Équipements réseau",
         "victoria-firewall": "Équipements réseau", "victoria-dns": "Équipements réseau",
         "victoria-wifi": "Équipements réseau",
@@ -913,7 +954,7 @@ for q in index:
             errors.append(f"{label}: {got}, expected [{tree_expected[q['refId']]}]")
         continue
     if (q["datasource"] == "victorialogs" or q["dashboard"] in ("victoria-hosts", "victoria-network")
-            or (q["dashboard"], q["panel"]) in smart_panels | services_hosts):
+            or (q["dashboard"], q["panel"]) in smart_panels | services_hosts | ups_panels):
         found = any(has_data(f) for f in result.get("frames", []))
         key = (q["dashboard"], q["panel"], q["variant"])
         if key in expected_empty:
