@@ -108,6 +108,12 @@ route:
       repeat_interval: 70m
     - matchers: [alertname="vmalert_send_failed"]
       repeat_interval: 75m
+    - matchers: [alertname="victoria_disk_fill_predicted"]
+      repeat_interval: 1505m
+    - matchers: [alertname="victorialogs_ingestion_stopped"]
+      repeat_interval: 70m
+    - matchers: [alertname="vector_component_errors"]
+      repeat_interval: 95m
 receivers:
   - name: sms
     webhook_configs:
@@ -138,6 +144,15 @@ inhibit_rules:
     target_matchers:
       - alertname=~"host_logs_silent|smart_data_missing|zfs_data_missing|dns_resolver_silent"
     equal: [host_name]
+  # VictoriaLogs receiving nothing: every logs source looks silent.
+  # No equal: the source has no host_name.
+  - source_matchers: [alertname="victorialogs_ingestion_stopped"]
+    target_matchers:
+      - alertname=~"host_logs_silent|dns_resolver_silent|authentik_logs_silent"
+  # A component of the stack down: ingestion and Vector errors follow.
+  - source_matchers: [alertname="victoria_component_down"]
+    target_matchers:
+      - alertname=~"victorialogs_ingestion_stopped|vector_component_errors"
   # No data from the UniFi controller at all: every device would look
   # down.
   - source_matchers: [alertname="unpoller_no_unifi_data"]

@@ -412,3 +412,126 @@ tests:
         groupname: victoria_stack
         alertname: watchdog
         exp_alerts: []
+  # 1 GB less every 10 minutes from 500 GB: 576 GB lost in 4 days, empty
+  # before. Both stores fire (the or keeps both), and only after the for.
+  - name: victoria_disk_fill_predicted fires for both stores after 1h
+    interval: 10m
+    input_series:
+      - series: 'vm_free_disk_space_bytes{job="victoriametrics",instance="victoriametrics:8428",path="/data"}'
+        values: '500e9-1e9x30'
+      - series: 'vl_free_disk_space_bytes{job="victorialogs",instance="victorialogs:9428",path="/data"}'
+        values: '500e9-1e9x30'
+    alert_rule_test:
+      - eval_time: 50m
+        groupname: victoria_stack
+        alertname: victoria_disk_fill_predicted
+        exp_alerts: []
+      - eval_time: 2h
+        groupname: victoria_stack
+        alertname: victoria_disk_fill_predicted
+        exp_alerts:
+          - exp_labels: {job: victoriametrics, instance: "victoriametrics:8428", path: /data, severity: warning}
+            exp_annotations:
+              summary: "Disque /data de victoriametrics plein dans moins de 4 jours au rythme actuel"
+              description: "L'espace libre baisse assez vite pour etre epuise en 4 jours : ingestion en hausse ou retention trop longue"
+          - exp_labels: {job: victorialogs, instance: "victorialogs:9428", path: /data, severity: warning}
+            exp_annotations:
+              summary: "Disque /data de victorialogs plein dans moins de 4 jours au rythme actuel"
+              description: "L'espace libre baisse assez vite pour etre epuise en 4 jours : ingestion en hausse ou retention trop longue"
+  # 100 MB less every 10 minutes from 500 GB: 57.6 GB in 4 days, room left.
+  - name: victoria_disk_fill_predicted stays quiet on a slow decline
+    interval: 10m
+    input_series:
+      - series: 'vm_free_disk_space_bytes{job="victoriametrics",instance="victoriametrics:8428",path="/data"}'
+        values: '500e9-1e8x30'
+      - series: 'vl_free_disk_space_bytes{job="victorialogs",instance="victorialogs:9428",path="/data"}'
+        values: '500e9-1e8x30'
+    alert_rule_test:
+      - eval_time: 4h
+        groupname: victoria_stack
+        alertname: victoria_disk_fill_predicted
+        exp_alerts: []
+  # Rows until 10m, none after: fires once 5 minutes pass without a row.
+  - name: victorialogs_ingestion_stopped fires when rows stop
+    interval: 1m
+    input_series:
+      - series: 'vl_rows_ingested_total{type="jsonline"}'
+        values: '0+100x10 1000x20'
+      - series: 'up{job="victorialogs"}'
+        values: '1x30'
+    alert_rule_test:
+      # Rows stop after 10m: increase[5m] is 0 from 15m, pending for 2m.
+      - eval_time: 16m
+        groupname: victoria_stack
+        alertname: victorialogs_ingestion_stopped
+        exp_alerts: []
+      - eval_time: 18m
+        groupname: victoria_stack
+        alertname: victorialogs_ingestion_stopped
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "VictoriaLogs ne recoit plus aucun log depuis plus de 5 minutes"
+              description: "VictoriaLogs repond mais n'ecrit plus de ligne : Vector n'envoie plus rien, les alertes sur les logs sont aveugles"
+  # Restart: the counter starts again from 0, the first evaluation sees one
+  # sample and an increase of 0. for: 2m keeps it from firing.
+  - name: victorialogs_ingestion_stopped stays quiet after a restart
+    interval: 1m
+    input_series:
+      - series: 'vl_rows_ingested_total{type="jsonline"}'
+        values: '0+100x30'
+      - series: 'up{job="victorialogs"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 5m
+        groupname: victoria_stack
+        alertname: victorialogs_ingestion_stopped
+        exp_alerts: []
+  # A stopped victorialogs is victoria_component_down, not this alert.
+  - name: victorialogs_ingestion_stopped stays quiet when victorialogs is down
+    interval: 1m
+    input_series:
+      - series: 'vl_rows_ingested_total{type="jsonline"}'
+        values: '0+100x10 1000x20'
+      - series: 'up{job="victorialogs"}'
+        values: '1x10 0x20'
+    alert_rule_test:
+      - eval_time: 20m
+        groupname: victoria_stack
+        alertname: victorialogs_ingestion_stopped
+        exp_alerts: []
+  # One row a minute is still ingestion.
+  - name: victorialogs_ingestion_stopped stays quiet on a trickle
+    interval: 1m
+    input_series:
+      - series: 'vl_rows_ingested_total{type="jsonline"}'
+        values: '0+100x10 1000x20'
+      - series: 'vl_rows_ingested_total{type="elasticsearch"}'
+        values: '0+1x30'
+      - series: 'up{job="victorialogs"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        groupname: victoria_stack
+        alertname: victorialogs_ingestion_stopped
+        exp_alerts: []
+  # Threshold edge: 5 errors fire, 4 do not; free_mobile is left to the
+  # watchdog whatever its count.
+  - name: vector_component_errors fires at 5 errors, not 4, never free_mobile
+    interval: 1m
+    input_series:
+      - series: 'vector_component_errors_total{component_id="victorialogs"}'
+        values: '0x5 5x20'
+      - series: 'vector_component_errors_total{component_id="journald"}'
+        values: '0x5 4x20'
+      - series: 'vector_component_errors_total{component_id="free_mobile"}'
+        values: '0x5 50x20'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: victoria_stack
+        alertname: vector_component_errors
+        exp_alerts:
+          - exp_labels: {component_id: victorialogs, severity: warning}
+            exp_annotations:
+              summary: "Vector : 5 erreurs du composant victorialogs en 30 minutes"
+              description: "Un composant de Vector echoue : des logs ou des metriques sont perdus ou retardes"
