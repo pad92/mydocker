@@ -8,9 +8,9 @@
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
 # - with the header a new user is created with the Viewer role and sees the
-#   sixteen provisioned dashboards (services, Authentik, Proxmox, UniFi,
+#   seventeen provisioned dashboards (services, Authentik, Proxmox, UniFi,
 #   Synology, hosts, logs, Docker, DNS, firewall, HTTP, alerts, disks, stack,
-#   Freebox, network), each in its folder: the overview ones (services, hosts,
+#   Freebox, network, Wi-Fi), each in its folder: the overview ones (services, hosts,
 #   logs, alerts, network) at the root (General), the detail ones in
 #   Infrastructure, "Équipements réseau" and Applications;
 # - static rules of the dashboards: every rate() of a range panel uses
@@ -128,7 +128,7 @@ while IFS=$'\t' read -r source target; do
     "$work_dir/compose.json" > "$work_dir/configs/$source"
   mounts+=(-v "$work_dir/configs/$source:$target:ro")
 done < <(jq -r '.services.grafana.configs[] | [.source, .target] | @tsv' "$work_dir/compose.json")
-[[ ${#mounts[@]} -eq 36 ]] || fail "expected 18 Grafana configs, got $((${#mounts[@]} / 2))"
+[[ ${#mounts[@]} -eq 38 ]] || fail "expected 19 Grafana configs, got $((${#mounts[@]} / 2))"
 
 pinned="$(jq -r '.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC' "$work_dir/compose.json")"
 [[ "$pinned" == "$plugin_id@"* ]] || fail "GF_PLUGINS_PREINSTALL_SYNC is '$pinned', expected $plugin_id@<version>"
@@ -303,6 +303,16 @@ records += [{"log_stream": "syslog", "facility": "daemon", "host_name": h, "leve
                                 ("wifi-rdc.example", "info", "station associated"),
                                 ("wifi-rdc.example", "info", "station left"),
                                 ("other.example", "error", "not a network device"))]
+# Wi-Fi events of an AP, as UniFi sends them (appname set): a stahtd leave, a
+# kernel deauth with its reason, a hostapd disassociation and mcad anomalies,
+# all for the same client so the kick table counts each kind once.
+records += [{"log_stream": "syslog", "facility": "daemon", "host_name": "wifi-rdc.example",
+             "appname": "d021f9c1f543,UAP-nanoHD-6.7.57+15670", "level": "info", "_msg": m} for m in (
+    'stahtd: stahtd[2846]: [STA-TRACKER].stahtd_dump_event(): {"event_type":"sta_leave","mac":"38:07:16:f2:28:5b"} STA_ASSOC_TRACKER',
+    "kernel: [12345.678] ra1:[send deauth] TA:[e4:38:83:ec:b9:a3], RA:[38:07:16:f2:28:5b] machdr_seq=0, reason:8, protection=0",
+    "hostapd: ath1: STA 38:07:16:f2:28:5b IEEE 802.11: disassociated",
+    "mcad: mcad[2900]: wireless_agg_stats.log_sta_anomalies(): bssid=e4:38:83:ec:b9:a3 radio=ra0 vap=ra1 "
+    "sta=38:07:16:f2:28:5b satisfaction_now=70 anomalies=low_phy_rate dns_timeout")]
 # The rule states Vector polls from vmalert every minute (see alert_rules):
 # the Alertes dashboard reads the last 3 minutes, so they are fresh. One rule
 # per state, and one whose evaluation fails.
@@ -460,6 +470,7 @@ values = {
     "victoria-proxmox": {"guest": "guest-test"},
     "victoria-unifi": {"device": "gw"},
     "victoria-disks": {"host_name": "smart-test.example"},
+    "victoria-wifi": {"ap": "wifi-rdc", "ssid": "PadNathFBX"},
 }
 
 def panels_of(dash):
@@ -515,7 +526,7 @@ assert time_interval and seconds(time_interval.group(1)) >= longest, \
 index = []
 for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
              "docker", "dns", "firewall", "http", "alerts", "disks", "services", "stack", "freebox",
-             "network"):
+             "network", "wifi"):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     declared = {v["name"] for v in dash.get("templating", {}).get("list", [])}
     all_values = {v["name"]: v.get("allValue") for v in dash.get("templating", {}).get("list", [])
@@ -687,7 +698,7 @@ if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
 expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-disks", "victoria-dns", "victoria-docker",
                  "victoria-firewall", "victoria-freebox",
                  "victoria-hosts", "victoria-http", "victoria-logs", "victoria-network", "victoria-proxmox", "victoria-services",
-                 "victoria-stack", "victoria-synology", "victoria-unifi"]
+                 "victoria-stack", "victoria-synology", "victoria-unifi", "victoria-wifi"]
 # Host S.M.A.R.T. panels of the disks dashboard, which must return the
 # smartctl_exporter series imported before (the NAS targets only parse).
 smart_panels = {("victoria-disks", title) for title in (
@@ -741,6 +752,7 @@ if search is not None:
         "victoria-disks": "Infrastructure", "victoria-stack": "Infrastructure",
         "victoria-unifi": "Équipements réseau", "victoria-freebox": "Équipements réseau",
         "victoria-firewall": "Équipements réseau", "victoria-dns": "Équipements réseau",
+        "victoria-wifi": "Équipements réseau",
         "victoria-authentik": "Applications", "victoria-docker": "Applications",
         "victoria-http": "Applications"}
     for d in search:
@@ -774,20 +786,23 @@ def has_data(frame):
 
 unifi_ips = ["192.0.2.10", "192.0.2.57", "192.0.2.99", "198.51.100.254"]
 
-# IP tables named from UnPoller. Grafana joins in the browser, so this checks
-# the chain the browser runs: A (VictoriaLogs) and B (the mapping) in a Mixed
-# panel, B renamed to the IP field that A groups by, an outer join on it, rows
-# without a count removed (IPs that UnPoller knows but no log mentions).
+# IP and MAC tables named from UnPoller. Grafana joins in the browser, so this
+# checks the chain the browser runs: A (VictoriaLogs) and B (the mapping) in a
+# Mixed panel, B's ip or mac renamed to the field that A groups by, an outer
+# join on it, rows without a count removed (clients that UnPoller knows but no
+# log mentions).
 mapped = {"victoria-dns": {"Clients les plus actifs", "Clients les plus bloqués"},
           "victoria-firewall": {"Top sources bloquées", "Top destinations bloquées"},
-          "victoria-http": {"Clients les plus actifs"}}
+          "victoria-http": {"Clients les plus actifs"},
+          "victoria-wifi": {"Clients les plus déconnectés"}}
 for name, uid in (("dns", "victoria-dns"), ("firewall", "victoria-firewall"),
-                  ("http", "victoria-http")):
+                  ("http", "victoria-http"), ("wifi", "victoria-wifi")):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     found = set()
     for panel in (p for top in dash["panels"] for p in [top, *top.get("panels", [])]):
         refs = {t.get("refId"): t for t in panel.get("targets", [])}
-        if "unpoller_" not in refs.get("B", {}).get("expr", ""):
+        if ("unpoller_" not in refs.get("B", {}).get("expr", "")
+                or refs.get("A", {}).get("datasource", {}).get("uid") != "victorialogs"):
             continue
         found.add(panel["title"])
         where = f'{uid} / {panel["title"]}'
@@ -813,7 +828,9 @@ for name, uid in (("dns", "victoria-dns"), ("firewall", "victoria-firewall"),
             (refs["B"]["datasource"]["uid"] == "victoriametrics" and refs["B"].get("instant")
              and refs["B"].get("format") == "table", "target B is not an instant VictoriaMetrics table"),
             (steps[j]["options"].get("mode") == "outerTabular", "join is not outerTabular"),
-            (org_b["options"]["renameByName"].get("ip") == key, f"B's ip is not renamed to {key}"),
+            (key in (org_b["options"]["renameByName"].get("ip"),
+                     org_b["options"]["renameByName"].get("mac")),
+             f"B's ip or mac is not renamed to {key}"),
             (by is not None and key in [f.strip() for f in by.group(1).split(",")],
              f"A does not group by {key}"),
             (re.search(rf"\bas {re.escape(count)}\b", refs["A"]["expr"]) is not None,
@@ -824,7 +841,8 @@ for name, uid in (("dns", "victoria-dns"), ("firewall", "victoria-firewall"),
             (all(s.get("filter", {}).get("options") == "A" for s in steps[:j]
                  if s["id"] in ("extractFields", "convertFieldType")),
              "a transformation of A also applies to B"),
-            ({"unifi_name", "unifi_mac"} <= set(steps[-1]["options"].get("renameByName", {})),
+            ("unifi_name" in steps[-1]["options"].get("renameByName", {})
+             and ({"unifi_mac", key} & set(steps[-1]["options"].get("renameByName", {}))),
              "MAC and name not shown"),
         ]
         errors += [f"{where}: {msg}" for ok, msg in checks if not ok]

@@ -58,6 +58,7 @@ DASHBOARDS = (
     "stack",
     "freebox",
     "network",
+    "wifi",
 )
 
 # Compose config name -> source file, relative to config/.
