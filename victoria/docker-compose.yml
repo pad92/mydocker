@@ -542,7 +542,7 @@ services:
     security_opt:
       - no-new-privileges:true
     labels:
-      mydocker.config-hash: "522be577ba2cb0dc5bff11cf1d453d91b19edb1d19e4fdceca6a51b92cfccc5e"
+      mydocker.config-hash: "8cc1de8fbaf7d19c0096c79157660616c257df02ae100d80605fd2fe94a612e3"
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.victoria_grafana.loadbalancer.server.port: "3000"
@@ -26191,7 +26191,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (ap_name) (increase(unpoller_client_roam_count_total{ap_name=~\"$$ap\", essid=~\"$$ssid\"}[$$__rate_interval]))",
+                "expr": "sum by (ap_name) (increase(unpoller_client_roam_count_total{ap_name=~\"$$ap\", essid=~\"$$ssid\"}[$$__interval]))",
                 "legendFormat": "{{ap_name}}",
                 "range": true
               }
@@ -26375,7 +26375,7 @@ configs:
                     "unifi_name": "client",
                     "sta": "MAC",
                     "unifi_ap": "dernier AP",
-                    "n": "total",
+                    "n": "lignes de log",
                     "deauth": "kicks (deauth)",
                     "disassoc": "désassociations",
                     "leave": "départs"
@@ -26396,7 +26396,7 @@ configs:
               "showHeader": true,
               "cellHeight": "sm"
             },
-            "description": "Clients classés par nombre de déconnexions sur la période : kicks envoyés par l'AP, désassociations et départs. Le nom vient d'UniFi quand la MAC y est connue ; une MAC aléatoire (Wi-Fi privé) reste sans nom.",
+            "description": "Clients classés par nombre de lignes de log de déconnexion sur la période : kicks envoyés par l'AP, désassociations et départs. Une même déconnexion écrit souvent plusieurs lignes (deauth, désassociation, départ), le total compte donc des lignes et non des événements. Le nom vient d'UniFi quand la MAC y est connue ; une MAC aléatoire (Wi-Fi privé) reste sans nom.",
             "id": 33,
             "gridPos": {
               "x": 0,

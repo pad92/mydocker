@@ -786,20 +786,23 @@ def has_data(frame):
 
 unifi_ips = ["192.0.2.10", "192.0.2.57", "192.0.2.99", "198.51.100.254"]
 
-# IP tables named from UnPoller. Grafana joins in the browser, so this checks
-# the chain the browser runs: A (VictoriaLogs) and B (the mapping) in a Mixed
-# panel, B renamed to the IP field that A groups by, an outer join on it, rows
-# without a count removed (IPs that UnPoller knows but no log mentions).
+# IP and MAC tables named from UnPoller. Grafana joins in the browser, so this
+# checks the chain the browser runs: A (VictoriaLogs) and B (the mapping) in a
+# Mixed panel, B's ip or mac renamed to the field that A groups by, an outer
+# join on it, rows without a count removed (clients that UnPoller knows but no
+# log mentions).
 mapped = {"victoria-dns": {"Clients les plus actifs", "Clients les plus bloqués"},
           "victoria-firewall": {"Top sources bloquées", "Top destinations bloquées"},
-          "victoria-http": {"Clients les plus actifs"}}
+          "victoria-http": {"Clients les plus actifs"},
+          "victoria-wifi": {"Clients les plus déconnectés"}}
 for name, uid in (("dns", "victoria-dns"), ("firewall", "victoria-firewall"),
-                  ("http", "victoria-http")):
+                  ("http", "victoria-http"), ("wifi", "victoria-wifi")):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     found = set()
     for panel in (p for top in dash["panels"] for p in [top, *top.get("panels", [])]):
         refs = {t.get("refId"): t for t in panel.get("targets", [])}
-        if "unpoller_" not in refs.get("B", {}).get("expr", ""):
+        if ("unpoller_" not in refs.get("B", {}).get("expr", "")
+                or refs.get("A", {}).get("datasource", {}).get("uid") != "victorialogs"):
             continue
         found.add(panel["title"])
         where = f'{uid} / {panel["title"]}'
@@ -825,7 +828,9 @@ for name, uid in (("dns", "victoria-dns"), ("firewall", "victoria-firewall"),
             (refs["B"]["datasource"]["uid"] == "victoriametrics" and refs["B"].get("instant")
              and refs["B"].get("format") == "table", "target B is not an instant VictoriaMetrics table"),
             (steps[j]["options"].get("mode") == "outerTabular", "join is not outerTabular"),
-            (org_b["options"]["renameByName"].get("ip") == key, f"B's ip is not renamed to {key}"),
+            (key in (org_b["options"]["renameByName"].get("ip"),
+                     org_b["options"]["renameByName"].get("mac")),
+             f"B's ip or mac is not renamed to {key}"),
             (by is not None and key in [f.strip() for f in by.group(1).split(",")],
              f"A does not group by {key}"),
             (re.search(rf"\bas {re.escape(count)}\b", refs["A"]["expr"]) is not None,
@@ -836,7 +841,8 @@ for name, uid in (("dns", "victoria-dns"), ("firewall", "victoria-firewall"),
             (all(s.get("filter", {}).get("options") == "A" for s in steps[:j]
                  if s["id"] in ("extractFields", "convertFieldType")),
              "a transformation of A also applies to B"),
-            ({"unifi_name", "unifi_mac"} <= set(steps[-1]["options"].get("renameByName", {})),
+            ("unifi_name" in steps[-1]["options"].get("renameByName", {})
+             and ({"unifi_mac", key} & set(steps[-1]["options"].get("renameByName", {}))),
              "MAC and name not shown"),
         ]
         errors += [f"{where}: {msg}" for ok, msg in checks if not ok]
