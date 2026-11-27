@@ -688,3 +688,43 @@ tests:
             exp_annotations:
               summary: "Freebox : le collecteur system echoue depuis 30 minutes"
               description: "freebox-exporter ne lit plus ce module de l'API de la Freebox : ses metriques ne sont plus a jour, voir le log de l'exporter"
+
+  # VRAM per process named after its container. pid 100 is in container
+  # a (immich_machine_learning), whose last docker_container_info is
+  # 2 h old at eval time: the 1-day lookback still names it. pid 200 is
+  # in container b, never seen in the logs, and pid 300 is outside any
+  # container (no container_id): both keep their series, without
+  # container_name. The docker_container_info with an empty id must not
+  # name pid 300. Container c logged under two hosts: one name, no
+  # duplicate series.
+  - name: container:nvidia_smi_compute_app_used_memory_bytes record
+    interval: 1m
+    input_series:
+      - series: 'nvidia_smi_compute_app_used_memory_bytes{uuid="GPU-1", pid="100", process_name="python", container_id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+        values: '1000x180'
+      - series: 'nvidia_smi_compute_app_used_memory_bytes{uuid="GPU-1", pid="200", process_name="ollama", container_id="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}'
+        values: '2000x180'
+      - series: 'nvidia_smi_compute_app_used_memory_bytes{uuid="GPU-1", pid="300", process_name="Xorg"}'
+        values: '3000x180'
+      - series: 'nvidia_smi_compute_app_used_memory_bytes{uuid="GPU-1", pid="400", process_name="audiomuse", container_id="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}'
+        values: '4000x180'
+      - series: 'docker_container_info{host_name="chataigne", container_id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", container_name="immich_machine_learning"}'
+        values: '12x50'
+      - series: 'docker_container_info{host_name="chataigne", container_id="", container_name="ghost"}'
+        values: '5x180'
+      - series: 'docker_container_info{host_name="chataigne", container_id="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", container_name="audiomuse-ai-worker"}'
+        values: '7x180'
+      - series: 'docker_container_info{host_name="other", container_id="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", container_name="audiomuse-ai-worker"}'
+        values: '1x180'
+    metricsql_expr_test:
+      - expr: container:nvidia_smi_compute_app_used_memory_bytes
+        eval_time: 170m
+        exp_samples:
+          - labels: 'container:nvidia_smi_compute_app_used_memory_bytes{uuid="GPU-1", pid="100", process_name="python", container_id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", container_name="immich_machine_learning"}'
+            value: 1000
+          - labels: 'container:nvidia_smi_compute_app_used_memory_bytes{uuid="GPU-1", pid="200", process_name="ollama", container_id="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}'
+            value: 2000
+          - labels: 'container:nvidia_smi_compute_app_used_memory_bytes{uuid="GPU-1", pid="300", process_name="Xorg"}'
+            value: 3000
+          - labels: 'container:nvidia_smi_compute_app_used_memory_bytes{uuid="GPU-1", pid="400", process_name="audiomuse", container_id="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", container_name="audiomuse-ai-worker"}'
+            value: 4000

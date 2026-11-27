@@ -232,3 +232,16 @@ groups:
         annotations:
           summary: "{{ $value }} erreurs 5xx de {{ $labels.app_servicename }} en 30 minutes"
           description: "Un service derriere Traefik repond en erreur 5xx depuis au moins 15 minutes"
+  # Container id to name, for the metrics that only carry the id (the
+  # GPU processes of nvidia-gpu-exporter). Recorded into
+  # victoriametrics; the value is the line count, only the labels
+  # matter. A container that wrote no log in the hour has no series;
+  # container:nvidia_smi_compute_app_used_memory_bytes reads one day
+  # back. Lines without a full id would name the host processes.
+  - name: docker_containers
+    interval: 5m
+    rules:
+      - record: docker_container_info
+        expr: >-
+          _time:1h {log_stream="docker"} container_id:~"^[0-9a-f]{64}$"
+          | stats by (host_name, container_id, container_name) count()
