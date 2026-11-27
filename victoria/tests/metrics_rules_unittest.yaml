@@ -535,3 +535,55 @@ tests:
             exp_annotations:
               summary: "Vector : 5 erreurs du composant victorialogs en 30 minutes"
               description: "Un composant de Vector echoue : des logs ou des metriques sont perdus ou retardes"
+  # Login refused from minute 5: quiet at 14m (9 minutes), firing at
+  # 16m. A logged-in exporter (1) never fires.
+  - name: freebox_auth_failed fires after 10 minutes of refused login
+    interval: 1m
+    input_series:
+      - series: 'fbx_exporter_authenticated{job="freebox", instance="freebox-exporter:9102"}'
+        values: '1x4 0x20'
+    alert_rule_test:
+      - eval_time: 14m
+        groupname: freebox_metrics
+        alertname: freebox_auth_failed
+        exp_alerts: []
+      - eval_time: 16m
+        groupname: freebox_metrics
+        alertname: freebox_auth_failed
+        exp_alerts:
+          - exp_labels: {job: freebox, instance: "freebox-exporter:9102", severity: warning}
+            exp_annotations:
+              summary: "Freebox : l'exporter n'est plus autorise depuis 10 minutes"
+              description: "La Freebox refuse le login de freebox-exporter (code dans fbx_exporter_authentication_error et le log) : token revoque ou droits retires, l'enregistrer a nouveau"
+  - name: freebox_auth_failed stays quiet while the login works
+    interval: 1m
+    input_series:
+      - series: 'fbx_exporter_authenticated{job="freebox"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        groupname: freebox_metrics
+        alertname: freebox_auth_failed
+        exp_alerts: []
+  # system fails from minute 5: quiet at 34m, firing at 36m; connection
+  # recovers at minute 20 and never fires.
+  - name: freebox_collector_failed fires per collector after 30 minutes
+    interval: 1m
+    input_series:
+      - series: 'fbx_exporter_collector_success{job="freebox", collector="system"}'
+        values: '1x4 0x40'
+      - series: 'fbx_exporter_collector_success{job="freebox", collector="connection"}'
+        values: '1x4 0x15 1x25'
+    alert_rule_test:
+      - eval_time: 34m
+        groupname: freebox_metrics
+        alertname: freebox_collector_failed
+        exp_alerts: []
+      - eval_time: 36m
+        groupname: freebox_metrics
+        alertname: freebox_collector_failed
+        exp_alerts:
+          - exp_labels: {job: freebox, collector: system, severity: warning}
+            exp_annotations:
+              summary: "Freebox : le collecteur system echoue depuis 30 minutes"
+              description: "freebox-exporter ne lit plus ce module de l'API de la Freebox : ses metriques ne sont plus a jour, voir le log de l'exporter"

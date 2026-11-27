@@ -100,6 +100,10 @@ route:
       repeat_interval: 125m
     - matchers: [alertname="freebox_temperature_high"]
       repeat_interval: 125m
+    - matchers: [alertname="freebox_auth_failed"]
+      repeat_interval: 65m
+    - matchers: [alertname="freebox_collector_failed"]
+      repeat_interval: 65m
     - matchers: [alertname="victoria_component_down"]
       repeat_interval: 65m
     - matchers: [alertname="vmalert_rule_errors"]
@@ -157,6 +161,11 @@ inhibit_rules:
   # down.
   - source_matchers: [alertname="unpoller_no_unifi_data"]
     target_matchers: [alertname="unifi_device_down"]
+  # The Internet connection of the Freebox down: its API may go
+  # unreachable with it (mafreebox.freebox.fr is a public address) and
+  # the collectors fail.
+  - source_matchers: [alertname="freebox_connection_down"]
+    target_matchers: [alertname="freebox_collector_failed"]
   # The critical threshold of the same filesystem says it all.
   - source_matchers: [alertname="filesystem_usage_critical"]
     target_matchers: [alertname="filesystem_usage_high"]

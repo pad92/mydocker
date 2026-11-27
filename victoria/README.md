@@ -245,6 +245,7 @@ Bridge mode limits:
 - The exporter disables its `lan_browser`, `switch`, `wifi` and `dhcp` modules in bridge mode, and the box serves no LAN in that mode anyway: there is no host, Wi-Fi or DHCP data. The `lan`, `nas` and `download` modules stay off here.
 - In bridge mode the exporter calls `https://mafreebox.freebox.fr/api/`. That name resolves to a public Free address, which the box answers through UniFi (checked with `GET http://mafreebox.freebox.fr/api_version`). Whether it still answers while the fiber link is down is not checked: the DNS lookup itself may fail, and the scrape then fails too.
 - When the Internet connection drops, `freebox_connection_down` fires, but its SMS (Free Mobile API) leaves only once the connection is back.
+- A revoked token, a token still pending approval or removed rights make the box refuse the login. Since `v0.0.29-beta2` the scrape stays up then: the exporter serves only `fbx_exporter_authenticated` (0) and `fbx_exporter_authentication_error{error_code}` (1 for the code of the box), every box metric disappears, and `freebox_auth_failed` fires after 10 minutes. Register the exporter again (steps above). A box the exporter cannot reach is not a refusal: `fbx_exporter_authenticated` stays at 1. `freebox_collector_failed` covers a module that fails while the login works (`fbx_exporter_collector_success{collector}` at 0). Both alerts need `v0.0.29-beta2`: on `v0.0.26` these metrics do not exist and the alerts stay silent.
 - `fbx_exporter_connection_ftth_sfp_pwr_rx` and `_pwr_tx` are the raw API values in hundredths of a dBm: the dashboard and `freebox_fiber_signal_low` divide them by 100. The received power read -16.9 dBm at deployment, a usual value for a GPON line.
 
 After deployment, check the scrape:
@@ -487,6 +488,8 @@ The rules carry over the OpenObserve alerts and add alerts on hosts, DNS, UniFi,
 | `freebox_scrape_down` | metrics | the `freebox` scrape failing for 10 minutes | 65m |
 | `freebox_fiber_signal_low` | metrics | the optical power received by the Freebox SFP under -26 dBm for 30 minutes, while it still has a signal (GPON receivers lose the link near -28 dBm) | 125m |
 | `freebox_temperature_high` | metrics | the hottest Freebox CPU core above 85°C for 15 minutes | 125m |
+| `freebox_auth_failed` | metrics | the Freebox refusing the login of the exporter (`fbx_exporter_authenticated` at 0) for 10 minutes | 65m |
+| `freebox_collector_failed` | metrics | a collector of the exporter (`connection`, `system`) failing for 30 minutes while the login works; inhibited by `freebox_connection_down` | 65m |
 | `smart_status_failed` | metrics | a host disk with a failed SMART overall status | 65m |
 | `smart_attribute_failing` | metrics | a normalized SMART attribute at or under its non-zero threshold | 1445m |
 | `smart_sectors_growing` | metrics | reallocated, pending or uncorrectable sectors above their 24 hour minimum | 2885m |
