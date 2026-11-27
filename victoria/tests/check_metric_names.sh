@@ -7,7 +7,7 @@
 # confirm them. Run it after deployment and after a Proxmox VE upgrade.
 #
 # Reads the JSON answer of /api/v1/label/__name__/values on stdin:
-#   ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- \
+#   ssh <docker-host> "docker exec vmalert-logs wget -qO- \
 #     http://victoriametrics:8428/api/v1/label/__name__/values" \
 #     | ./tests/check_metric_names.sh [docker-compose.yml]
 # Each name must exist; each __name__=~"..." regex must match at least one
