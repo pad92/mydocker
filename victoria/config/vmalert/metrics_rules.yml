@@ -98,7 +98,7 @@ groups:
         expr: max by (host_name) (lag(system_cpu_time_seconds_total[24h]))
       - alert: host_metrics_silent
         expr: max by (host_name) (lag(system_cpu_time_seconds_total[24h])) > 600
-        keep_firing_for: 60m
+        keep_firing_for: 125m
         labels:
           severity: critical
         annotations:
@@ -188,7 +188,7 @@ groups:
     rules:
       - alert: smart_status_failed
         expr: smartctl_device_smart_status == 0
-        keep_firing_for: 60m
+        keep_firing_for: 2880m
         labels:
           severity: critical
         annotations:
@@ -467,7 +467,7 @@ groups:
         expr: >-
           up{job=~"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector"} == 0
         for: 5m
-        keep_firing_for: 60m
+        keep_firing_for: 125m
         labels:
           severity: critical
         annotations:
@@ -554,7 +554,7 @@ groups:
           sum(increase(vl_rows_ingested_total[5m])) == 0
           and on() max(up{job="victorialogs"}) == 1
         for: 2m
-        keep_firing_for: 60m
+        keep_firing_for: 120m
         labels:
           severity: critical
         annotations:

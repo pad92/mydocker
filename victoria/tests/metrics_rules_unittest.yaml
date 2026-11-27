@@ -55,7 +55,7 @@ tests:
             value: 0
 
   # A host gone for more than 24h leaves the lag window: the alert ends
-  # once keep_firing_for (60m) is over instead of firing forever.
+  # once keep_firing_for (125m) is over instead of firing forever.
   - name: host_metrics_silent forgets a host after 24h
     interval: 10m
     input_series:
@@ -70,7 +70,7 @@ tests:
             exp_annotations:
               summary: "Plus de metrique systeme de a depuis 10 minutes"
               description: "Le collecteur OpenTelemetry de l'hote n'envoie plus rien depuis 10 minutes : hote ou collecteur arrete"
-      - eval_time: 26h
+      - eval_time: 27h
         groupname: host_metrics
         alertname: host_metrics_silent
         exp_alerts: []

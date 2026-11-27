@@ -61,7 +61,7 @@ route:
     - matchers: [alertname="unifi_device_down"]
       repeat_interval: 65m
     - matchers: [alertname="host_metrics_silent"]
-      repeat_interval: 65m
+      repeat_interval: 130m
     - matchers: [alertname="filesystem_usage_high"]
       repeat_interval: 725m
     - matchers: [alertname="filesystem_usage_critical"]
@@ -71,7 +71,7 @@ route:
     - matchers: [alertname="zfs_pool_capacity_high"]
       repeat_interval: 725m
     - matchers: [alertname="smart_status_failed"]
-      repeat_interval: 65m
+      repeat_interval: 2885m
     - matchers: [alertname="smart_attribute_failing"]
       repeat_interval: 1445m
     - matchers: [alertname="smart_sectors_growing"]
@@ -119,7 +119,7 @@ route:
     - matchers: [alertname="freebox_collector_failed"]
       repeat_interval: 65m
     - matchers: [alertname="victoria_component_down"]
-      repeat_interval: 65m
+      repeat_interval: 130m
     - matchers: [alertname="vmalert_rule_errors"]
       repeat_interval: 245m
     - matchers: [alertname="alertmanager_notifications_failed"]
@@ -129,7 +129,7 @@ route:
     - matchers: [alertname="victoria_disk_fill_predicted"]
       repeat_interval: 1505m
     - matchers: [alertname="victorialogs_ingestion_stopped"]
-      repeat_interval: 70m
+      repeat_interval: 130m
     - matchers: [alertname="vector_component_errors"]
       repeat_interval: 95m
 receivers:
