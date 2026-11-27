@@ -421,7 +421,7 @@ services:
       - source: vmalert_metrics_rules
         target: /etc/vmalert/rules.yml
     labels:
-      mydocker.config-hash: "3cb44224f7779937c30c00c3cd6e5e02a5ad74b712118afb1e04c585e15e2bde"
+      mydocker.config-hash: "0c66acd85b556ba72b2978f66cece10e989c69811c0a5551b6e87d7eaa00494c"
     networks:
       - victoria
     mem_limit: 128m
@@ -478,7 +478,7 @@ services:
       - source: alertmanager_config
         target: /etc/alertmanager/alertmanager.yml
     labels:
-      mydocker.config-hash: "9767ea8e90d928038eed13446c79260563f053f220b3fd068cf281bbb0ac74ae"
+      mydocker.config-hash: "03131c2a69b79b8e90caa1e5e583f421e1de86f51538b9a0ca47879e25e0b71c"
     volumes:
       - ${ALERTMANAGER_DATA_DIR:?Set ALERTMANAGER_DATA_DIR}:/alertmanager
       - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
@@ -1169,7 +1169,7 @@ configs:
               expr: max by (host_name) (lag(system_cpu_time_seconds_total[24h]))
             - alert: host_metrics_silent
               expr: max by (host_name) (lag(system_cpu_time_seconds_total[24h])) > 600
-              keep_firing_for: 60m
+              keep_firing_for: 125m
               labels:
                 severity: critical
               annotations:
@@ -1259,7 +1259,7 @@ configs:
           rules:
             - alert: smart_status_failed
               expr: smartctl_device_smart_status == 0
-              keep_firing_for: 60m
+              keep_firing_for: 2880m
               labels:
                 severity: critical
               annotations:
@@ -1538,7 +1538,7 @@ configs:
               expr: >-
                 up{job=~"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector"} == 0
               for: 5m
-              keep_firing_for: 60m
+              keep_firing_for: 125m
               labels:
                 severity: critical
               annotations:
@@ -1625,7 +1625,7 @@ configs:
                 sum(increase(vl_rows_ingested_total[5m])) == 0
                 and on() max(up{job="victorialogs"}) == 1
               for: 2m
-              keep_firing_for: 60m
+              keep_firing_for: 120m
               labels:
                 severity: critical
               annotations:
@@ -1740,7 +1740,7 @@ configs:
           - matchers: [alertname="unifi_device_down"]
             repeat_interval: 65m
           - matchers: [alertname="host_metrics_silent"]
-            repeat_interval: 65m
+            repeat_interval: 130m
           - matchers: [alertname="filesystem_usage_high"]
             repeat_interval: 725m
           - matchers: [alertname="filesystem_usage_critical"]
@@ -1750,7 +1750,7 @@ configs:
           - matchers: [alertname="zfs_pool_capacity_high"]
             repeat_interval: 725m
           - matchers: [alertname="smart_status_failed"]
-            repeat_interval: 65m
+            repeat_interval: 2885m
           - matchers: [alertname="smart_attribute_failing"]
             repeat_interval: 1445m
           - matchers: [alertname="smart_sectors_growing"]
@@ -1798,7 +1798,7 @@ configs:
           - matchers: [alertname="freebox_collector_failed"]
             repeat_interval: 65m
           - matchers: [alertname="victoria_component_down"]
-            repeat_interval: 65m
+            repeat_interval: 130m
           - matchers: [alertname="vmalert_rule_errors"]
             repeat_interval: 245m
           - matchers: [alertname="alertmanager_notifications_failed"]
@@ -1808,7 +1808,7 @@ configs:
           - matchers: [alertname="victoria_disk_fill_predicted"]
             repeat_interval: 1505m
           - matchers: [alertname="victorialogs_ingestion_stopped"]
-            repeat_interval: 70m
+            repeat_interval: 130m
           - matchers: [alertname="vector_component_errors"]
             repeat_interval: 95m
       receivers:

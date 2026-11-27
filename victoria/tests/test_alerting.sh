@@ -181,6 +181,8 @@ for expr, logs, want in [
 errors = []
 alerts = {}
 lifetimes = {}
+tails = {}
+groups = {}
 for rules in ("logs_rules.yml", "metrics_rules.yml"):
     for group in load(rules)["groups"]:
         for rule in group["rules"]:
@@ -211,10 +213,14 @@ for rules in ("logs_rules.yml", "metrics_rules.yml"):
                 errors.append(f"alert {name} has no keep_firing_for")
                 continue
             alerts[name] = seconds(rule["keep_firing_for"])
-            lifetimes[name] = (
+            # After recovery: firing for window + keep_firing_for, then
+            # resolved at the next evaluation, up to one group interval on.
+            tails[name] = (
                 implicit_windows.get(name, window(rule, rules == "logs_rules.yml"))
-                + alerts[name] + seconds(group["interval"])
+                + alerts[name]
             )
+            lifetimes[name] = tails[name] + seconds(group["interval"])
+            groups[name] = (rules, group["name"])
 
 am = load("alertmanager.yml")
 routes = {}
@@ -287,6 +293,43 @@ for i, rule in enumerate(am.get("inhibit_rules", [])):
         for name in m.group(2).split("|"):
             if name not in alerts or name == "watchdog":
                 errors.append(f"inhibit_rules[{i}] {side}: no alert {name}")
+
+# Inhibition timing: an inhibition ends when its source resolves. If a
+# target outlives its source after a shared recovery, the target sends
+# its SMS for a cause already over. The source must stay firing at least
+# as long as the target: window + keep_firing_for for both when one
+# group evaluates them at the same instant, plus the interval of the
+# target group otherwise (no credit for the interval of the source).
+# Accepted overlaps, each with its reason:
+inhibit_overlap_ok = {
+    # Usage between 0.9 and 0.95 once the critical alert resolves is a
+    # real high alert, and its 720m keep_firing_for is a hysteresis. It
+    # fired before the critical one in the usual climb, so Alertmanager
+    # holds it as notified and sends nothing new when the inhibition
+    # ends. Covering 721m would hold the critical alert, and push its
+    # reminders, to twelve hours.
+    ("filesystem_usage_critical", "filesystem_usage_high"),
+}
+for i, rule in enumerate(am.get("inhibit_rules", [])):
+    sides = []
+    for side in ("source_matchers", "target_matchers"):
+        m = re.fullmatch(r'alertname=~?"([a-z0-9_|]+)"', rule.get(side, [""])[0])
+        sides.append([n for n in m.group(1).split("|") if n in tails] if m else [])
+    for source in sides[0]:
+        for target in sides[1]:
+            if (source, target) in inhibit_overlap_ok:
+                continue
+            need = tails[target] if groups[source] == groups[target] else lifetimes[target]
+            if tails[source] < need:
+                errors.append(
+                    f"inhibit_rules[{i}]: {source} resolves {tails[source]}s after a"
+                    f" recovery, {target} can fire for {need}s: its SMS"
+                    f" would leave once the inhibition ends")
+for pair in sorted(inhibit_overlap_ok):
+    if not any(re.search(rf'"(.*\|)?{pair[0]}(\|.*)?"', r.get("source_matchers", [""])[0])
+               and re.search(rf'"(.*\|)?{pair[1]}(\|.*)?"', r.get("target_matchers", [""])[0])
+               for r in am.get("inhibit_rules", [])):
+        errors.append(f"inhibit_overlap_ok {pair}: no such inhibition")
 
 if errors:
     sys.exit("\n".join(errors))
