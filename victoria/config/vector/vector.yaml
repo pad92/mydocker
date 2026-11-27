@@ -762,13 +762,15 @@ transforms:
         vendor = string(.device_vendor) ?? ""
         benign = false
         # Portainer: the docker CLI progress (Pulling, Pulled...) written
-        # to stderr with an unknown level (???).
-        if container == "portainer" && match(line, r'^\S+ \S+ \?\?\? ') {
+        # to stderr with an unknown level (???). A progress line that
+        # reports a failure (pull access denied...) keeps its level.
+        if container == "portainer" && match(line, r'^\S+ \S+ \?\?\? ') && !match(line, r'(?i)\b(error|denied|failed|unhealthy)\b') {
           benign = true
         }
-        # UniFi access points: Wi-Fi driver chatter (station left,
-        # multicast counters) sent as kernel warnings.
-        if vendor == "unifi" && (string(.severity) ?? "") == "warning" && match(string(.appname) ?? "", r'^[0-9a-f]{12},') && starts_with(line, "kernel: ") {
+        # UniFi access points and switches: Wi-Fi driver chatter (station
+        # left, multicast counters) sent as kernel warnings. A kernel
+        # WARN_ON backtrace or a failing radio keeps its level.
+        if vendor == "unifi" && (string(.severity) ?? "") == "warning" && match(string(.appname) ?? "", r'^[0-9a-f]{12},') && starts_with(line, "kernel: ") && !match(line, r'(?i)WARNING:|call trace|cut here|oops|bug|timeout|stuck|crash|fail|error') {
           benign = true
         }
         # UniFi gateway: the internal DNS helper socket of the
@@ -789,10 +791,6 @@ transforms:
         }
         # Grafana: a query or job stopped because the browser left.
         if container == "victoria-grafana" && contains(line, "context canceled") {
-          benign = true
-        }
-        # su: the wtmp database of pam_wtmpdb, not the login itself.
-        if (string(.body_syslog_identifier) ?? "") == "su" && starts_with(line, "pam_wtmpdb(su:session):") {
           benign = true
         }
         if benign {

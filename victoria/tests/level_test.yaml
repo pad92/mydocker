@@ -574,6 +574,22 @@ tests:
             source: |
               assert_eq!(.level, "warn")
 
+  - name: Portainer docker CLI pull failure keeps its level
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          container_name: "portainer"
+          severity: "WARN"
+          severity_number: 13
+          body: "\e[90m2026/11/27 03:56AM\e[0m ??? \e[1mgithub.com/docker/cli@v28.5.1+incompatible/cli/streams/out.go:20\e[0m\e[36m >\e[0m  tautulli Error  pull access denied for tautulli"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
   - name: Portainer error stays error
     inputs:
       - insert_at: normalize_level
@@ -604,6 +620,40 @@ tests:
           - type: vrl
             source: |
               assert_eq!(.level, "info")
+
+  - name: UniFi access point kernel WARN_ON backtrace stays warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "784558fade31,UAP-nanoHD-6.7.57+15670"
+          facility: "kern"
+          severity: "warning"
+          message: "kernel: [318455.360134] WARNING: CPU: 0 PID: 0 at net/sched/sch_generic.c:468 dev_watchdog+0x1f0/0x1f8"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
+
+  - name: UniFi access point radio timeout warning stays warn
+    inputs:
+      - insert_at: normalize_level
+        type: log
+        log_fields:
+          device_vendor: "unifi"
+          appname: "784558fade31,UAP-nanoHD-6.7.57+15670"
+          facility: "kern"
+          severity: "warning"
+          message: "kernel: [318455.360134] ra0: TX timeout, beacon stuck"
+    outputs:
+      - extract_from: normalize_level
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warn")
 
   - name: UniFi access point kernel error stays error
     inputs:
@@ -767,7 +817,7 @@ tests:
             source: |
               assert_eq!(.level, "error")
 
-  - name: su pam_wtmpdb notice becomes info
+  - name: su pam_wtmpdb read-only database stays error
     inputs:
       - insert_at: normalize_level
         type: log
@@ -781,7 +831,7 @@ tests:
         conditions:
           - type: vrl
             source: |
-              assert_eq!(.level, "info")
+              assert_eq!(.level, "error")
 
   - name: su other error stays error
     inputs:

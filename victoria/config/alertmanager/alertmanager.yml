@@ -160,9 +160,10 @@ inhibit_rules:
     target_matchers:
       - alertname=~"victorialogs_ingestion_stopped|vector_component_errors"
   # No data from the UniFi controller at all: every device would look
-  # down.
+  # down, and a stale alert still held by keep_firing_for adds nothing.
   - source_matchers: [alertname="unpoller_no_unifi_data"]
-    target_matchers: [alertname="unifi_device_down"]
+    target_matchers:
+      - alertname=~"unifi_device_down|unpoller_unifi_data_stale"
   # The Internet connection of the Freebox down: its API may go
   # unreachable with it (mafreebox.freebox.fr is a public address) and
   # the collectors fail.

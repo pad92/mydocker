@@ -323,13 +323,12 @@ Some messages are known to be harmless even though their source marks them `warn
 
 | Source | Message |
 | --- | --- |
-| `portainer` | docker CLI progress written with the unknown level `???` (`Pulling`, `Pulled`) |
-| UniFi access points (`appname` `<mac>,<model>`) | `kernel:` lines at `warning`: Wi-Fi driver chatter (station left, multicast counters) |
+| `portainer` | docker CLI progress written with the unknown level `???` (`Pulling`, `Pulled`), unless it reports `error`, `denied`, `failed` or `unhealthy` |
+| UniFi access points and switches (`appname` `<mac>,<model>`) | `kernel:` lines at `warning`: Wi-Fi driver chatter (station left, multicast counters). A `WARNING:` backtrace, `call trace`, `oops`, `bug`, `timeout`, `stuck`, `crash`, `fail` or `error` keeps its level |
 | UniFi gateway | `unifi-mq-broker` failing to reach its internal coredns socket; `systemd-sysv-generator` notices |
 | `beszel-agent` | `bad memory stats - see https://github.com/henrygd/beszel/issues/...` |
 | `immich_machine_learning` | ONNX runtime `[W:onnxruntime:...MergeShapeInfo]` |
 | `victoria-grafana` | `context canceled`: a query or job stopped because the browser left |
-| `su` (journald) | `pam_wtmpdb(su:session):` wtmp database messages |
 
 ### Sink Notes
 - The sink sends `Content-Type: application/x-ndjson`. Without it VictoriaLogs answers `200` and stores nothing.
@@ -518,7 +517,7 @@ Grouping by host as well would send one SMS per host when an outage hits all of 
 | Firing alert | Drops | On the same |
 | :--- | :--- | :--- |
 | `host_metrics_silent` | `host_logs_silent`, `smart_data_missing`, `zfs_data_missing`, `dns_resolver_silent` | `host_name` |
-| `unpoller_no_unifi_data` | `unifi_device_down` | (any) |
+| `unpoller_no_unifi_data` | `unifi_device_down`, `unpoller_unifi_data_stale` | (any) |
 | `filesystem_usage_critical` | `filesystem_usage_high` | `device`, `type` |
 | `smart_status_failed` | `smart_attribute_failing`, `smart_sectors_growing`, `smart_crc_errors_growing` | `host_name`, `device` |
 | `victorialogs_ingestion_stopped` | `host_logs_silent`, `dns_resolver_silent`, `authentik_logs_silent` | (any) |
