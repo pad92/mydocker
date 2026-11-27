@@ -27,6 +27,7 @@ This stack replaces OpenObserve. It deploys the following services:
 | `SNMP_EXPORTER_VERSION` | snmp_exporter image tag (`prom/snmp-exporter`, the compose file adds the `-distroless` suffix). | `v0.31.0` |
 | `FREEBOX_EXPORTER_VERSION` | freebox-exporter-rs image tag (`ghcr.io/shackerd/freebox-exporter-rs`). Keep a release tag: the `v0.0.27` and later tags are betas. | `v0.0.26` |
 | `GRAFANA_LOGS_PLUGIN_VERSION` | Version of the `victoriametrics-logs-datasource` Grafana plugin. | `0.34.0` |
+| `GRAFANA_MCP_VERSION` | mcp-grafana image tag (`grafana/mcp-grafana`, no `v` prefix). | `2.4.0` |
 | `VICTORIA_LOGS_DOMAIN` | Host name of the logs UI and of the OTLP logs endpoint. Must equal `VICTORIA_LOGS_HOST_LOCAL` in `management/.env`. | `logs.example.com` |
 | `VICTORIA_METRICS_DOMAIN` | Host name of the metrics UI and of the OTLP metrics endpoint. Must equal `VICTORIA_METRICS_HOST_LOCAL` in `management/.env`. | `metrics.example.com` |
 | `VICTORIA_LOGS_DATA_DIR` | Host directory of the VictoriaLogs data. | `/srv/victoria/logs` |
@@ -43,6 +44,8 @@ This stack replaces OpenObserve. It deploys the following services:
 | `VECTOR_SYSLOG_DOMAIN` | Domain added to the short hostname (no dot, not an IP) of a syslog sender missing from `VECTOR_SYSLOG_SENDERS`, so that one device keeps one `host_name`. Empty: the hostname stays as sent. | `example.com` |
 | `GRAFANA_ADMIN_USER` | Authentik username that becomes the Grafana server admin. | `admin` |
 | `GRAFANA_DEFAULT_ROLE` | Grafana role of the other Authentik users: `Viewer`, `Editor` or `Admin`. | `Viewer` |
+| `GRAFANA_MCP_SA_TOKEN` | Token of the Grafana service account that the MCP server uses (see [MCP Server](#mcp-server-grafana-mcp)). Secret: set it only in the environment of the stack. Empty means the MCP server waits and serves nothing. | *None (empty)* |
+| `GRAFANA_MCP_SERVER_TOKEN` | Bearer token that MCP clients must send, 32 characters or more (`openssl rand -hex 32`). Secret: set it only in the environment of the stack. Empty or shorter means the MCP server waits and serves nothing. | *None (empty)* |
 | `FREE_MOBILE_USER` | Free Mobile account ID for the SMS API. Secret: set it only in the environment of the stack. Empty means no SMS. | *None (empty)* |
 | `FREE_MOBILE_PASS` | Free Mobile SMS API key. Secret: set it only in the environment of the stack. Empty means no SMS. | *None (empty)* |
 | `ALERTMANAGER_WATCHDOG_URL` | Push URL of the Uptime Kuma monitor that receives the watchdog, with `?status=up&msg=OK`. Required: Compose refuses to render the stack while it is unset. The token in the URL is a secret: set the real URL only in the environment of the stack. | `https://uptime.example.com/api/push/CHANGE_ME?status=up&msg=OK` |
@@ -581,6 +584,29 @@ Five IP tables add the UniFi name and MAC of each IP: *Clients les plus actifs* 
 
 The other panels show IPs only: *Requêtes par client* (a time series), *Flux bloqués récents*, *Événements IPS/IDS* and the log panels. *Blocages UniFi par politique et client* already has the client name that the gateway logs (`UNIFIsrcClientAlias`). The OpenObserve Authentik dashboard enriched source IPs with their reverse DNS name (ptr). Neither VictoriaLogs nor Grafana has such a lookup.
 
+### MCP Server (`grafana-mcp`)
+
+`victoria-grafana-mcp` runs [mcp-grafana](https://github.com/grafana/mcp-grafana) so that an MCP client (Claude Code, for example) can search the dashboards, run LogsQL and PromQL queries through the datasources and read the alert rules. It answers on `https://<VICTORIA_GRAFANA_DOMAIN>/mcp` in streamable HTTP, without Authentik: an MCP client cannot follow a browser login. It starts with `--disable-write`, which removes every tool that changes Grafana (dashboards, datasources, folders, annotations, alert rules, silences, plugins, incidents).
+
+Setup:
+
+1. In Grafana, as the admin, open *Administration > Users and access > Service accounts*, create `mcp` with the `Viewer` role, then add a token to it. Put the token in `GRAFANA_MCP_SA_TOKEN`.
+2. Generate the client token with `openssl rand -hex 32` and put it in `GRAFANA_MCP_SERVER_TOKEN`.
+3. Redeploy the stack. The log of `victoria-grafana-mcp` shows `Caller authentication enabled`.
+4. Add the server to the client, in the user scope so that it loads from any directory (without `-s user`, Claude Code uses the local scope, tied to the current directory only). `read -rs` keeps the token off the screen and out of the shell history:
+
+```bash
+read -rs GRAFANA_MCP_SERVER_TOKEN
+claude mcp add -s user --transport http grafana "https://$VICTORIA_GRAFANA_DOMAIN/mcp" --header "Authorization: Bearer $GRAFANA_MCP_SERVER_TOKEN"
+unset GRAFANA_MCP_SERVER_TOKEN
+```
+
+`claude mcp list`, run from any directory, then shows `grafana` as connected. Claude Code stores the header in clear in its configuration file (`~/.claude.json`, or `.mcp.json` with `-s project`, which must stay out of Git), and in its backups under `~/.claude/backups/`.
+
+mcp-grafana serves every request without authentication when its server token is empty. The compose file therefore replaces its entrypoint with a shell check: while either token is empty or the server token is shorter than 32 characters, the container logs `... is missing, see the README` and waits without listening, so it neither serves openly nor restarts in a loop.
+
+The server checks the `Host` header against `VICTORIA_GRAFANA_DOMAIN` (`403` otherwise) and refuses any request with an `Origin` header (`403`), so a web page cannot call it from a browser. It keeps no session: each request carries the bearer token.
+
 ## 4. Access Control
 
 The three UI routers (`victorialogs`, `victoriametrics`, `victoria_grafana`) go through the `authentik@docker` forward-auth middleware of the management stack, placed first so that the UIs fail closed while `authentik_server` is down. A browser must log in to Authentik as a member of `victorialogs-users`, `victoriametrics-users` or `victoria-grafana-users`. The providers, applications and groups are created by the `20-forward-auth-apps.yaml` blueprint of the management stack, which reads the host names from `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL` and `VICTORIA_GRAFANA_HOST_LOCAL` in `management/.env`. VictoriaLogs and VictoriaMetrics have no login of their own: Authentik is the only access control on the UIs and the query APIs. Grafana relies on the user name that Authentik passes in `X-authentik-username`.
@@ -594,6 +620,8 @@ Both carry only the `victoria-ingest-auth@file` middleware: HTTP Basic auth defi
 
 Two more routers, `victorialogs_health` and `victoriametrics_health`, skip every middleware for `GET` and `HEAD` on exactly `/health`, for the Uptime Kuma HTTP monitors. That endpoint only returns `OK`.
 
+The `victoria_grafana_mcp` router skips every middleware for `POST`, `GET` and `DELETE` on exactly `/mcp` of the Grafana host, to `grafana-mcp` (see [MCP Server](#mcp-server-grafana-mcp)). The bearer token checked by mcp-grafana is the only access control there.
+
 The `*_http` routers only redirect HTTP to HTTPS.
 
 Limits:
@@ -603,7 +631,8 @@ Limits:
 - The SMS webhook of Vector (port `8080`) has no authentication. Vector sits on `traefik_gateway` too, so any container there can make it send an SMS.
 - vmalert-logs, vmalert-metrics and Alertmanager have no route and no published port. The vmalert instances sit only on the internal `victoria` network. Alertmanager also sits alone on the `alertmanager` network, which is not internal, to reach Uptime Kuma; no other container is on it. Their UIs are reachable only from the containers of this stack.
 - The Vector metrics port `9598` has no authentication and no route. Any container on `traefik_gateway` can read it.
-- While Authentik is down, the UIs are unreachable. Ingestion keeps working.
+- Anyone holding `GRAFANA_MCP_SERVER_TOKEN` reads, through `/mcp`, everything the `mcp` service account sees: every dashboard, log and metric. There is no per-user identity, rate limit or expiry; rotating the token means changing it in the stack and in every client. The service account token has no expiry either unless one is set in Grafana. On `traefik_gateway`, port `8000` asks for the same token.
+- While Authentik is down, the UIs are unreachable. Ingestion and `/mcp` keep working.
 - UDP syslog is unauthenticated, like any syslog: any host that reaches the port can send messages. `host_name` and `device_vendor` only come from the sender table for listed IPs.
 
 ## 5. Migration from OpenObserve
@@ -625,7 +654,7 @@ Switch-over order:
 
 ## 6. Tests
 
-[`tests/test_stack.sh`](./tests/test_stack.sh) renders the compose file with `.env.example` and checks the exposure without starting anything: forward auth first on the three UI routers, the ingestion and health routers limited to their method, path, middleware and service, forward auth on every other router of the three hosts, no published port except the UDP syslog port, the Grafana auth proxy settings (no login form, Basic auth, anonymous access or `GF_AUTH_DISABLE_LOGIN`), vmalert on the internal `victoria` network only, Alertmanager on `victoria` and alone on the non-internal `alertmanager` network with the host CA bundle read-only, the `ALERTMANAGER_WATCHDOG_URL` placeholder in `.env.example`, the self-scrape jobs of the six components and the Vector metrics sink on port `9598` (a wrong target makes the check fail), unpoller without route or port, as `65534:65534`, with TLS verification, InfluxDB and DPI off, no password in `.env.example` and alone on the `unpoller` network, the scrape config that targets `unpoller:9130`, snmp-exporter without route or port, as `65534:65534`, alone on the `snmp` network, with SNMPv3 authPriv (SHA, AES), no password in `.env.example` and the `${...}` references that the exporter expands, the `synology` job sent to `snmp-exporter:9116`, and the `victoria-ingest-auth` middleware in `management/traefik_dynamic.toml.example`. It needs Docker Compose 2.23 or later, `jq` and Python 3.11 or later.
+[`tests/test_stack.sh`](./tests/test_stack.sh) renders the compose file with `.env.example` and checks the exposure without starting anything: forward auth first on the three UI routers, the ingestion and health routers limited to their method, path, middleware and service, forward auth on every other router of the three hosts, no published port except the UDP syslog port, the Grafana auth proxy settings (no login form, Basic auth, anonymous access or `GF_AUTH_DISABLE_LOGIN`), vmalert on the internal `victoria` network only, Alertmanager on `victoria` and alone on the non-internal `alertmanager` network with the host CA bundle read-only, the `ALERTMANAGER_WATCHDOG_URL` placeholder in `.env.example`, the self-scrape jobs of the six components and the Vector metrics sink on port `9598` (a wrong target makes the check fail), unpoller without route or port, as `65534:65534`, with TLS verification, InfluxDB and DPI off, no password in `.env.example` and alone on the `unpoller` network, the scrape config that targets `unpoller:9130`, snmp-exporter without route or port, as `65534:65534`, alone on the `snmp` network, with SNMPv3 authPriv (SHA, AES), no password in `.env.example` and the `${...}` references that the exporter expands, the `synology` job sent to `snmp-exporter:9116`, the `victoria_grafana_mcp` router (no middleware, `POST`, `GET` and `DELETE` on `/mcp` of the Grafana host only, to port `8000`) and grafana-mcp (`--disable-write`, `--allowed-hosts` set to the Grafana host, no `--allowed-origins`, the token length check, no port, empty tokens in `.env.example`), and the `victoria-ingest-auth` middleware in `management/traefik_dynamic.toml.example`. It needs Docker Compose 2.23 or later, `jq` and Python 3.11 or later.
 
 [`tests/test_vector.sh`](./tests/test_vector.sh) renders the compose file with `.env.example`, runs `vector validate` on the pipeline, then the Vector unit tests of [`otlp_test.yaml`](./tests/otlp_test.yaml) (normalization, routing, secret masking, HAProxy), [`authentik_test.yaml`](./tests/authentik_test.yaml), [`proxmox_test.yaml`](./tests/proxmox_test.yaml), [`syslog_test.yaml`](./tests/syslog_test.yaml) (syslog, CEF, firewall, Synology byte order mark), [`level_test.yaml`](./tests/level_test.yaml) (the common `level` of every source), [`alert_rules_test.yaml`](./tests/alert_rules_test.yaml) (the alert state records: reason of a firing, inactive and failing rule, empty answer) and [`sms_test.yaml`](./tests/sms_test.yaml) (SMS text, truncation, missing credentials). It needs Docker, Docker Compose 2.23 or later and `jq`, and makes no network call.
 
@@ -639,8 +668,11 @@ Switch-over order:
 
 [`tests/test_dashboards.sh`](./tests/test_dashboards.sh) starts VictoriaLogs, VictoriaMetrics and Grafana with sample data. It checks that the Grafana API answers `401` without the `X-authentik-username` header, refuses Basic auth and the `admin/admin` login form, and gives a new user the Viewer role and the fifteen dashboards. The sample data covers every log stream the dashboards read (Authentik, Proxmox, Docker, AdGuard queries, UniFi drops and CEF events, Traefik access logs, alert rule states dated at ingestion), a set of OpenTelemetry host metrics and the `smartctl_exporter` series of two test disks. Every query of the fifteen dashboards then goes through the Grafana datasource API twice, once with each template variable set to a test value and once set to *All*, using the `allValue` that the dashboard declares. Each VictoriaLogs query, each query of the hosts dashboard and each query of the four host SMART panels of the disks dashboard must return data, and a numeric result made only of zeros counts as none, except *Hôtes silencieux*, which must return none while the test host reports. The other VictoriaMetrics queries must answer `200`, and each dashboard must have at least one query. In the *État des règles* table of the *Alertes* dashboard, the firing watchdog must read `veille` and a firing rule `firing`. The *Requêtes*, *Taux de 4xx* and *Taux de 5xx* stats of the HTTP dashboard, and the *Requêtes HTTP*, *Taux de 5xx* and *Latence HTTP p95* stats of the *Services rendus* dashboard, must return their exact values, with the status written as a number and as a string, and one line without a host and four `502` of the ingestion routers that they must ignore. The sample also holds WebSocket sessions (status `0`) and SSE requests lasting ten minutes to an hour: *Latence p95* must return the slowest short request, and no number returned by the HTTP or *Services rendus* dashboard, table cells included, may reach a stream's duration. With sample UnPoller series, the five IP tables must be Mixed panels whose UnPoller query is an instant table joined on the IP field of the logs query, with the rows without a count dropped and the *nom UniFi* and *MAC* columns renamed. The UnPoller query must return one MAC and name per IP, and the MAC seen last for an IP that two devices held. It also checks the version of the loaded plugin. The plugin is read from `GRAFANA_PLUGIN_DIR` (a `plugins` directory that holds `victoriametrics-logs-datasource`, for example the one of a Grafana that ran this stack) and the test makes no Internet call. It does not cover the browser rendering (the IP join runs there, so the test checks its definition only), the Authentik outpost, the other UniFi and Synology metrics (their queries only need to answer `200`), or the real Proxmox metric names, which [`tests/check_metric_names.sh`](./tests/check_metric_names.sh) checks against a running VictoriaMetrics (see [Post-Deployment Check of the Metric Names](#post-deployment-check-of-the-metric-names)).
 
+[`tests/test_grafana_mcp.sh`](./tests/test_grafana_mcp.sh) runs the real mcp-grafana image with its rendered entrypoint, command and environment on a throwaway internal network, with test tokens. With an empty server token, a 31 character one or an empty service account token, the container must keep running, log why and leave port `8000` closed. With valid tokens, `POST /mcp` must get `401` without a bearer token or with a wrong one, `200` on `initialize` with the right one, `403` with another `Host` or with an `Origin` header, and `tools/list` must hold the read tools and none of the write tools. It does not cover Grafana itself (no tool is called), the Traefik router (see `test_stack.sh`) or the service account permissions. It needs Docker, Docker Compose 2.23 or later and `jq`, uses `python:3.14-alpine` as client (`CLIENT_IMAGE` overrides it), makes no Internet call, and takes about 20 seconds.
+
 ```bash
 ./tests/test_stack.sh
+./tests/test_grafana_mcp.sh
 ./tests/test_vector.sh
 ./tests/test_ingest.sh
 ./tests/test_alerting.sh
