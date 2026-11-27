@@ -8,8 +8,8 @@
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
 # - with the header a new user is created with the Viewer role and sees the
-#   thirteen provisioned dashboards (services, Authentik, Proxmox, UniFi,
-#   Synology, hosts, logs, Docker, DNS, firewall, HTTP, alerts, disks);
+#   fourteen provisioned dashboards (services, Authentik, Proxmox, UniFi,
+#   Synology, hosts, logs, Docker, DNS, firewall, HTTP, alerts, disks, stack);
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
 # - every VictoriaLogs target of the dashboards, sent as the viewer to
@@ -111,7 +111,7 @@ while IFS=$'\t' read -r source target; do
     "$work_dir/compose.json" > "$work_dir/configs/$source"
   mounts+=(-v "$work_dir/configs/$source:$target:ro")
 done < <(jq -r '.services.grafana.configs[] | [.source, .target] | @tsv' "$work_dir/compose.json")
-[[ ${#mounts[@]} -eq 30 ]] || fail "expected 15 Grafana configs, got $((${#mounts[@]} / 2))"
+[[ ${#mounts[@]} -eq 32 ]] || fail "expected 16 Grafana configs, got $((${#mounts[@]} / 2))"
 
 pinned="$(jq -r '.services.grafana.environment.GF_PLUGINS_PREINSTALL_SYNC' "$work_dir/compose.json")"
 [[ "$pinned" == "$plugin_id@"* ]] || fail "GF_PLUGINS_PREINSTALL_SYNC is '$pinned', expected $plugin_id@<version>"
@@ -397,7 +397,7 @@ def substitute(expr, datasource, variables, variant, all_values):
 
 index = []
 for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
-             "docker", "dns", "firewall", "http", "alerts", "disks", "services"):
+             "docker", "dns", "firewall", "http", "alerts", "disks", "services", "stack"):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     declared = {v["name"] for v in dash.get("templating", {}).get("list", [])}
     all_values = {v["name"]: v.get("allValue") for v in dash.get("templating", {}).get("list", [])
@@ -551,7 +551,7 @@ if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
 expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-disks", "victoria-dns", "victoria-docker",
                  "victoria-firewall",
                  "victoria-hosts", "victoria-http", "victoria-logs", "victoria-proxmox", "victoria-services",
-                 "victoria-synology", "victoria-unifi"]
+                 "victoria-stack", "victoria-synology", "victoria-unifi"]
 # Host S.M.A.R.T. panels of the disks dashboard, which must return the
 # smartctl_exporter series imported before (the NAS targets only parse).
 smart_panels = {("victoria-disks", title) for title in (

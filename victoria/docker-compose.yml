@@ -464,6 +464,8 @@ services:
         target: /etc/grafana/dashboards/disks.json
       - source: grafana_dashboard_services
         target: /etc/grafana/dashboards/services.json
+      - source: grafana_dashboard_stack
+        target: /etc/grafana/dashboards/stack.json
     volumes:
       - ${GRAFANA_DATA_DIR:?Set GRAFANA_DATA_DIR}:/var/lib/grafana
     # traefik_gateway for Traefik and to download the plugin; victoria for
@@ -19049,6 +19051,1468 @@ configs:
             "gridPos": {
               "x": 0,
               "y": 24,
+              "w": 24,
+              "h": 8
+            }
+          }
+        ]
+      }
+  grafana_dashboard_stack:
+    content: |
+      {
+        "uid": "victoria-stack",
+        "title": "Pile Victoria",
+        "tags": [
+          "supervision",
+          "victoriametrics",
+          "victoria"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          },
+          {
+            "type": "link",
+            "title": "Services rendus",
+            "tooltip": "Vue globale",
+            "icon": "dashboard",
+            "url": "/d/victoria-services/services-rendus",
+            "keepTime": true,
+            "targetBlank": false
+          }
+        ],
+        "templating": {
+          "list": []
+        },
+        "annotations": {
+          "list": []
+        },
+        "panels": [
+          {
+            "type": "row",
+            "title": "État",
+            "collapsed": false,
+            "panels": [],
+            "id": 1,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Composants injoignables",
+            "description": "Composants de la pile (VictoriaMetrics, VictoriaLogs, les deux vmalert, Alertmanager, Vector) dont la dernière collecte a échoué.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "count(up{job=~\"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector\"} == 0) or vector(0)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 0,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Logs ingérés/s",
+            "description": "Lignes de logs ingérées par VictoriaLogs, moyenne sur 5 minutes.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(rate(vl_rows_ingested_total[5m]))",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                },
+                "decimals": 1
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 3,
+            "gridPos": {
+              "x": 4,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Points ingérés/s",
+            "description": "Points de métriques ingérés par VictoriaMetrics, moyenne sur 5 minutes.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(rate(vm_rows_inserted_total[5m]))",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                },
+                "decimals": 1
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 8,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Erreurs Vector (1 h)",
+            "description": "Erreurs des composants de Vector (sources, transformations, sinks) sur la dernière heure.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(increase(vector_component_errors_total[1h])) or vector(0)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                },
+                "decimals": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 12,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Erreurs de règles (1 h)",
+            "description": "Évaluations de règles vmalert en erreur sur la dernière heure (requête invalide, base injoignable).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(increase(vmalert_alerting_rules_errors_total[1h])) or vector(0)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                },
+                "decimals": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 6,
+            "gridPos": {
+              "x": 16,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Notifications en échec (1 h)",
+            "description": "Notifications qu'Alertmanager n'a pas pu remettre (webhook Free Mobile) sur la dernière heure.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(increase(alertmanager_notifications_failed_total[1h])) or vector(0)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "noValue": "0",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                },
+                "decimals": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 7,
+            "gridPos": {
+              "x": 20,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "row",
+            "title": "Stockage",
+            "collapsed": false,
+            "panels": [],
+            "id": 8,
+            "gridPos": {
+              "x": 0,
+              "y": 5,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Espace disque libre",
+            "description": "Espace libre sur le volume de données de VictoriaLogs et de VictoriaMetrics.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "min(vl_free_disk_space_bytes)",
+                "legendFormat": "VictoriaLogs",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "min(vm_free_disk_space_bytes)",
+                "legendFormat": "VictoriaMetrics",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bytes",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 9,
+            "gridPos": {
+              "x": 0,
+              "y": 6,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Taille des données",
+            "description": "Taille sur disque des données (index et stockage) de VictoriaLogs et de VictoriaMetrics.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(vl_data_size_bytes)",
+                "legendFormat": "VictoriaLogs",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(vm_data_size_bytes)",
+                "legendFormat": "VictoriaMetrics",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bytes",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 10,
+            "gridPos": {
+              "x": 12,
+              "y": 6,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Lignes rejetées",
+            "description": "Lignes de logs abandonnées par VictoriaLogs, par raison (horodatage hors bornes, trop de champs, ligne trop longue), et points invalides refusés par VictoriaMetrics. Taux sur 5 minutes.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (reason) (rate(vl_rows_dropped_total[5m]))",
+                "legendFormat": "logs {{reason}}",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(rate(vl_too_long_lines_skipped_total[5m]))",
+                "legendFormat": "logs trop longues",
+                "range": true
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (type) (rate(vm_rows_invalid_total[5m]))",
+                "legendFormat": "métriques {{type}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 11,
+            "gridPos": {
+              "x": 0,
+              "y": 14,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Nouvelles séries",
+            "description": "Séries de métriques créées par VictoriaMetrics, par heure. Une hausse soudaine trahit une explosion de cardinalité (label variable).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum(increase(vm_new_timeseries_created_total[1h]))",
+                "legendFormat": "nouvelles séries / h",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 12,
+            "gridPos": {
+              "x": 12,
+              "y": 14,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Collecte (Vector)",
+            "collapsed": false,
+            "panels": [],
+            "id": 13,
+            "gridPos": {
+              "x": 0,
+              "y": 22,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Événements reçus par source",
+            "description": "Événements que reçoivent les sources de Vector (OTLP des collecteurs), par composant.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (component_id) (rate(vector_component_received_events_total{component_kind=\"source\"}[5m]))",
+                "legendFormat": "{{component_id}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 14,
+            "gridPos": {
+              "x": 0,
+              "y": 23,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Événements envoyés par sink",
+            "description": "Événements que les sinks de Vector envoient (VictoriaLogs, Free Mobile...), par composant.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (component_id) (rate(vector_component_sent_events_total{component_kind=\"sink\"}[5m]))",
+                "legendFormat": "{{component_id}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 15,
+            "gridPos": {
+              "x": 12,
+              "y": 23,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Erreurs par composant",
+            "description": "Erreurs des composants de Vector, par composant et type d'erreur.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (component_id, error_type) (increase(vector_component_errors_total[5m]))",
+                "legendFormat": "{{component_id}} {{error_type}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 16,
+            "gridPos": {
+              "x": 0,
+              "y": 31,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Utilisation des composants",
+            "description": "Part du temps où chaque composant de Vector est occupé (1 = saturé).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (component_id) (vector_utilization)",
+                "legendFormat": "{{component_id}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 17,
+            "gridPos": {
+              "x": 12,
+              "y": 31,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Alerting",
+            "collapsed": false,
+            "panels": [],
+            "id": 18,
+            "gridPos": {
+              "x": 0,
+              "y": 39,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Durée d'évaluation des groupes",
+            "description": "Durée d'une évaluation de chaque groupe de règles vmalert (quantile 0,9).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (job, group) (vmalert_iteration_duration_seconds{quantile=\"0.9\"})",
+                "legendFormat": "{{job}} {{group}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 19,
+            "gridPos": {
+              "x": 0,
+              "y": 40,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Alertes actives",
+            "description": "Alertes en cours de déclenchement, par vmalert.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (job) (vmalert_alerts_firing)",
+                "legendFormat": "{{job}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 20,
+            "gridPos": {
+              "x": 12,
+              "y": 40,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Notifications",
+            "description": "Alertes envoyées par vmalert à Alertmanager, et notifications d'Alertmanager (réussies et en échec), par heure.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (job) (increase(vmalert_alerts_sent_total[1h]))",
+                "legendFormat": "{{job}} envoyées",
+                "range": true
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (job) (increase(vmalert_alerts_send_errors_total[1h]))",
+                "legendFormat": "{{job}} envois en échec",
+                "range": true
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (integration) (increase(alertmanager_notifications_total[1h]))",
+                "legendFormat": "Alertmanager {{integration}}",
+                "range": true
+              },
+              {
+                "refId": "D",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (integration) (increase(alertmanager_notifications_failed_total[1h]))",
+                "legendFormat": "Alertmanager {{integration}} en échec",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 21,
+            "gridPos": {
+              "x": 0,
+              "y": 48,
+              "w": 24,
+              "h": 8
+            }
+          },
+          {
+            "type": "row",
+            "title": "Ressources",
+            "collapsed": false,
+            "panels": [],
+            "id": 22,
+            "gridPos": {
+              "x": 0,
+              "y": 56,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Mémoire résidente",
+            "description": "Mémoire résidente (RSS) de chaque composant.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (job) (process_resident_memory_bytes{job=~\"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector\"})",
+                "legendFormat": "{{job}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "bytes",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 23,
+            "gridPos": {
+              "x": 0,
+              "y": 57,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "CPU",
+            "description": "CPU consommé par chaque composant (1 = un cœur).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (job) (rate(process_cpu_seconds_total{job=~\"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector\"}[5m]))",
+                "legendFormat": "{{job}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 24,
+            "gridPos": {
+              "x": 12,
+              "y": 57,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "table",
+            "title": "Composants",
+            "description": "Un composant par ligne : collecte (1 = joignable), durée depuis le dernier démarrage, redémarrages sur 24 h (Vector : séries de son uptime, un nouveau conteneur en ouvre une) et version.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (job) (up{job=~\"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "B",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (job) (time() - process_start_time_seconds{job=~\"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector\"}) or min by (job) (vector_uptime_seconds{job=\"vector\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "C",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "sum by (job) (changes(process_start_time_seconds{job=~\"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector\"}[24h])) or (sum by (job) (resets(vector_uptime_seconds{job=\"vector\"}[24h])) + count by (job) (max_over_time(vector_uptime_seconds{job=\"vector\"}[24h])) - 1)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              },
+              {
+                "refId": "D",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (job, version) (label_copy(vm_app_version, \"short_version\", \"version\")) or max by (job, version) (vector_build_info{job=\"vector\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "transformations": [
+              {
+                "id": "merge",
+                "options": {}
+              },
+              {
+                "id": "organize",
+                "options": {
+                  "excludeByName": {
+                    "Time": true,
+                    "Value #D": true
+                  },
+                  "indexByName": {
+                    "job": 0,
+                    "Value #A": 1,
+                    "Value #B": 2,
+                    "Value #C": 3,
+                    "version": 4
+                  },
+                  "renameByName": {
+                    "job": "composant",
+                    "Value #A": "joignable",
+                    "Value #B": "démarré depuis",
+                    "Value #C": "redémarrages 24 h"
+                  }
+                }
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "noValue": "0"
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "démarré depuis"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "s"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "joignable"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "color-text"
+                      }
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "red",
+                            "value": null
+                          },
+                          {
+                            "color": "green",
+                            "value": 1
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "showHeader": true,
+              "sortBy": [
+                {
+                  "displayName": "composant",
+                  "desc": false
+                }
+              ]
+            },
+            "id": 25,
+            "gridPos": {
+              "x": 0,
+              "y": 65,
               "w": 24,
               "h": 8
             }
