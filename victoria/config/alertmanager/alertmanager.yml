@@ -135,9 +135,11 @@ route:
 receivers:
   - name: sms
     webhook_configs:
-      # The SMS bridge: the alertmanager source of vector.
+      # The SMS bridge: the alertmanager source of vector. send_resolved
+      # true: Vector turns a resolved alert into an OK line, except for the
+      # one-off events (label resolved_sms="false").
       - url: http://vector:8080/alertmanager
-        send_resolved: false
+        send_resolved: true
         max_alerts: 10
         # Same credentials as the auth of the vector source. Compose
         # writes the value into this file: hex only (openssl rand -hex

@@ -72,8 +72,11 @@ sources:
 
 transforms:
   # One SMS per webhook. Alertmanager groups by alertname, so a webhook
-  # holds the firing alerts of one rule (max_alerts: 10). The text is the
-  # summary annotation of each alert, one per line.
+  # holds the alerts of one rule (max_alerts: 10). One line per alert,
+  # "ETAT - impact - detail" from the impact and summary annotations:
+  # ALERTE (critical) or ATTENTION (warning) while firing, then OK with
+  # the outage duration once resolved, unless the alert is a one-off event
+  # (label resolved_sms="false"). Firing lines come first.
   sms_message:
     type: remap
     inputs:
@@ -83,10 +86,46 @@ transforms:
     drop_on_abort: true
     source: |
       alerts = array(.alerts) ?? []
-      firing = filter(alerts) -> |_index, alert| { alert.status == "firing" }
-      lines = map_values(firing) -> |alert| {
-        string(alert.annotations.summary) ?? string(alert.labels.alertname) ?? "alerte"
+      firing = []
+      resolved = []
+      for_each(alerts) -> |_index, alert| {
+        status = string(alert.status) ?? ""
+        name = string(alert.labels.alertname) ?? "alerte"
+        impact = string(alert.annotations.impact) ?? ""
+        if status == "firing" {
+          state = if (string(alert.labels.severity) ?? "") == "critical" { "ALERTE" } else { "ATTENTION" }
+          detail = string(alert.annotations.summary) ?? name
+          line = if impact == "" { state + " - " + detail } else { state + " - " + impact + " - " + detail }
+          firing = push(firing, line)
+        } else if status == "resolved" && (string(alert.labels.resolved_sms) ?? "") != "false" {
+          subject = if impact == "" { name } else { impact }
+          line = "OK - " + subject + " - Revenu a la normale"
+          # Outage duration from startsAt to endsAt, rounded to the minute:
+          # "12 min", "1h05" or "2j03h". Left out when a date is missing.
+          starts = parse_timestamp(string(alert.startsAt) ?? "", "%+") ?? null
+          ends = parse_timestamp(string(alert.endsAt) ?? "", "%+") ?? null
+          if is_timestamp(starts) && is_timestamp(ends) {
+            secs = to_unix_timestamp!(ends) - to_unix_timestamp!(starts)
+            if secs >= 0 {
+              mins = to_int(round(to_float(secs) / 60.0))
+              if mins < 1 { mins = 1 }
+              elapsed = to_string(mins) + " min"
+              if mins >= 1440 {
+                hours = to_string(to_int(floor(mod(mins, 1440) / 60)))
+                if strlen(hours) < 2 { hours = "0" + hours }
+                elapsed = to_string(to_int(floor(mins / 1440))) + "j" + hours + "h"
+              } else if mins >= 60 {
+                minutes = to_string(mod(mins, 60))
+                if strlen(minutes) < 2 { minutes = "0" + minutes }
+                elapsed = to_string(to_int(floor(mins / 60))) + "h" + minutes
+              }
+              line = line + " apres " + elapsed
+            }
+          }
+          resolved = push(resolved, line)
+        }
       }
+      lines = append(firing, resolved)
       if length(lines) == 0 { abort }
       msg = join!(lines, "\n")
       truncated = int(.truncatedAlerts) ?? 0
@@ -102,8 +141,9 @@ transforms:
       . = {"user": user, "pass": pass, "msg": truncate(msg, 900)}
 
   # One record per vmalert rule. message holds the reason for the state:
-  # the evaluation error, the rendered summary of each active alert (the
-  # SMS text), or the condition that is not met (description).
+  # the evaluation error, "impact - summary" of each active alert (the
+  # SMS text without its state), or the condition that is not met
+  # (description).
   alert_rules:
     type: remap
     inputs:
@@ -127,7 +167,10 @@ transforms:
           # Earliest activeAt of the alerts, in seconds; 0 when none.
           since = 0
           for_each(alerts) -> |_ai, alert| {
-            summaries = push(summaries, string(alert.annotations.summary) ?? string(alert.labels.alertname) ?? "alerte")
+            detail = string(alert.annotations.summary) ?? string(alert.labels.alertname) ?? "alerte"
+            impact = string(alert.annotations.impact) ?? ""
+            if impact != "" { detail = impact + " - " + detail }
+            summaries = push(summaries, detail)
             active = to_unix_timestamp(parse_timestamp(string(alert.activeAt) ?? "", "%+") ?? t'1970-01-01T00:00:00Z')
             if active > 0 && (since == 0 || active < since) {
               since = active

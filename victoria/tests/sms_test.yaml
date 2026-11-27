@@ -2,21 +2,22 @@
 # Alertmanager webhook becomes the JSON body of the Free Mobile API.
 # test_vector.sh sets FREE_MOBILE_USER=test-user and FREE_MOBILE_PASS=test-pass.
 tests:
-  - name: firing alerts become one line each, resolved ones are left out
+  - name: each alert becomes "ETAT - impact - detail", firing lines first
     inputs:
       - insert_at: sms_message
         type: vrl
         source: |
           . = {
             "receiver": "sms", "status": "firing", "truncatedAlerts": 0,
-            "groupLabels": {"alertname": "proxmox_storage_usage"},
+            "groupLabels": {"alertname": "proxmox_storage_usage_high"},
             "alerts": [
-              {"status": "firing", "labels": {"alertname": "proxmox_storage_usage", "storage": "local"},
-               "annotations": {"summary": "Stockage Proxmox local occupe a 91%", "description": "x"}},
-              {"status": "resolved", "labels": {"alertname": "proxmox_storage_usage", "storage": "nas"},
-               "annotations": {"summary": "Stockage Proxmox nas occupe a 86%"}},
-              {"status": "firing", "labels": {"alertname": "proxmox_storage_usage", "storage": "zfs"},
-               "annotations": {"summary": "Stockage Proxmox zfs occupe a 88%"}}
+              {"status": "firing", "labels": {"alertname": "proxmox_storage_usage_high", "severity": "critical"},
+               "annotations": {"impact": "Stockage Proxmox local", "summary": "Occupe a 91%", "description": "x"}},
+              {"status": "resolved", "labels": {"alertname": "proxmox_storage_usage_high", "severity": "warning"},
+               "startsAt": "2026-11-27T20:00:00Z", "endsAt": "2026-11-27T21:05:10Z",
+               "annotations": {"impact": "Stockage Proxmox nas", "summary": "Occupe a 86%"}},
+              {"status": "firing", "labels": {"alertname": "proxmox_storage_usage_high", "severity": "warning"},
+               "annotations": {"impact": "Stockage Proxmox local-zfs", "summary": "Occupe a 87%"}}
             ]
           }
     outputs:
@@ -27,7 +28,7 @@ tests:
               assert_eq!(., {
                 "user": "test-user",
                 "pass": "test-pass",
-                "msg": "Stockage Proxmox local occupe a 91%\nStockage Proxmox zfs occupe a 88%"
+                "msg": "ALERTE - Stockage Proxmox local - Occupe a 91%\nATTENTION - Stockage Proxmox local-zfs - Occupe a 87%\nOK - Stockage Proxmox nas - Revenu a la normale apres 1h05"
               })
 
   - name: alerts cut by max_alerts are counted, a missing summary falls back to the alert name
@@ -46,7 +47,29 @@ tests:
         conditions:
           - type: vrl
             source: |
-              assert_eq!(.msg, "authentik_silent\n(+3 autres alertes)")
+              assert_eq!(.msg, "ATTENTION - authentik_silent\n(+3 autres alertes)")
+
+  - name: the outage duration reads in minutes, hours or days
+    inputs:
+      - insert_at: sms_message
+        type: vrl
+        source: |
+          . = {"status": "resolved", "alerts": [
+            {"status": "resolved", "labels": {"alertname": "a"}, "annotations": {"impact": "Un"},
+             "startsAt": "2026-11-27T21:00:00Z", "endsAt": "2026-11-27T21:00:20Z"},
+            {"status": "resolved", "labels": {"alertname": "b"}, "annotations": {"impact": "Deux"},
+             "startsAt": "2026-11-27T21:00:00.5+01:00", "endsAt": "2026-11-27T20:12:00Z"},
+            {"status": "resolved", "labels": {"alertname": "c"}, "annotations": {"impact": "Trois"},
+             "startsAt": "2026-11-25T18:00:00Z", "endsAt": "2026-11-27T21:30:00Z"},
+            {"status": "resolved", "labels": {"alertname": "d"}, "annotations": {},
+             "startsAt": "", "endsAt": "2026-11-27T21:30:00Z"}
+          ]}
+    outputs:
+      - extract_from: sms_message
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.msg, "OK - Un - Revenu a la normale apres 1 min\nOK - Deux - Revenu a la normale apres 12 min\nOK - Trois - Revenu a la normale apres 2j03h\nOK - d - Revenu a la normale")
 
   - name: a long text is cut to 900 characters
     inputs:
@@ -62,13 +85,15 @@ tests:
             source: |
               assert_eq!(strlen!(.msg), 900)
 
-  - name: a webhook without firing alert sends nothing
+  - name: a one-off event sends no OK once resolved
     inputs:
       - insert_at: sms_message
         type: vrl
         source: |
-          . = {"status": "resolved", "alerts": [{"status": "resolved", "labels": {"alertname": "a"},
-                                                 "annotations": {"summary": "fini"}}]}
+          . = {"status": "resolved", "alerts": [{"status": "resolved",
+                                                 "labels": {"alertname": "oom_kill", "resolved_sms": "false"},
+                                                 "startsAt": "2026-11-27T21:00:00Z", "endsAt": "2026-11-27T21:15:00Z",
+                                                 "annotations": {"impact": "Hote pve", "summary": "fini"}}]}
     no_outputs_from:
       - sms_message
 

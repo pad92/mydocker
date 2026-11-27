@@ -3,7 +3,7 @@
 # reason for its state in message. A test passes when one output record meets
 # its conditions, so each test sends a single rule.
 tests:
-  - name: a firing rule gives the summaries of its alerts and the earliest start
+  - name: a firing rule gives the impact and summary of its alerts and the earliest start
     inputs:
       - insert_at: alert_rules
         type: vrl
@@ -17,7 +17,7 @@ tests:
                "alerts": [
                  {"state": "firing", "activeAt": "2026-11-26T21:20:00Z",
                   "labels": {"alertname": "proxmox_task_failed"},
-                  "annotations": {"summary": "Tache vzdump en erreur sur pve1"}},
+                  "annotations": {"impact": "Proxmox", "summary": "Tache vzdump en erreur sur pve1"}},
                  {"state": "firing", "activeAt": "2026-11-26T21:10:00Z",
                   "labels": {"alertname": "proxmox_task_failed"}, "annotations": {}}
                ]}
@@ -31,7 +31,7 @@ tests:
               assert!(is_timestamp(.timestamp))
               assert_eq!(remove!(., ["timestamp"]), {
                 "log_stream": "alerts",
-                "message": "Tache vzdump en erreur sur pve1 | proxmox_task_failed",
+                "message": "Proxmox - Tache vzdump en erreur sur pve1 | proxmox_task_failed",
                 "alert_rule": "proxmox_task_failed",
                 "alert_group": "proxmox",
                 "alert_source": "logs",

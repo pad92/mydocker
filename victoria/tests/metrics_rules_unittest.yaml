@@ -29,7 +29,8 @@ tests:
         exp_alerts:
           - exp_labels: {host_name: a, severity: critical}
             exp_annotations:
-              summary: "Plus de metrique systeme de a depuis 10 minutes"
+              impact: "Hote a"
+              summary: "Plus de metriques systeme depuis 10 minutes"
               description: "Le collecteur OpenTelemetry de l'hote n'envoie plus rien depuis 10 minutes : hote ou collecteur arrete"
 
   # Record read by the hosts and services dashboards: age of the newest
@@ -68,7 +69,8 @@ tests:
         exp_alerts:
           - exp_labels: {host_name: a, severity: critical}
             exp_annotations:
-              summary: "Plus de metrique systeme de a depuis 10 minutes"
+              impact: "Hote a"
+              summary: "Plus de metriques systeme depuis 10 minutes"
               description: "Le collecteur OpenTelemetry de l'hote n'envoie plus rien depuis 10 minutes : hote ou collecteur arrete"
       - eval_time: 27h
         groupname: host_metrics
@@ -107,7 +109,8 @@ tests:
         exp_alerts:
           - exp_labels: {host_name: a, severity: warning}
             exp_annotations:
-              summary: "Plus de donnee ZFS de a depuis 30 minutes"
+              impact: "ZFS a"
+              summary: "Plus de donnees depuis 30 minutes"
               description: "zfs_exporter ou sa collecte est arrete : l'etat des pools n'est plus surveille"
       - eval_time: 45m
         groupname: smart
@@ -115,7 +118,8 @@ tests:
         exp_alerts:
           - exp_labels: {host_name: a, severity: warning}
             exp_annotations:
-              summary: "Plus de donnee SMART de a depuis 30 minutes"
+              impact: "SMART a"
+              summary: "Plus de donnees depuis 30 minutes"
               description: "smartctl_exporter ou sa collecte par le collecteur OpenTelemetry est arrete"
 
   # smart_status_failed carries host_name and device (inhibition source);
@@ -138,7 +142,8 @@ tests:
         exp_alerts:
           - exp_labels: {host_name: a, device: sda, severity: critical}
             exp_annotations:
-              summary: "Disque sda de a : bilan SMART en echec"
+              impact: "Disque sda de a"
+              summary: "Bilan SMART en echec"
               description: "Le disque annonce lui-meme une panne prochaine : sauvegarder et le remplacer"
 
   # A raw count that rises fires; a count that is high but constant (an
@@ -161,7 +166,8 @@ tests:
         exp_alerts:
           - exp_labels: {host_name: a, device: sda, attribute_name: Reallocated_Sector_Ct, severity: warning}
             exp_annotations:
-              summary: "Disque sda de a : Reallocated_Sector_Ct +2 en 24h"
+              impact: "Disque sda de a"
+              summary: "Reallocated_Sector_Ct +2 en 24h"
               description: "Des secteurs realloues, en attente ou illisibles apparaissent : le disque se degrade"
 
   # Inhibition pair: high (90-95%) and critical (>=95%) never fire for the
@@ -188,7 +194,8 @@ tests:
         exp_alerts:
           - exp_labels: {device: /dev/sda1, type: ext4, severity: warning}
             exp_annotations:
-              summary: "Systeme de fichiers /dev/sda1 occupe a 92%"
+              impact: "Systeme de fichiers /dev/sda1"
+              summary: "Occupe a 92%"
               description: "Un systeme de fichiers depasse 90% d'occupation"
       - eval_time: 20m
         groupname: host_metrics
@@ -196,7 +203,8 @@ tests:
         exp_alerts:
           - exp_labels: {device: /dev/sdb1, type: ext4, severity: critical}
             exp_annotations:
-              summary: "Systeme de fichiers /dev/sdb1 occupe a 97%"
+              impact: "Systeme de fichiers /dev/sdb1"
+              summary: "Occupe a 97%"
               description: "Un systeme de fichiers depasse 95% d'occupation"
 
   # A unit failed for 5 minutes fires with host_name and the unit name;
@@ -229,11 +237,13 @@ tests:
         exp_alerts:
           - exp_labels: {host_name: a, systemd_unit_name: x.service, severity: warning}
             exp_annotations:
-              summary: "Unit x.service en echec sur a"
+              impact: "Hote a"
+              summary: "Unit x.service en echec"
               description: "Une unit systemd est en etat failed depuis 5 minutes"
           - exp_labels: {host_name: b, systemd_unit_name: z.service, severity: warning}
             exp_annotations:
-              summary: "Unit z.service en echec sur b"
+              impact: "Hote b"
+              summary: "Unit z.service en echec"
               description: "Une unit systemd est en etat failed depuis 5 minutes"
       - eval_time: 13m
         groupname: host_metrics
@@ -241,11 +251,13 @@ tests:
         exp_alerts:
           - exp_labels: {host_name: a, systemd_unit_name: x.service, severity: warning}
             exp_annotations:
-              summary: "Unit x.service en echec sur a"
+              impact: "Hote a"
+              summary: "Unit x.service en echec"
               description: "Une unit systemd est en etat failed depuis 5 minutes"
           - exp_labels: {host_name: b, systemd_unit_name: z.service, severity: warning}
             exp_annotations:
-              summary: "Unit z.service en echec sur b"
+              impact: "Hote b"
+              summary: "Unit z.service en echec"
               description: "Une unit systemd est en etat failed depuis 5 minutes"
       - eval_time: 17m
         groupname: host_metrics
@@ -253,8 +265,33 @@ tests:
         exp_alerts:
           - exp_labels: {host_name: b, systemd_unit_name: z.service, severity: warning}
             exp_annotations:
-              summary: "Unit z.service en echec sur b"
+              impact: "Hote b"
+              summary: "Unit z.service en echec"
               description: "Une unit systemd est en etat failed depuis 5 minutes"
+
+  # A Proxmox upgrade changes service_version: the node goes on in a new
+  # series while the old one stays in the 24 h lag window. The node "a" that
+  # was upgraded stays quiet; the node "b" that stops reporting fires, with
+  # host_name only.
+  - name: proxmox_metrics_silent survives a Proxmox upgrade
+    interval: 1m
+    input_series:
+      - series: 'proxmox_node_uptime_seconds{host_name="a", service_version="9.2"}'
+        values: '0+60x5'
+      - series: 'proxmox_node_uptime_seconds{host_name="a", service_version="9.3"}'
+        values: '_x6 0+60x40'
+      - series: 'proxmox_node_uptime_seconds{host_name="b", service_version="9.3"}'
+        values: '0+60x5'
+    alert_rule_test:
+      - eval_time: 30m
+        groupname: proxmox_metrics
+        alertname: proxmox_metrics_silent
+        exp_alerts:
+          - exp_labels: {host_name: b, severity: critical}
+            exp_annotations:
+              impact: "Proxmox b"
+              summary: "Plus de metriques depuis 10 minutes"
+              description: "Le serveur de metriques OpenTelemetry de Proxmox n'a plus rien envoye depuis 10 minutes"
 
   # A guest that just restarted fires; a stopped guest (uptime 0) and a
   # guest up for a long time do not.
@@ -272,9 +309,10 @@ tests:
         groupname: proxmox_metrics
         alertname: proxmox_guest_restarted
         exp_alerts:
-          - exp_labels: {name: web, vmid: "101", severity: warning}
+          - exp_labels: {name: web, vmid: "101", severity: warning, resolved_sms: "false"}
             exp_annotations:
-              summary: "Invite Proxmox web (101) redemarre il y a 180 s"
+              impact: "Invite Proxmox web (101)"
+              summary: "Redemarre il y a 180 s"
               description: "Une VM ou un conteneur Proxmox a redemarre (uptime sous 10 minutes, les invites arretes sont ignores)"
 
   # Send errors in every 10 minute window for 15 minutes fire; a single
@@ -297,7 +335,8 @@ tests:
         exp_alerts:
           - exp_labels: {job: vmalert-metrics, severity: warning}
             exp_annotations:
-              summary: "vmalert-metrics n'arrive plus a envoyer ses alertes a Alertmanager"
+              impact: "Victoria vmalert-metrics"
+              summary: "Les alertes n'atteignent plus Alertmanager"
               description: "Des alertes declenchees n'atteignent pas Alertmanager : aucun SMS ne part pour elles"
 
   # Same shape for Alertmanager: one failed push does not fire, failures
@@ -316,7 +355,8 @@ tests:
         exp_alerts:
           - exp_labels: {integration: webhook, receiver_name: sms, severity: warning}
             exp_annotations:
-              summary: "Alertmanager n'arrive plus a notifier sms (webhook)"
+              impact: "Victoria alertmanager"
+              summary: "Notifications sms (webhook) en echec"
               description: "Des notifications d'Alertmanager echouent : webhook injoignable ou en erreur"
 
   # One failed evaluation (a datasource restart) does not fire, two in
@@ -335,7 +375,8 @@ tests:
         exp_alerts:
           - exp_labels: {job: vmalert-logs, group: proxmox, exported_alertname: proxmox_backup_failed, severity: warning}
             exp_annotations:
-              summary: "Regle proxmox_backup_failed (vmalert-logs) en erreur a plusieurs evaluations"
+              impact: "Victoria vmalert-logs"
+              summary: "Regle proxmox_backup_failed en erreur a plusieurs evaluations"
               description: "vmalert n'arrive plus a evaluer une regle d'alerte : la regle ne peut plus se declencher"
 
   # unpoller up but without UniFi data fires after 10 minutes; a device
@@ -361,7 +402,8 @@ tests:
         exp_alerts:
           - exp_labels: {job: unpoller, severity: warning}
             exp_annotations:
-              summary: "Aucune donnee UniFi collectee par unpoller depuis 10 minutes"
+              impact: "Collecte UniFi"
+              summary: "Aucune donnee collectee par unpoller depuis 10 minutes"
               description: "unpoller ne remonte aucun equipement UniFi : URL, compte ou controleur injoignable, ou unpoller arrete"
       - eval_time: 25m
         groupname: unifi_metrics
@@ -369,7 +411,8 @@ tests:
         exp_alerts:
           - exp_labels: {name: ap1, source: "https://unifi", severity: critical}
             exp_annotations:
-              summary: "Equipement UniFi ap1 absent depuis 10 minutes"
+              impact: "UniFi ap1"
+              summary: "Equipement absent depuis 10 minutes"
               description: "unpoller ne remonte plus cet equipement UniFi : hors ligne ou retire du controleur"
   # unpoller reports its devices: no unpoller_no_unifi_data alert.
   - name: unifi data present
@@ -412,7 +455,8 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warning}
             exp_annotations:
-              summary: "Donnees UniFi figees dans unpoller depuis 20 minutes"
+              impact: "Collecte UniFi"
+              summary: "Donnees figees dans unpoller depuis 20 minutes"
               description: "unpoller repond mais l'uptime d'aucun equipement UniFi n'a change : la collecte aupres du controleur echoue (TLS, compte, API)"
   # One device frozen (offline, its last value kept) while another still
   # moves: collection works, no stale alert.
@@ -533,11 +577,13 @@ tests:
         exp_alerts:
           - exp_labels: {job: victoriametrics, instance: "victoriametrics:8428", path: /data, severity: warning}
             exp_annotations:
-              summary: "Disque /data de victoriametrics plein dans moins de 4 jours au rythme actuel"
+              impact: "Victoria victoriametrics"
+              summary: "Disque /data plein dans moins de 4 jours au rythme actuel"
               description: "L'espace libre baisse assez vite pour etre epuise en 4 jours : ingestion en hausse ou retention trop longue"
           - exp_labels: {job: victorialogs, instance: "victorialogs:9428", path: /data, severity: warning}
             exp_annotations:
-              summary: "Disque /data de victorialogs plein dans moins de 4 jours au rythme actuel"
+              impact: "Victoria victorialogs"
+              summary: "Disque /data plein dans moins de 4 jours au rythme actuel"
               description: "L'espace libre baisse assez vite pour etre epuise en 4 jours : ingestion en hausse ou retention trop longue"
   # 100 MB less every 10 minutes from 500 GB: 57.6 GB in 4 days, room left.
   - name: victoria_disk_fill_predicted stays quiet on a slow decline
@@ -572,7 +618,8 @@ tests:
         exp_alerts:
           - exp_labels: {severity: critical}
             exp_annotations:
-              summary: "VictoriaLogs ne recoit plus aucun log depuis plus de 5 minutes"
+              impact: "Victoria victorialogs"
+              summary: "Plus aucun log recu depuis plus de 5 minutes"
               description: "VictoriaLogs repond mais n'ecrit plus de ligne : Vector n'envoie plus rien, les alertes sur les logs sont aveugles"
   # Restart: the counter starts again from 0, the first evaluation sees one
   # sample and an increase of 0. for: 2m keeps it from firing.
@@ -634,7 +681,8 @@ tests:
         exp_alerts:
           - exp_labels: {component_id: victorialogs, severity: warning}
             exp_annotations:
-              summary: "Vector : 5 erreurs du composant victorialogs en 30 minutes"
+              impact: "Victoria vector"
+              summary: "5 erreurs du composant victorialogs en 30 minutes"
               description: "Un composant de Vector echoue : des logs ou des metriques sont perdus ou retardes"
   # Login refused from minute 5: quiet at 14m (9 minutes), firing at
   # 16m. A logged-in exporter (1) never fires.
@@ -654,7 +702,8 @@ tests:
         exp_alerts:
           - exp_labels: {job: freebox, instance: "freebox-exporter:9102", severity: warning}
             exp_annotations:
-              summary: "Freebox : l'exporter n'est plus autorise depuis 10 minutes"
+              impact: "Exporter Freebox"
+              summary: "Plus autorise par la Freebox depuis 10 minutes"
               description: "La Freebox refuse le login de freebox-exporter (code dans fbx_exporter_authentication_error et le log) : token revoque ou droits retires, l'enregistrer a nouveau"
   - name: freebox_auth_failed stays quiet while the login works
     interval: 1m
@@ -686,7 +735,8 @@ tests:
         exp_alerts:
           - exp_labels: {job: freebox, collector: system, severity: warning}
             exp_annotations:
-              summary: "Freebox : le collecteur system echoue depuis 30 minutes"
+              impact: "Exporter Freebox"
+              summary: "Le collecteur system echoue depuis 30 minutes"
               description: "freebox-exporter ne lit plus ce module de l'API de la Freebox : ses metriques ne sont plus a jour, voir le log de l'exporter"
 
   # VRAM per process named after its container. pid 100 is in container
@@ -758,7 +808,8 @@ tests:
         exp_alerts:
           - exp_labels: {instance: a, severity: critical}
             exp_annotations:
-              summary: "Onduleur sur batterie (lu par a)"
+              impact: "Onduleur"
+              summary: "Sur batterie (lu par a)"
               description: "Coupure secteur : l'onduleur alimente les equipements sur sa batterie"
 
   # Fires at once on LB in the middle of the status ("OB LB DISCHRG");
@@ -783,7 +834,8 @@ tests:
         exp_alerts:
           - exp_labels: {instance: a, severity: critical}
             exp_annotations:
-              summary: "Onduleur batterie faible (lu par a)"
+              impact: "Onduleur"
+              summary: "Batterie faible (lu par a)"
               description: "La batterie de l'onduleur est presque vide : arret imminent des equipements"
 
   # Under 600s for 5 minutes; NAS b at the current 1407s stays quiet.
@@ -805,7 +857,8 @@ tests:
         exp_alerts:
           - exp_labels: {instance: a, severity: warning}
             exp_annotations:
-              summary: "Autonomie de l'onduleur a 5m 0s (lu par a)"
+              impact: "Onduleur"
+              summary: "Autonomie a 5m 0s (lu par a)"
               description: "L'autonomie estimee sur batterie est sous 10 minutes"
 
   # 80% included (NAS c), 79% not (NAS b); 10 minutes before firing.
@@ -825,7 +878,8 @@ tests:
         exp_alerts:
           - exp_labels: {instance: c, severity: warning}
             exp_annotations:
-              summary: "Onduleur charge a 80% (lu par c)"
+              impact: "Onduleur"
+              summary: "Charge a 80% (lu par c)"
               description: "La charge de l'onduleur depasse 80% depuis 10 minutes"
       - eval_time: 13m
         groupname: ups
@@ -833,11 +887,13 @@ tests:
         exp_alerts:
           - exp_labels: {instance: a, severity: warning}
             exp_annotations:
-              summary: "Onduleur charge a 85% (lu par a)"
+              impact: "Onduleur"
+              summary: "Charge a 85% (lu par a)"
               description: "La charge de l'onduleur depasse 80% depuis 10 minutes"
           - exp_labels: {instance: c, severity: warning}
             exp_annotations:
-              summary: "Onduleur charge a 80% (lu par c)"
+              impact: "Onduleur"
+              summary: "Charge a 80% (lu par c)"
               description: "La charge de l'onduleur depasse 80% depuis 10 minutes"
 
   # RB at the end of the status ("OL CHRG RB") fires; NAS b in "OL CHRG"
@@ -862,7 +918,8 @@ tests:
         exp_alerts:
           - exp_labels: {instance: a, severity: warning}
             exp_annotations:
-              summary: "Batterie de l'onduleur a remplacer (lu par a)"
+              impact: "Onduleur"
+              summary: "Batterie a remplacer (lu par a)"
               description: "Le test de l'onduleur signale une batterie usee"
 
   # NAS a stops at 10m: quiet at 38m (28m old), fires at 45m (35m old).
@@ -884,5 +941,6 @@ tests:
         exp_alerts:
           - exp_labels: {instance: a, severity: warning}
             exp_annotations:
-              summary: "Plus de donnee de l'onduleur via a depuis 30 minutes"
+              impact: "Onduleur"
+              summary: "Plus de donnees via a depuis 30 minutes"
               description: "Le NAS ne voit plus l'onduleur en USB, ou sa collecte SNMP est arretee"

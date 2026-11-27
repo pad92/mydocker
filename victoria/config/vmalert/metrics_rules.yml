@@ -1,16 +1,23 @@
+# Each alert carries an impact annotation (what is hit, short host
+# name) and a summary (the detail without the impact): the SMS line is
+# "ETAT - impact - summary". resolved_sms: "false" marks a one-off event
+# (a failure, a burst): no OK SMS when its window passes.
 groups:
   - name: proxmox_metrics
     interval: 1m
     rules:
       # lag() is the age of the last sample in the 24 h window: one
-      # alert per node that sent metrics in the last 24 hours.
+      # alert per node that sent metrics in the last 24 hours. A Proxmox
+      # upgrade changes service_version and starts a new series: min keeps
+      # the newest series of the node, so the old one does not fire.
       - alert: proxmox_metrics_silent
-        expr: lag(proxmox_node_uptime_seconds[24h]) > 600
+        expr: min by (host_name) (lag(proxmox_node_uptime_seconds[24h])) > 600
         keep_firing_for: 60m
         labels:
           severity: critical
         annotations:
-          summary: "Plus de metrique Proxmox de {{ $labels.host_name }} depuis 10 minutes"
+          impact: "Proxmox {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "Plus de metriques depuis 10 minutes"
           description: "Le serveur de metriques OpenTelemetry de Proxmox n'a plus rien envoye depuis 10 minutes"
       - alert: proxmox_storage_usage_high
         expr: proxmox_storage_used_bytes / proxmox_storage_total_bytes >= 0.85
@@ -18,7 +25,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Stockage Proxmox {{ $labels.storage }} occupe a {{ $value | humanizePercentage }}"
+          impact: "Stockage Proxmox {{ $labels.storage }}"
+          summary: "Occupe a {{ $value | humanizePercentage }}"
           description: "Un stockage Proxmox depasse 85% d'occupation"
       # ZFS ARC is cache: the kernel gives it back under pressure.
       - alert: proxmox_node_memory_high
@@ -29,7 +37,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Memoire Proxmox hors ARC a {{ $value | humanizePercentage }}"
+          impact: "Memoire Proxmox"
+          summary: "Hors cache ARC a {{ $value | humanizePercentage }}"
           description: "La memoire de l'hote Proxmox hors cache ZFS ARC depasse 90%"
       - alert: proxmox_node_cpu_high
         expr: avg_over_time(proxmox_node_cpustat_cpu_percent[15m]) > 0.9
@@ -37,7 +46,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "CPU Proxmox a {{ $value | humanizePercentage }} en moyenne sur 15 minutes"
+          impact: "CPU Proxmox"
+          summary: "A {{ $value | humanizePercentage }} en moyenne sur 15 minutes"
           description: "Le CPU de l'hote Proxmox est en moyenne au-dessus de 90% pendant 15 minutes"
       # Stopped guests report an uptime of 0 and are ignored.
       - alert: proxmox_guest_restarted
@@ -45,8 +55,10 @@ groups:
         keep_firing_for: 30m
         labels:
           severity: warning
+          resolved_sms: "false"
         annotations:
-          summary: "Invite Proxmox {{ $labels.name }} ({{ $labels.vmid }}) redemarre il y a {{ $value }} s"
+          impact: "Invite Proxmox {{ $labels.name }} ({{ $labels.vmid }})"
+          summary: "Redemarre il y a {{ $value }} s"
           description: "Une VM ou un conteneur Proxmox a redemarre (uptime sous 10 minutes, les invites arretes sont ignores)"
   # unpoller answers its scrape with up = 1 even when it cannot log in
   # to UniFi: it then exports only its go_* metrics. absent() also fires
@@ -61,7 +73,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Aucune donnee UniFi collectee par unpoller depuis 10 minutes"
+          impact: "Collecte UniFi"
+          summary: "Aucune donnee collectee par unpoller depuis 10 minutes"
           description: "unpoller ne remonte aucun equipement UniFi : URL, compte ou controleur injoignable, ou unpoller arrete"
       # When a poll of the controller fails, unpoller keeps serving its
       # last good snapshot: unpoller_device_info stays present and the
@@ -76,7 +89,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Donnees UniFi figees dans unpoller depuis 20 minutes"
+          impact: "Collecte UniFi"
+          summary: "Donnees figees dans unpoller depuis 20 minutes"
           description: "unpoller repond mais l'uptime d'aucun equipement UniFi n'a change : la collecte aupres du controleur echoue (TLS, compte, API)"
       # A device that unpoller listed in the last 24 hours and no
       # longer reports: offline, or removed from the controller.
@@ -86,7 +100,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Equipement UniFi {{ $labels.name }} absent depuis 10 minutes"
+          impact: "UniFi {{ $labels.name }}"
+          summary: "Equipement absent depuis 10 minutes"
           description: "unpoller ne remonte plus cet equipement UniFi : hors ligne ou retire du controleur"
   # Host metrics from the local OpenTelemetry collectors.
   - name: host_metrics
@@ -102,7 +117,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Plus de metrique systeme de {{ $labels.host_name }} depuis 10 minutes"
+          impact: "Hote {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "Plus de metriques systeme depuis 10 minutes"
           description: "Le collecteur OpenTelemetry de l'hote n'envoie plus rien depuis 10 minutes : hote ou collecteur arrete"
       # Several hosts report the same NFS or ZFS dataset: one alert per
       # device. vfat (EFI) and tmpfs are left out.
@@ -115,7 +131,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Systeme de fichiers {{ $labels.device }} occupe a {{ $value | humanizePercentage }}"
+          impact: "Systeme de fichiers {{ $labels.device }}"
+          summary: "Occupe a {{ $value | humanizePercentage }}"
           description: "Un systeme de fichiers depasse 90% d'occupation"
       - alert: filesystem_usage_critical
         expr: >-
@@ -125,7 +142,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Systeme de fichiers {{ $labels.device }} occupe a {{ $value | humanizePercentage }}"
+          impact: "Systeme de fichiers {{ $labels.device }}"
+          summary: "Occupe a {{ $value | humanizePercentage }}"
           description: "Un systeme de fichiers depasse 95% d'occupation"
       # A system unit in the failed state, from the systemd receiver of
       # the collector (systemd hosts only, user units not included). The
@@ -143,7 +161,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Unit {{ $labels.systemd_unit_name }} en echec sur {{ $labels.host_name }}"
+          impact: "Hote {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "Unit {{ $labels.systemd_unit_name }} en echec"
           description: "Une unit systemd est en etat failed depuis 5 minutes"
   - name: zfs
     interval: 1m
@@ -156,7 +175,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Pool ZFS {{ $labels.pool }} pas ONLINE (etat {{ $value }})"
+          impact: "Pool ZFS {{ $labels.pool }}"
+          summary: "Pas ONLINE (etat {{ $value }})"
           description: "Un pool ZFS est degrade ou en panne : verifier zpool status"
       - alert: zfs_pool_capacity_high
         expr: zfs_pool_capacity_ratio >= 0.85
@@ -165,7 +185,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Pool ZFS {{ $labels.pool }} rempli a {{ $value | humanizePercentage }}"
+          impact: "Pool ZFS {{ $labels.pool }}"
+          summary: "Rempli a {{ $value | humanizePercentage }}"
           description: "Un pool ZFS depasse 85% de remplissage, au-dela les performances chutent"
       # Without fresh data the two rules above go quiet: a stopped
       # zfs_exporter would hide a degraded pool. Same shape as
@@ -176,7 +197,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Plus de donnee ZFS de {{ $labels.host_name }} depuis 30 minutes"
+          impact: "ZFS {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "Plus de donnees depuis 30 minutes"
           description: "zfs_exporter ou sa collecte est arrete : l'etat des pools n'est plus surveille"
   # smartctl_exporter on the hosts (myansible role smartctl_exporter).
   # Raw counts are gauges: the rise above their 24h minimum, not delta,
@@ -192,7 +214,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Disque {{ $labels.device }} de {{ $labels.host_name }} : bilan SMART en echec"
+          impact: "Disque {{ $labels.device }} de {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "Bilan SMART en echec"
           description: "Le disque annonce lui-meme une panne prochaine : sauvegarder et le remplacer"
       - alert: smart_attribute_failing
         expr: >-
@@ -202,7 +225,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Disque {{ $labels.device }} de {{ $labels.host_name }} : {{ $labels.attribute_name }} sous son seuil ({{ $value }})"
+          impact: "Disque {{ $labels.device }} de {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "{{ $labels.attribute_name }} sous son seuil ({{ $value }})"
           description: "Un attribut SMART normalise est descendu a son seuil de panne"
       - alert: smart_sectors_growing
         expr: >-
@@ -214,7 +238,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Disque {{ $labels.device }} de {{ $labels.host_name }} : {{ $labels.attribute_name }} +{{ $value }} en 24h"
+          impact: "Disque {{ $labels.device }} de {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "{{ $labels.attribute_name }} +{{ $value }} en 24h"
           description: "Des secteurs realloues, en attente ou illisibles apparaissent : le disque se degrade"
       - alert: smart_crc_errors_growing
         expr: >-
@@ -226,7 +251,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Disque {{ $labels.device }} de {{ $labels.host_name }} : +{{ $value }} erreurs CRC en 24h"
+          impact: "Disque {{ $labels.device }} de {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "+{{ $value }} erreurs CRC en 24h"
           description: "Des erreurs de transfert apparaissent entre le disque et le controleur : cable ou connecteur"
       - alert: smart_temperature_high
         expr: max by (host_name, device) (smartctl_device_temperature{temperature_type="current"}) > 55
@@ -235,7 +261,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Disque {{ $labels.device }} de {{ $labels.host_name }} a {{ $value }} degres"
+          impact: "Disque {{ $labels.device }} de {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "A {{ $value }} degres"
           description: "Un disque d'hote depasse 55 degres depuis 10 minutes"
       - alert: smart_data_missing
         expr: max by (host_name) (lag(smartctl_device_smart_status[24h])) > 1800
@@ -243,7 +270,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Plus de donnee SMART de {{ $labels.host_name }} depuis 30 minutes"
+          impact: "SMART {{ $labels.host_name | reReplaceAll \"[.].*\" \"\" }}"
+          summary: "Plus de donnees depuis 30 minutes"
           description: "smartctl_exporter ou sa collecte par le collecteur OpenTelemetry est arrete"
   # The UPS is on USB on the Synology NAS, whose NUT server reads it; the
   # job synology reads it in the SYNOLOGY-UPS-MIB. instance is the NAS,
@@ -261,7 +289,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Onduleur sur batterie (lu par {{ $labels.instance }})"
+          impact: "Onduleur"
+          summary: "Sur batterie (lu par {{ $labels.instance }})"
           description: "Coupure secteur : l'onduleur alimente les equipements sur sa batterie"
       # The UPS's own low battery flag: the NAS starts its shutdown.
       - alert: ups_low_battery
@@ -270,7 +299,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Onduleur batterie faible (lu par {{ $labels.instance }})"
+          impact: "Onduleur"
+          summary: "Batterie faible (lu par {{ $labels.instance }})"
           description: "La batterie de l'onduleur est presque vide : arret imminent des equipements"
       # On line power too: a load that leaves less than 10 minutes.
       - alert: ups_runtime_low
@@ -282,7 +312,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Autonomie de l'onduleur a {{ $value | humanizeDuration }} (lu par {{ $labels.instance }})"
+          impact: "Onduleur"
+          summary: "Autonomie a {{ $value | humanizeDuration }} (lu par {{ $labels.instance }})"
           description: "L'autonomie estimee sur batterie est sous 10 minutes"
       - alert: ups_overload
         expr: max by (instance) (upsInfoLoadValue) >= 80
@@ -291,7 +322,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Onduleur charge a {{ $value }}% (lu par {{ $labels.instance }})"
+          impact: "Onduleur"
+          summary: "Charge a {{ $value }}% (lu par {{ $labels.instance }})"
           description: "La charge de l'onduleur depasse 80% depuis 10 minutes"
       # Set by the UPS self-test: the battery no longer holds its charge.
       - alert: ups_replace_battery
@@ -300,7 +332,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Batterie de l'onduleur a remplacer (lu par {{ $labels.instance }})"
+          impact: "Onduleur"
+          summary: "Batterie a remplacer (lu par {{ $labels.instance }})"
           description: "Le test de l'onduleur signale une batterie usee"
       # Without fresh data the rules above go quiet: the UPS unplugged
       # from the NAS or the NAS unreachable would hide a power outage.
@@ -312,7 +345,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Plus de donnee de l'onduleur via {{ $labels.instance }} depuis 30 minutes"
+          impact: "Onduleur"
+          summary: "Plus de donnees via {{ $labels.instance }} depuis 30 minutes"
           description: "Le NAS ne voit plus l'onduleur en USB, ou sa collecte SNMP est arretee"
   # Synology status OIDs are 1 when normal. diskBadSector is -1 on
   # cache devices, so only a positive count fires.
@@ -326,7 +360,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "NAS Synology : {{ $labels.__name__ }} en defaut"
+          impact: "NAS Synology"
+          summary: "{{ $labels.__name__ }} en defaut"
           description: "Le NAS signale une panne systeme, d'alimentation ou de ventilateur"
       - alert: synology_raid_degraded
         expr: raidStatus{job="synology"} != 1
@@ -334,7 +369,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Volume Synology {{ $labels.raidName }} pas normal (etat {{ $value }})"
+          impact: "Volume Synology {{ $labels.raidName }}"
+          summary: "Pas normal (etat {{ $value }})"
           description: "Un volume RAID du NAS est degrade, en reconstruction ou en panne"
       - alert: synology_disk_failed
         expr: >-
@@ -344,7 +380,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Disque Synology {{ $labels.diskID }} : {{ $labels.__name__ }} = {{ $value }}"
+          impact: "Disque Synology {{ $labels.diskID }}"
+          summary: "{{ $labels.__name__ }} = {{ $value }}"
           description: "Un disque du NAS est en defaut ou a des secteurs defectueux"
       - alert: synology_temperature_high
         expr: >-
@@ -354,7 +391,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Temperature du NAS Synology a {{ $value }} degres"
+          impact: "NAS Synology"
+          summary: "Temperature a {{ $value }} degres"
           description: "Le NAS depasse 60 degres ou un disque depasse 55 degres"
       - alert: synology_scrape_down
         expr: up{job="synology"} == 0
@@ -363,7 +401,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Le NAS Synology ne repond plus en SNMP depuis 10 minutes"
+          impact: "NAS Synology"
+          summary: "Ne repond plus en SNMP depuis 10 minutes"
           description: "snmp_exporter n'interroge plus le NAS : NAS arrete, reseau ou identifiants SNMPv3"
   # Freebox Delta in bridge mode (freebox-exporter). connection_state
   # is 1 while the Internet connection of the box is up. The SMS of a
@@ -379,7 +418,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Freebox : connexion Internet coupee"
+          impact: "Freebox"
+          summary: "Connexion Internet coupee"
           description: "La Freebox signale sa connexion Internet (fibre) autre que up"
       - alert: freebox_scrape_down
         expr: up{job="freebox"} == 0
@@ -388,7 +428,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "L'exporter Freebox ne repond plus depuis 10 minutes"
+          impact: "Exporter Freebox"
+          summary: "Ne repond plus depuis 10 minutes"
           description: "freebox-exporter arrete, sans token ou API de la Freebox injoignable (un token refuse declenche freebox_auth_failed)"
       # pwr_rx is in hundredths of dBm. GPON receivers lose the link
       # around -28 dBm: below -26 the fibre or a connector is degrading.
@@ -399,7 +440,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Freebox : signal fibre faible ({{ $value | printf \"%.1f\" }} dBm)"
+          impact: "Freebox"
+          summary: "Signal fibre faible ({{ $value | printf \"%.1f\" }} dBm)"
           description: "Puissance optique recue sous -26 dBm depuis 30 minutes : fibre, connecteur ou SFP a verifier"
       - alert: freebox_temperature_high
         expr: max by (job) (fbx_exporter_system_temp_cpu{job="freebox"}) > 85
@@ -408,7 +450,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Freebox : processeur a {{ $value }} degres"
+          impact: "Freebox"
+          summary: "Processeur a {{ $value }} degres"
           description: "Temperature CPU de la Freebox au-dessus de 85 degres depuis 15 minutes : ventilation ou ventilateur a verifier"
       # Exporter v0.0.29+: authenticated drops to 0 only when the box
       # answers the login with an error_code (token revoked, pending,
@@ -422,7 +465,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Freebox : l'exporter n'est plus autorise depuis 10 minutes"
+          impact: "Exporter Freebox"
+          summary: "Plus autorise par la Freebox depuis 10 minutes"
           description: "La Freebox refuse le login de freebox-exporter (code dans fbx_exporter_authentication_error et le log) : token revoque ou droits retires, l'enregistrer a nouveau"
       # One collector (connection, system) failing while the login
       # works: its metrics stop updating without the scrape failing.
@@ -433,7 +477,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Freebox : le collecteur {{ $labels.collector }} echoue depuis 30 minutes"
+          impact: "Exporter Freebox"
+          summary: "Le collecteur {{ $labels.collector }} echoue depuis 30 minutes"
           description: "freebox-exporter ne lit plus ce module de l'API de la Freebox : ses metriques ne sont plus a jour, voir le log de l'exporter"
   # Health of the stack itself (job per component in
   # victoriametrics_scrape).
@@ -471,7 +516,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Composant victoria {{ $labels.job }} injoignable depuis 5 minutes"
+          impact: "Victoria {{ $labels.job }}"
+          summary: "Injoignable depuis 5 minutes"
           description: "victoriametrics ne scrape plus ce composant de la stack : conteneur arrete ou en echec"
       # A failing query (datasource down, LogsQL or MetricsQL error)
       # leaves its rule silent: no alert, whatever happens. Two failed
@@ -487,7 +533,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Regle {{ $labels.alertname }} ({{ $labels.job }}) en erreur a plusieurs evaluations"
+          impact: "Victoria {{ $labels.job }}"
+          summary: "Regle {{ $labels.alertname }} en erreur a plusieurs evaluations"
           description: "vmalert n'arrive plus a evaluer une regle d'alerte : la regle ne peut plus se declencher"
       # The watchdog receiver failing (Uptime Kuma unreachable) comes
       # by SMS; the sms receiver failing stops the watchdog instead.
@@ -503,7 +550,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Alertmanager n'arrive plus a notifier {{ $labels.receiver_name }} ({{ $labels.integration }})"
+          impact: "Victoria alertmanager"
+          summary: "Notifications {{ $labels.receiver_name }} ({{ $labels.integration }}) en echec"
           description: "Des notifications d'Alertmanager echouent : webhook injoignable ou en erreur"
       # vmalert failing to hand alerts to Alertmanager. Mostly for
       # vmalert-logs: a send failure in vmalert-metrics also stops the
@@ -519,7 +567,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "{{ $labels.job }} n'arrive plus a envoyer ses alertes a Alertmanager"
+          impact: "Victoria {{ $labels.job }}"
+          summary: "Les alertes n'atteignent plus Alertmanager"
           description: "Des alertes declenchees n'atteignent pas Alertmanager : aucun SMS ne part pour elles"
       # /data full within 4 days at the pace of the last 24 hours.
       # victoriametrics and victorialogs share /data on the host, so
@@ -537,7 +586,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Disque {{ $labels.path }} de {{ $labels.job }} plein dans moins de 4 jours au rythme actuel"
+          impact: "Victoria {{ $labels.job }}"
+          summary: "Disque {{ $labels.path }} plein dans moins de 4 jours au rythme actuel"
           description: "L'espace libre baisse assez vite pour etre epuise en 4 jours : ingestion en hausse ou retention trop longue"
       # VictoriaLogs up but writing no row for 5 minutes: Vector sends
       # nothing (sinks blocked, sources stalled). At least 269 rows per
@@ -558,7 +608,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "VictoriaLogs ne recoit plus aucun log depuis plus de 5 minutes"
+          impact: "Victoria victorialogs"
+          summary: "Plus aucun log recu depuis plus de 5 minutes"
           description: "VictoriaLogs repond mais n'ecrit plus de ligne : Vector n'envoie plus rien, les alertes sur les logs sont aveugles"
       # Errors of a Vector component other than free_mobile (the
       # watchdog covers it): a source that cannot parse or read, a sink
@@ -573,7 +624,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Vector : {{ $value }} erreurs du composant {{ $labels.component_id }} en 30 minutes"
+          impact: "Victoria vector"
+          summary: "{{ $value }} erreurs du composant {{ $labels.component_id }} en 30 minutes"
           description: "Un composant de Vector echoue : des logs ou des metriques sont perdus ou retardes"
   # VRAM per process on the GPU, named after its container. The name
   # comes from docker_container_info (vmalert-logs, one day back); a
