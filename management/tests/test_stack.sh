@@ -18,6 +18,8 @@
 # - Uptime Kuma is behind forward auth, except its /api/push/ path;
 # - Portainer is behind forward auth, with no bypass router, and mounts the
 #   step-ca root read-only (its OAuth login calls Authentik over HTTPS);
+# - the Traefik dashboard router (/traefik and /api) is behind forward auth;
+#   only that router: the other apps on the same host are not affected;
 # - the VictoriaLogs, VictoriaMetrics, Victoria Grafana, Forgejo and Gramps Web
 #   host names reach
 #   the blueprints (the victoria routers are checked in
@@ -45,6 +47,7 @@ sed -e "s|^ACME_CA_SERVER=.*|ACME_CA_SERVER=https://ca.test/acme/acme/directory|
   -e "s|^UPTIME_HOST_LOCAL=.*|UPTIME_HOST_LOCAL=uptime.home.test|" \
   -e "s|^NG_HOST_LOCAL=.*|NG_HOST_LOCAL=media.home.test|" \
   -e "s|^PORTAINER_HOST_LOCAL=.*|PORTAINER_HOST_LOCAL=portainer.home.test|" \
+  -e "s|^TRAEFIK_HOST_LOCAL=.*|TRAEFIK_HOST_LOCAL=proxy.example.test|" \
   -e "s|^VICTORIA_LOGS_HOST_LOCAL=.*|VICTORIA_LOGS_HOST_LOCAL=logs.home.test|" \
   -e "s|^VICTORIA_METRICS_HOST_LOCAL=.*|VICTORIA_METRICS_HOST_LOCAL=metrics.home.test|" \
   -e "s|^VICTORIA_GRAFANA_HOST_LOCAL=.*|VICTORIA_GRAFANA_HOST_LOCAL=grafana.home.test|" \
@@ -58,7 +61,7 @@ sed -e "s|^ACME_CA_SERVER=.*|ACME_CA_SERVER=https://ca.test/acme/acme/directory|
   -e "s|^PROXMOX_UPSTREAM_URL=.*|PROXMOX_UPSTREAM_URL=https://192.0.2.10:8006|" \
   "$stack_dir/.env.example" > "$work_dir/test.env"
 
-for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS CA_CERT_NAME MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL NG_HOST_LOCAL PORTAINER_HOST_LOCAL VICTORIA_LOGS_HOST_LOCAL VICTORIA_METRICS_HOST_LOCAL VICTORIA_GRAFANA_HOST_LOCAL FORGEJO_HOST_LOCAL GRAMPSWEB_HOST_LOCAL IMMICH_HOST_LOCAL DONETICK_HOST_LOCAL UNIFI_HOST_LOCAL NAS_HOST_LOCAL SWITCH_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR; do
+for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS CA_CERT_NAME MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL NG_HOST_LOCAL PORTAINER_HOST_LOCAL TRAEFIK_HOST_LOCAL VICTORIA_LOGS_HOST_LOCAL VICTORIA_METRICS_HOST_LOCAL VICTORIA_GRAFANA_HOST_LOCAL FORGEJO_HOST_LOCAL GRAMPSWEB_HOST_LOCAL IMMICH_HOST_LOCAL DONETICK_HOST_LOCAL UNIFI_HOST_LOCAL NAS_HOST_LOCAL SWITCH_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR; do
   if render "$var=" >/dev/null 2>&1; then fail "$var is not required"; fi
 done
 
@@ -117,6 +120,8 @@ outpost_host="$(render AUTHENTIK_HOST_PUBLIC=auth.example.test \
   || fail "BLUEPRINT_NG_HOST is not NG_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_PORTAINER_HOST" <<<"$config")" = portainer.home.test ] \
   || fail "BLUEPRINT_PORTAINER_HOST is not PORTAINER_HOST_LOCAL"
+[ "$(jq -r "$worker.environment.BLUEPRINT_TRAEFIK_HOST" <<<"$config")" = proxy.example.test ] \
+  || fail "BLUEPRINT_TRAEFIK_HOST is not TRAEFIK_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_VICTORIA_LOGS_HOST" <<<"$config")" = logs.home.test ] \
   || fail "BLUEPRINT_VICTORIA_LOGS_HOST is not VICTORIA_LOGS_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_VICTORIA_METRICS_HOST" <<<"$config")" = metrics.home.test ] \
@@ -173,6 +178,26 @@ jq -r "$portainer | to_entries[] | select(.key | test(\"^traefik.http.routers.[^
       jq -r "$portainer[\"traefik.http.routers.$router.middlewares\"] // \"\"" <<<"$config" \
         | grep -q '^authentik@docker' || fail "Portainer router $router bypasses forward auth"
     done
+traefik='.services.traefik.labels'
+[ "$(jq -r "$traefik[\"traefik.http.routers.traefik.middlewares\"]" <<<"$config")" = \
+  authentik@docker,traefik_strip ] \
+  || fail "Traefik dashboard router is not behind forward auth (first middleware)"
+[ "$(jq -r "$traefik[\"traefik.http.routers.traefik.service\"]" <<<"$config")" = api@internal ] \
+  || fail "Traefik dashboard router does not serve api@internal"
+# Every router of the traefik service on that host other than the HTTP
+# redirect must carry the middleware: a bypass would expose the dashboard and
+# the API (all routers, services and middlewares).
+traefik_routers="$(jq -r "$traefik | to_entries[] | select(.key | test(\"^traefik.http.routers.[^.]+.rule$\"))
+  | select(.value | contains(\"proxy.example.test\")) | .key | split(\".\")[3]" <<<"$config")"
+grep -qx traefik <<<"$traefik_routers" || fail "no Traefik dashboard router on TRAEFIK_HOST_LOCAL"
+while read -r router; do
+  [ "$router" = traefik_http ] && continue
+  jq -r "$traefik[\"traefik.http.routers.$router.middlewares\"] // \"\"" <<<"$config" \
+    | grep -q '^authentik@docker' || fail "Traefik router $router bypasses forward auth"
+done <<<"$traefik_routers"
+[ "$(jq -r "$traefik[\"traefik.http.routers.traefik_http.middlewares\"]" <<<"$config")" = redirect-https ] \
+  || fail "Traefik HTTP router does more than redirect to HTTPS"
+
 ca_name="$(sed -n 's/^CA_CERT_NAME=//p' "$work_dir/test.env")"
 ca_dir="$(sed -n 's/^MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR=//p' "$work_dir/test.env")"
 [ -n "$ca_name" ] && [ -n "$ca_dir" ] || fail "CA_CERT_NAME or its directory is empty in .env.example"

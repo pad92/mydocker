@@ -438,6 +438,47 @@ entries:
     attrs:
       order: 0
 
+  # --- Traefik dashboard -------------------------------------------------
+  # Only the dashboard router (/traefik and /api on this host) carries the
+  # middleware; the other routers on the same host stay open. The provider
+  # cookie is set on that host, which is harmless for apps without the
+  # middleware.
+  - model: authentik_core.group
+    id: traefik-group
+    identifiers:
+      name: traefik-users
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: traefik-provider
+    identifiers:
+      name: Traefik
+    attrs:
+      mode: forward_single
+      external_host: !Format ["https://%s", !Env BLUEPRINT_TRAEFIK_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+
+  - model: authentik_core.application
+    id: traefik-app
+    identifiers:
+      slug: traefik
+    attrs:
+      name: Traefik
+      group: Administration
+      meta_icon: homelab/icons/traefik.svg
+      meta_description: Reverse proxy
+      provider: !KeyOf traefik-provider
+      meta_launch_url: !Format ["https://%s/traefik/dashboard/", !Env BLUEPRINT_TRAEFIK_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf traefik-app
+      group: !KeyOf traefik-group
+    attrs:
+      order: 0
+
   # --- Forgejo (OpenID Connect) --------------------------------------------
   # Not a forward-auth provider: not in the outpost list. Authentik generates
   # the client secret on first apply and keeps it; copy it from the admin UI
@@ -759,6 +800,7 @@ entries:
         - !KeyOf victorialogs-provider
         - !KeyOf victoriametrics-provider
         - !KeyOf victoria-grafana-provider
+        - !KeyOf traefik-provider
       config:
         authentik_host: !Format ["https://%s", !Env BLUEPRINT_AUTHENTIK_HOST]
         authentik_host_insecure: false

@@ -11,7 +11,7 @@ This stack runs Traefik, Authentik, Portainer, and Uptime Kuma.
 
 ## Traefik
 
-Traefik routes HTTP and HTTPS traffic for the other Docker stacks. Its ACME resolver `stepca` uses the step-ca endpoint and email configured by `ACME_CA_SERVER` and `ACME_EMAIL`. `ACME_CA_SERVER` is required: Compose refuses to start without it, otherwise Traefik would fall back to Let's Encrypt. The dashboard host is set by `TRAEFIK_HOST_LOCAL`.
+Traefik routes HTTP and HTTPS traffic for the other Docker stacks. Its ACME resolver `stepca` uses the step-ca endpoint and email configured by `ACME_CA_SERVER` and `ACME_EMAIL`. `ACME_CA_SERVER` is required: Compose refuses to start without it, otherwise Traefik would fall back to Let's Encrypt. The dashboard host is set by `TRAEFIK_HOST_LOCAL`. The dashboard (`/traefik/`) and its API (`/api/`) on that host are behind Authentik forward auth, like the other administration tools: only members of `traefik-users` get in.
 
 The static configuration is only defined by the `command` flags in `docker-compose.yml`. Traefik reads a single static source, so do not mount a `traefik.toml` at `/etc/traefik/`: Traefik would load it and silently ignore every flag, including `caserver`.
 
@@ -55,7 +55,7 @@ openssl rand -base64 60 | tr -d '\n'
 
 ### First start
 
-The Compose file requires `AUTHENTIK_HOST_LOCAL`, `AUTHENTIK_PG_PASS`, `AUTHENTIK_SECRET_KEY`, `MANAGEMENT_AUTHENTIK_DATA_DIR`, `UPTIME_HOST_LOCAL`, `NG_HOST_LOCAL`, `PORTAINER_HOST_LOCAL`, `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL`, `FORGEJO_HOST_LOCAL`, `GRAMPSWEB_HOST_LOCAL`, `IMMICH_HOST_LOCAL`, `DONETICK_HOST_LOCAL`, `UNIFI_HOST_LOCAL`, `NAS_HOST_LOCAL`, and `SWITCH_HOST_LOCAL` for the whole project. On a host whose `.env` predates Authentik, add them before running any `docker compose` command in this stack: without them, even `docker compose up -d traefik` stops with a "Set ... in .env" error.
+The Compose file requires `AUTHENTIK_HOST_LOCAL`, `AUTHENTIK_PG_PASS`, `AUTHENTIK_SECRET_KEY`, `MANAGEMENT_AUTHENTIK_DATA_DIR`, `UPTIME_HOST_LOCAL`, `NG_HOST_LOCAL`, `PORTAINER_HOST_LOCAL`, `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL`, `TRAEFIK_HOST_LOCAL`, `FORGEJO_HOST_LOCAL`, `GRAMPSWEB_HOST_LOCAL`, `IMMICH_HOST_LOCAL`, `DONETICK_HOST_LOCAL`, `UNIFI_HOST_LOCAL`, `NAS_HOST_LOCAL`, and `SWITCH_HOST_LOCAL` for the whole project. On a host whose `.env` predates Authentik, add them before running any `docker compose` command in this stack: without them, even `docker compose up -d traefik` stops with a "Set ... in .env" error.
 
 The server and worker run as UID 1000. Create the directories with that owner before the first start. The shell does not read `.env`, so set the variable first; the `:?` makes the commands stop instead of running on `/data`, `/certs`, and `/custom-templates` when it is empty:
 
@@ -97,7 +97,7 @@ Three pieces are needed. The first two are already in this stack.
 
 1. The `authentik` middleware, declared in the labels of `authentik_server`. Other stacks use it as `authentik@docker`.
 2. The `authentik_outpost` router. It sends `/outpost.goauthentik.io/` on any host to Authentik, which receives the login callback there. Its priority (1000) keeps it ahead of the service routers. Because it has no `Host()`, it also answers on public host names forwarded by Cloudflare Tunnel, even when `AUTHENTIK_HOST_PUBLIC` is empty: the outpost endpoints are reachable from the internet, though the login itself happens on the Authentik host. To keep Authentik strictly internal, replace the rule with `Host(...) && PathPrefix(...)` listing only the protected hosts.
-3. A provider and an application in Authentik, plus the middleware on the service router. Both are per service, see below. Uptime Kuma, Portainer, VictoriaLogs, VictoriaMetrics, the Grafana of the victoria stack, and the `ng` media apps are already set up this way.
+3. A provider and an application in Authentik, plus the middleware on the service router. Both are per service, see below. Uptime Kuma, Portainer, VictoriaLogs, VictoriaMetrics, the Grafana of the victoria stack, the Traefik dashboard, and the `ng` media apps are already set up this way.
 
 Per service:
 
@@ -123,7 +123,7 @@ The **Forward auth (domain level)** mode protects many hosts with a single provi
 
 ### Behaviour and limits
 
-- **Fail closed.** If `authentik_server` is stopped, the `authentik@docker` middleware disappears and Traefik disables the routers that reference it: the protected services answer 404 instead of being served without authentication. Portainer is protected, so it is unreachable while Authentik is down: repair Authentik over SSH with `docker compose` in this directory, not through Portainer.
+- **Fail closed.** If `authentik_server` is stopped, the `authentik@docker` middleware disappears and Traefik disables the routers that reference it: the protected services answer 404 instead of being served without authentication. Portainer is protected, so it is unreachable while Authentik is down: repair Authentik over SSH with `docker compose` in this directory, not through Portainer. The Traefik dashboard goes down with it; read Traefik's state with `docker compose logs traefik` instead.
 - **Monitoring.** Uptime Kuma probes a protected service through Traefik and gets the login redirect. Check the service on its internal address, or accept the 302 status as healthy.
 - **Uptime Kuma push monitors.** Uptime Kuma itself is protected, except `/api/push/`: the `uptime_push` router serves that path without the middleware, so scripts and cron jobs can still report heartbeats. Push URLs carry their own token.
 - **APIs and mobile apps.** Clients that cannot follow a browser login (API tokens, mobile apps, WebDAV) break behind forward auth. For those services, use the native OIDC/SAML support of the application with Authentik as provider, or leave the API path outside the protected router. Forgejo takes the first route (Git over HTTPS, API, runner): see [its README](../forgejo/README.md#login-with-authentik-oidc) for the source to add in Forgejo with the client secret. The victoria stack takes the second: routers without the forward-auth middleware serve only `POST` on the two OTLP ingestion paths, behind HTTP Basic auth, see [its README](../victoria/README.md#4-access-control).
@@ -164,7 +164,7 @@ The logo, favicon, background, and application icons are SVG files in `authentik
 - **Background.** Authentik 2026.8 ignores the brand's default background on flow pages and shows its stock image. The blueprint therefore sets the background on each flow a user sees: login, MFA enrolment (static, TOTP, WebAuthn), and logout. A flow you add needs the same `background` field.
 - **Brand attributes.** The blueprint replaces the `attributes` of the default brand as a whole (they hold the dark theme). Add any other brand attribute to the file, not in the admin UI, or the next apply removes it.
 - **Adding a file.** Put it in `authentik/media/` and name it in a blueprint. `tests/test_media.sh` fails on a file that no blueprint names, on a name with no file, and on an SVG that is not inert: an SVG opened directly runs as a page of the Authentik host, so it must hold no script, event handler, embedded document, or external reference.
-- **Icon sources.** `logo.svg`, `favicon.svg`, `background.svg`, `icons/victorialogs.svg`, `icons/victoriametrics.svg`, `icons/victoria-grafana.svg`, `icons/h5ai.svg`, `icons/immich.svg`, and `icons/donetick.svg` are made for this repository. The other icons come from [homarr-labs/dashboard-icons](https://github.com/homarr-labs/dashboard-icons) (Apache-2.0), `icons/zyxel.svg` cropped to the logo mark; the logos themselves remain the trademarks of their projects.
+- **Icon sources.** `logo.svg`, `favicon.svg`, `background.svg`, `icons/victorialogs.svg`, `icons/victoriametrics.svg`, `icons/victoria-grafana.svg`, `icons/h5ai.svg`, `icons/immich.svg`, `icons/traefik.svg`, and `icons/donetick.svg` are made for this repository. The other icons come from [homarr-labs/dashboard-icons](https://github.com/homarr-labs/dashboard-icons) (Apache-2.0), `icons/zyxel.svg` cropped to the logo mark; the logos themselves remain the trademarks of their projects.
 
 ### Logs and alerts
 
