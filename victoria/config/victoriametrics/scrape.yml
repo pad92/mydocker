@@ -57,8 +57,13 @@ scrape_configs:
     static_configs:
       - targets: ["freebox-exporter:9102"]
   # nvidia-gpu-exporter (NVML): GPU totals and the VRAM of each process
-  # on the GPU, with its container_id.
+  # on the GPU, with its container_id. The exporter runs on the Docker host
+  # that holds the GPU; host_name ties its series to that host so the Hosts
+  # dashboard can filter them like the OpenTelemetry host metrics.
+  # NVIDIA_GPU_HOST_NAME must match that host_name.
   - job_name: nvidia-gpu
     scrape_interval: 30s
     static_configs:
       - targets: ["nvidia-gpu-exporter:9835"]
+        labels:
+          host_name: "${NVIDIA_GPU_HOST_NAME:?Set NVIDIA_GPU_HOST_NAME}"

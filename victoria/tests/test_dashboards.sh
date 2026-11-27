@@ -37,11 +37,15 @@
 #   reach their duration;
 # - every VictoriaMetrics target answers 200 without error; the targets of
 #   the hosts dashboard also return data from host metrics imported before
-#   (one silent host, one degraded ZFS pool), except "silent hosts" for a host
-#   that still reports, which must return none; the services dashboard counts
-#   exactly one silent host. vmalert does not run here: the series of the
-#   host_name:metrics_age_seconds:max record is imported as vmalert would
-#   write it, and the record itself is unit tested in
+#   (one silent host, one degraded ZFS pool, one GPU with its VRAM per
+#   container), except "silent hosts" for a host that still reports, which
+#   must return none; the services dashboard counts exactly one silent host.
+#   The GPU stats show the exact values imported, and the VRAM per container
+#   names a process with no container "hors conteneur ou inconnu".
+#   vmalert does not run here: the series of the
+#   container:nvidia_smi_compute_app_used_memory_bytes and
+#   host_name:metrics_age_seconds:max records are imported as vmalert would
+#   write them, and the records themselves are unit tested in
 #   metrics_rules_unittest.yaml (test_alerting.sh). The host S.M.A.R.T. targets
 #   of the disks dashboard return data from smartctl_exporter series imported
 #   before. There is no Proxmox, UniFi or Synology metric in the test, so
@@ -385,6 +389,25 @@ series("system_paging_operations_total",
 for status, value in (("running", 2), ("blocked", 1)):
     series("system_processes_count", {"host_name": "test.example", "status": status},
            [(m, value) for m in recent])
+# nvidia-gpu-exporter on test.example (host_name comes from the scrape job):
+# 1.5 GiB of 6 GiB used, and what vmalert records per container from it, one
+# process in the ollama container and one outside Docker (no container_name).
+gpu = {"host_name": "test.example", "uuid": "GPU-test", "name": "GPU test"}
+for name, value in (("nvidia_smi_memory_used_bytes", 1.5 * 2**30),
+                    ("nvidia_smi_memory_total_bytes", 6 * 2**30),
+                    ("nvidia_smi_temperature_gpu", 62), ("nvidia_smi_fan_speed_ratio", 0.4),
+                    ("nvidia_smi_power_draw_watts", 50),
+                    ("nvidia_smi_enforced_power_limit_watts", 120),
+                    ("nvidia_smi_utilization_gpu_ratio", 0.3),
+                    ("nvidia_smi_utilization_memory_ratio", 0.2),
+                    ("nvidia_smi_utilization_encoder_ratio", 0.05),
+                    ("nvidia_smi_utilization_decoder_ratio", 0.1)):
+    series(name, gpu, [(m, value) for m in recent])
+series("container:nvidia_smi_compute_app_used_memory_bytes",
+       {**gpu, "pid": "100", "container_id": "c" * 64, "container_name": "ollama"},
+       [(m, 2**30) for m in recent])
+series("container:nvidia_smi_compute_app_used_memory_bytes", {**gpu, "pid": "200"},
+       [(m, 0.25 * 2**30) for m in recent])
 series("zfs_pool_health", {"host_name": "pve.example", "pool": "rpool"}, [(m, 1) for m in recent])
 series("zfs_pool_capacity_ratio", {"host_name": "pve.example", "pool": "rpool"}, [(m, 0.6) for m in recent])
 # smartctl_exporter on smart-test.example: a hard disk with bad sectors, CRC and
@@ -718,6 +741,10 @@ services_hosts = {("victoria-services", "Hôtes silencieux"), ("victoria-service
 # the 6 long-lived streams do). The p95 latency leaves out the streams: 900 ms
 # is the slowest short request, in both variants.
 expected_values = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "all"): 1,
+                   **{("victoria-hosts", panel, variant): value
+                      for panel, value in (("Utilisation GPU", 0.3), ("VRAM GPU utilisée", 0.25),
+                                           ("Température GPU", 62), ("Puissance GPU", 50))
+                      for variant in ("value", "all")},
                    ("victoria-services", "Hôtes silencieux", "value"): 1,
                    ("victoria-network", "Synology", "value"): 0,
                    ("victoria-network", "UniFi", "value"): 4,
@@ -908,6 +935,14 @@ for q in index:
         if key in expected_values:
             if len(got) != 1 or abs(got[0] - expected_values[key]) > 0.01:
                 errors.append(f"{label}: {got}, expected {expected_values[key]}")
+        if (q["dashboard"], q["panel"], q["refId"]) == ("victoria-hosts", "VRAM par conteneur", "A"):
+            # The process outside Docker is named, not shown as an empty legend.
+            names = sorted(field.get("labels", {}).get("container_name")
+                           for f in result.get("frames", [])
+                           for field in f.get("schema", {}).get("fields", [])
+                           if field.get("type") == "number")
+            if names != ["hors conteneur ou inconnu", "ollama"]:
+                errors.append(f"{label}: containers {names}, expected ollama and the unnamed process")
         if (q["dashboard"], q["panel"]) == ("victoria-alerts", "État des règles"):
             # The firing watchdog is the healthy state: shown as "veille" (green),
             # while a real firing rule keeps "firing" (red).
