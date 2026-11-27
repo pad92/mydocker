@@ -8,7 +8,11 @@
 #   3. Mutations on a copy: an edited source makes --check fail; a $, an
 #      unknown ${VAR}, an interpolation in the wrong config, a missing source
 #      or an unmapped config each give the expected result.
-#   4. The pre-commit check in a throwaway git repository: it reads the index,
+#   4. Recreation: the service hash of Compose (docker compose config --hash),
+#      the value that decides whether "up" recreates a container, changes for
+#      the services that mount an edited config, and only for them. A missing,
+#      misplaced or stale config-hash label is refused.
+#   5. The pre-commit check in a throwaway git repository: it reads the index,
 #      so a source staged without its regenerated compose file is refused.
 # Needs python3, Docker Compose 2.23+ and git; no container is started.
 # Usage: ./tests/test_build.sh
@@ -133,7 +137,73 @@ printf '%s\n\n' '{}' > "$dash"
 expect_rc 2 "trailing blank line" build
 pass "a trailing blank line, lost by content: |, stops the build"
 
-# 4. Pre-commit check on the index.
+# 4. Recreation of the services whose config changed.
+# Service hashes of Compose for the copy, one "service hash" line each.
+service_hashes() {
+  docker compose --project-directory "$work_dir/stack" --env-file "$env_file" \
+    -f "$work_dir/stack/docker-compose.yml" config --hash '*' | sort
+}
+# Services whose hash differs between the before and after files.
+changed_services() {
+  join "$work_dir/hash.before" "$work_dir/hash.after" | awk '$2 != $3 { print $1 }' | sort | paste -sd' '
+}
+# Edits a copy of the source $1 with the sed expression $2, rebuilds, and
+# checks that exactly the services $3 (space-separated, sorted) get a new hash.
+expect_recreated() {
+  local source="$1" expr="$2" want="$3" got
+  fresh_copy
+  service_hashes > "$work_dir/hash.before"
+  [[ $(wc -l < "$work_dir/hash.before") -ge 12 ]] || fail "service hashes not listed"
+  sed -i "$expr" "$work_dir/stack/config/$source"
+  cmp -s "$stack_dir/config/$source" "$work_dir/stack/config/$source" && fail "$source: mutation not applied"
+  expect_rc 0 "build after editing $source" build
+  service_hashes > "$work_dir/hash.after"
+  got="$(changed_services)"
+  [[ "$got" == "$want" ]] || fail "$source edited: services with a new hash '$got', expected '$want'"
+}
+expect_recreated alertmanager/alertmanager.yml 's/repeat_interval: 50m/repeat_interval: 55m/' alertmanager
+expect_recreated vmalert/metrics_rules.yml '0,/^groups:/s//# edited\n&/' vmalert-metrics
+expect_recreated grafana/dashboards/hosts.json \
+  's/"uid": "victoria-hosts"/"uid": "victoria-hosts-mutated"/' grafana
+pass "an edited config changes the Compose hash of the services that mount it, and only theirs"
+
+label='      mydocker.config-hash:'
+fresh_copy
+python3 - "$work_dir/stack/docker-compose.yml" <<'PY2'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+lines = path.read_text().split("\n")
+# The label of alertmanager, the first one after its service header.
+start = lines.index("  alertmanager:")
+index = next(i for i in range(start, len(lines)) if "mydocker.config-hash" in lines[i])
+del lines[index]
+path.write_text("\n".join(lines))
+PY2
+cp "$work_dir/stack/docker-compose.yml" "$work_dir/before.yml"
+expect_rc 2 "service with configs and no label" build
+grep -q "alertmanager: mounts \['alertmanager_config'\] but has no" "$work_dir/out" \
+  || { cat "$work_dir/out" >&2; fail "missing label: wrong message"; }
+cmp -s "$work_dir/before.yml" "$work_dir/stack/docker-compose.yml" || fail "compose written on error"
+pass "a service that mounts a config without the label stops the build"
+
+fresh_copy
+sed -i "/^  unpoller:\$/,/^    logging:/s/^    logging:/    labels:\n$label \"\"\n&/" "$work_dir/stack/docker-compose.yml"
+grep -q "^$label \"\"\$" "$work_dir/stack/docker-compose.yml" || fail "unpoller label not inserted"
+expect_rc 2 "label on a service without configs" build
+grep -q "unpoller: mydocker.config-hash on a service without configs" "$work_dir/out" \
+  || { cat "$work_dir/out" >&2; fail "label without configs: wrong message"; }
+pass "a label on a service without configs stops the build"
+
+fresh_copy
+sed -i "0,/^$label \"[0-9a-f]*\"\$/s//$label \"\"/" "$work_dir/stack/docker-compose.yml"
+expect_rc 1 "--check with a stale label" build --check
+expect_rc 0 "build with a stale label" build
+expect_rc 0 "--check after build" build --check
+cmp -s "$stack_dir/docker-compose.yml" "$work_dir/stack/docker-compose.yml" || fail "label not restored"
+pass "a stale label fails --check until build.py rewrites it"
+
+# 5. Pre-commit check on the index.
 git_dir="$work_dir/repo"
 mkdir -p "$git_dir/.githooks"
 cp "$repo_dir/.githooks/victoria-build-check.sh" "$git_dir/.githooks/"
