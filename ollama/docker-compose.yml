@@ -6,9 +6,9 @@ x-default-logging: &default-logging
 services:
   open-webui:
     container_name: open-webui
-    image: ghcr.io/open-webui/open-webui:main
+    # Pinned: the "main" tag follows the development branch.
+    image: ghcr.io/open-webui/open-webui:${OPEN_WEBUI_VERSION:-v0.13.5}
     environment:
-      MODEL_DOWNLOAD_DIR: "${MODEL_DOWNLOAD_DIR:-}"
       # Reach Ollama on the internal network. Without it Open WebUI falls back
       # to the host gateway on port 11434, which no longer answers once the
       # published port is bound to the LAN address only.
@@ -17,32 +17,43 @@ services:
       # Signs the session tokens: a known value lets anyone forge them.
       WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY:?Set WEBUI_SECRET_KEY}"
     volumes:
-      - ${OLLAMA_OPEN_WEBUI_DATA_DIR:?Set OLLAMA_OPEN_WEBUI_DATA_DIR}:/data
-      - ${OLLAMA_MODELS_DATA_DIR:?Set OLLAMA_MODELS_DATA_DIR}:/models
+      # Database, uploads and settings: the only state Open WebUI keeps.
       - ${OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR:?Set OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR}:/app/backend/data
-
     depends_on:
       - ollama
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     networks:
       - ollama
       - traefik_gateway
     restart: unless-stopped
     labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=traefik_gateway"
-      - "traefik.http.routers.webui.rule=Host(`${OLLAMA_DOMAIN:?Set OLLAMA_DOMAIN}`) && PathPrefix(`/`)"
-      - "traefik.http.services.webui.loadbalancer.server.port=8080"
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.open-webui.loadbalancer.server.port: "8080"
+
+      traefik.http.routers.open-webui_http.rule: "Host(`${OLLAMA_DOMAIN:?Set OLLAMA_DOMAIN}`)"
+      traefik.http.routers.open-webui_http.entrypoints: web
+      traefik.http.routers.open-webui_http.middlewares: redirect-https
+
+      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
+      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
+
+      traefik.http.routers.open-webui.rule: "Host(`${OLLAMA_DOMAIN:?Set OLLAMA_DOMAIN}`)"
+      traefik.http.routers.open-webui.entrypoints: "websecure"
+      traefik.http.routers.open-webui.tls: "true"
+      traefik.http.routers.open-webui.tls.certresolver: "stepca"
     logging: *default-logging
   ollama:
-    image: ollama/ollama:latest
+    # Pinned: a new release may drop the CUDA build that still runs on the
+    # Pascal GPU (compute capability 6.1) or need a newer host driver. Test
+    # with `ollama ps` (100% GPU) before raising it.
+    image: docker.io/ollama/ollama:${OLLAMA_VERSION:-0.40.18}
     container_name: ollama
-    runtime: nvidia
     restart: unless-stopped
     volumes:
+      # Models live in /root/.ollama/models.
       - ${OLLAMA_OLLAMA_DATA_DIR:?Set OLLAMA_OLLAMA_DATA_DIR}:/root/.ollama
-      - ${OLLAMA_MODELS_DATA_DIR:?Set OLLAMA_MODELS_DATA_DIR}:/models
+    # Gives the GPU to the container through the NVIDIA Container Toolkit;
+    # the image already sets NVIDIA_VISIBLE_DEVICES and the driver features.
     deploy:
       resources:
         reservations:
@@ -60,9 +71,6 @@ services:
       # (Gramps Web sends about 5k tokens of tree context). 8192 fits next to
       # a 7B model in Q4 on a 6 GB card.
       OLLAMA_CONTEXT_LENGTH: "${OLLAMA_CONTEXT_LENGTH:-8192}"
-      # An empty NVIDIA_VISIBLE_DEVICES hides the GPU from the container.
-      NVIDIA_DRIVER_CAPABILITIES: "${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}"
-      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-all}"
     # The API has no authentication: publish it on one host address (the LAN
     # one that Gramps Web uses), never on every interface.
     ports:
@@ -72,7 +80,6 @@ services:
         protocol: tcp
     networks:
       - ollama
-
     logging: *default-logging
 networks:
   traefik_gateway:

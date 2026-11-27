@@ -6,8 +6,23 @@ behind Traefik. Other stacks, such as Gramps Web, also call the Ollama API.
 
 | Service | Image | Role |
 | --- | --- | --- |
-| `ollama` | `ollama/ollama:latest` | Model runtime and API (port 11434) |
-| `open-webui` | `ghcr.io/open-webui/open-webui:main` | Chat interface (port 8080, through Traefik) |
+| `ollama` | `docker.io/ollama/ollama:0.40.18` | Model runtime and API (port 11434) |
+| `open-webui` | `ghcr.io/open-webui/open-webui:v0.13.5` | Chat interface (port 8080, through Traefik) |
+
+Traefik serves Open WebUI on `https://${OLLAMA_DOMAIN}` (entrypoint
+`websecure`, certificate from `stepca`) and redirects plain HTTP to it.
+
+## GPU and versions
+
+Ollama gets the GPU from the `deploy.resources` device reservation, through
+the NVIDIA Container Toolkit; the image sets the `NVIDIA_*` variables itself.
+
+Both images are pinned, and Watchtower only pulls a newer build of the same
+tag. The GTX 1060 is a Pascal card (compute capability 6.1) with driver 550
+(CUDA 12.4): CUDA 13 no longer builds for Pascal, so a future Ollama release
+may stop running on it. To upgrade, set `OLLAMA_VERSION`, redeploy, load a
+model and check that `ollama ps` shows `100% GPU` and that
+`docker logs ollama` finds the card. Go back to the previous tag otherwise.
 
 ## Exposure
 
@@ -45,21 +60,22 @@ Copy `.env.example` to `.env`, fill it in and run `chmod 600 .env`.
 | `OLLAMA_DOMAIN` | required | Traefik host of Open WebUI |
 | `WEBUI_SECRET_KEY` | required | Signs Open WebUI sessions; generate with `openssl rand -hex 32` |
 | `OLLAMA_OLLAMA_DATA_DIR` | required | Host directory for Ollama data and pulled models |
-| `OLLAMA_MODELS_DATA_DIR` | required | Host directory mounted at `/models` in both services |
-| `OLLAMA_OPEN_WEBUI_DATA_DIR` | required | Host directory mounted at `/data` in Open WebUI |
 | `OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR` | required | Open WebUI database and uploads |
+| `OLLAMA_VERSION` | `0.40.18` | Ollama image tag |
+| `OPEN_WEBUI_VERSION` | `v0.13.5` | Open WebUI image tag |
 | `OLLAMA_CONTEXT_LENGTH` | `8192` | Context window in tokens |
 | `OLLAMA_KEEP_ALIVE` | `5m` | How long a model stays in VRAM after the last request |
-| `NVIDIA_VISIBLE_DEVICES` | `all` | GPUs given to Ollama; empty would hide them |
-| `NVIDIA_DRIVER_CAPABILITIES` | `compute,utility` | Driver features exposed to the container |
 | `LOG_LEVEL` | `INFO` | Open WebUI log level |
-| `MODEL_DOWNLOAD_DIR` | empty | Passed to Open WebUI as is |
 
-`HOME_OLLAMA` is in `.env.example` but not used by the Compose file.
+Older versions of the stack also mounted `OLLAMA_MODELS_DATA_DIR` at `/models`
+and `OLLAMA_OPEN_WEBUI_DATA_DIR` at `/data`. Neither service read them: the
+variables can go from Portainer, and the host directories can be removed
+once checked to be empty.
 
 ## Tests
 
 `tests/test_stack.sh` renders the Compose file with test values and checks
 the port binding, the internal Open WebUI URL, the context length, the GPU
-defaults and the failure without each required variable. It needs Docker
+reservation, the pinned images, the mounts, the Traefik routers and the
+failure without each required variable. It needs Docker
 Compose and `jq`.
