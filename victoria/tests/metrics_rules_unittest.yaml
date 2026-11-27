@@ -1,0 +1,414 @@
+# Unit tests of the vmalert-metrics rules, run by test_alerting.sh with
+# vmalert-tool on the rendered rules (production intervals, not the 5s
+# test copy). Each rule gets a case that must fire and a case that must
+# not. Expected labels are exact: the Alertmanager inhibit_rules match on
+# host_name and device, so a label lost by an aggregation would silently
+# inhibit the alert on every host.
+rule_files:
+  - metrics_rules.yml
+evaluation_interval: 1m
+
+tests:
+  # A host that stops reporting fires after 10 minutes, with host_name
+  # only; a host still reporting stays quiet.
+  - name: host_metrics_silent
+    interval: 1m
+    input_series:
+      - series: 'system_cpu_time_seconds_total{host_name="a", cpu="0", state="user"}'
+        values: '0+60x10'
+      - series: 'system_cpu_time_seconds_total{host_name="b", cpu="0", state="user"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 18m
+        groupname: host_metrics
+        alertname: host_metrics_silent
+        exp_alerts: []
+      - eval_time: 25m
+        groupname: host_metrics
+        alertname: host_metrics_silent
+        exp_alerts:
+          - exp_labels: {host_name: a, severity: critical}
+            exp_annotations:
+              summary: "Plus de metrique systeme de a depuis 10 minutes"
+              description: "Le collecteur OpenTelemetry de l'hote n'envoie plus rien depuis 10 minutes : hote ou collecteur arrete"
+
+  # Record read by the hosts and services dashboards: age of the newest
+  # CPU sample, one series per host. With two CPUs, the host keeps the
+  # oldest one (max), so a CPU that stops reporting still shows; a host
+  # that still reports is at 0.
+  - name: host_name:metrics_age_seconds:max record
+    interval: 1m
+    input_series:
+      - series: 'system_cpu_time_seconds_total{host_name="a", cpu="0", state="user"}'
+        values: '0+60x10'
+      - series: 'system_cpu_time_seconds_total{host_name="a", cpu="1", state="user"}'
+        values: '0+60x5'
+      - series: 'system_cpu_time_seconds_total{host_name="b", cpu="0", state="user"}'
+        values: '0+60x40'
+    metricsql_expr_test:
+      - expr: host_name:metrics_age_seconds:max
+        eval_time: 25m
+        exp_samples:
+          - labels: 'host_name:metrics_age_seconds:max{host_name="a"}'
+            value: 1200
+          - labels: 'host_name:metrics_age_seconds:max{host_name="b"}'
+            value: 0
+
+  # A host gone for more than 24h leaves the lag window: the alert ends
+  # once keep_firing_for (60m) is over instead of firing forever.
+  - name: host_metrics_silent forgets a host after 24h
+    interval: 10m
+    input_series:
+      - series: 'system_cpu_time_seconds_total{host_name="a", cpu="0", state="user"}'
+        values: '0'
+    alert_rule_test:
+      - eval_time: 12h
+        groupname: host_metrics
+        alertname: host_metrics_silent
+        exp_alerts:
+          - exp_labels: {host_name: a, severity: critical}
+            exp_annotations:
+              summary: "Plus de metrique systeme de a depuis 10 minutes"
+              description: "Le collecteur OpenTelemetry de l'hote n'envoie plus rien depuis 10 minutes : hote ou collecteur arrete"
+      - eval_time: 26h
+        groupname: host_metrics
+        alertname: host_metrics_silent
+        exp_alerts: []
+
+  # Exporter freshness: 30 minutes without data, one alert per host
+  # whatever the number of pools or disks.
+  - name: zfs_data_missing and smart_data_missing
+    interval: 1m
+    input_series:
+      - series: 'zfs_pool_health{host_name="a", pool="tank"}'
+        values: '0x10'
+      - series: 'zfs_pool_health{host_name="a", pool="rpool"}'
+        values: '0x10'
+      - series: 'zfs_pool_health{host_name="b", pool="tank"}'
+        values: '0x60'
+      - series: 'smartctl_device_smart_status{host_name="a", device="sda"}'
+        values: '1x10'
+      - series: 'smartctl_device_smart_status{host_name="a", device="sdb"}'
+        values: '1x10'
+      - series: 'smartctl_device_smart_status{host_name="b", device="sda"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 38m
+        groupname: zfs
+        alertname: zfs_data_missing
+        exp_alerts: []
+      - eval_time: 38m
+        groupname: smart
+        alertname: smart_data_missing
+        exp_alerts: []
+      - eval_time: 45m
+        groupname: zfs
+        alertname: zfs_data_missing
+        exp_alerts:
+          - exp_labels: {host_name: a, severity: warning}
+            exp_annotations:
+              summary: "Plus de donnee ZFS de a depuis 30 minutes"
+              description: "zfs_exporter ou sa collecte est arrete : l'etat des pools n'est plus surveille"
+      - eval_time: 45m
+        groupname: smart
+        alertname: smart_data_missing
+        exp_alerts:
+          - exp_labels: {host_name: a, severity: warning}
+            exp_annotations:
+              summary: "Plus de donnee SMART de a depuis 30 minutes"
+              description: "smartctl_exporter ou sa collecte par le collecteur OpenTelemetry est arrete"
+
+  # smart_status_failed carries host_name and device (inhibition source);
+  # a healthy disk stays quiet.
+  - name: smart_status_failed
+    interval: 1m
+    input_series:
+      - series: 'smartctl_device_smart_status{host_name="a", device="sda"}'
+        values: '1x5 0x10'
+      - series: 'smartctl_device_smart_status{host_name="a", device="sdb"}'
+        values: '1x15'
+    alert_rule_test:
+      - eval_time: 3m
+        groupname: smart
+        alertname: smart_status_failed
+        exp_alerts: []
+      - eval_time: 10m
+        groupname: smart
+        alertname: smart_status_failed
+        exp_alerts:
+          - exp_labels: {host_name: a, device: sda, severity: critical}
+            exp_annotations:
+              summary: "Disque sda de a : bilan SMART en echec"
+              description: "Le disque annonce lui-meme une panne prochaine : sauvegarder et le remplacer"
+
+  # A raw count that rises fires; a count that is high but constant (an
+  # old disk, or a series that just appeared) does not.
+  - name: smart_sectors_growing
+    interval: 1m
+    input_series:
+      - series: 'smartctl_device_attribute{host_name="a", device="sda", attribute_name="Reallocated_Sector_Ct", attribute_value_type="raw"}'
+        values: '0x5 2x10'
+      - series: 'smartctl_device_attribute{host_name="a", device="sdb", attribute_name="Reallocated_Sector_Ct", attribute_value_type="raw"}'
+        values: '_x5 8x10'
+    alert_rule_test:
+      - eval_time: 3m
+        groupname: smart
+        alertname: smart_sectors_growing
+        exp_alerts: []
+      - eval_time: 10m
+        groupname: smart
+        alertname: smart_sectors_growing
+        exp_alerts:
+          - exp_labels: {host_name: a, device: sda, attribute_name: Reallocated_Sector_Ct, severity: warning}
+            exp_annotations:
+              summary: "Disque sda de a : Reallocated_Sector_Ct +2 en 24h"
+              description: "Des secteurs realloues, en attente ou illisibles apparaissent : le disque se degrade"
+
+  # Inhibition pair: high (90-95%) and critical (>=95%) never fire for the
+  # same filesystem. The aggregation keeps device and type, not host_name.
+  - name: filesystem_usage high and critical are exclusive
+    interval: 1m
+    input_series:
+      - series: 'system_filesystem_utilization_ratio{host_name="a", device="/dev/sda1", type="ext4"}'
+        values: '0.92x30'
+      - series: 'system_filesystem_utilization_ratio{host_name="a", device="/dev/sdb1", type="ext4"}'
+        values: '0.97x30'
+      - series: 'system_filesystem_utilization_ratio{host_name="a", device="/dev/sdc1", type="ext4"}'
+        values: '0.5x30'
+      - series: 'system_filesystem_utilization_ratio{host_name="a", device="tmpfs", type="tmpfs"}'
+        values: '0.99x30'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: host_metrics
+        alertname: filesystem_usage_high
+        exp_alerts: []
+      - eval_time: 20m
+        groupname: host_metrics
+        alertname: filesystem_usage_high
+        exp_alerts:
+          - exp_labels: {device: /dev/sda1, type: ext4, severity: warning}
+            exp_annotations:
+              summary: "Systeme de fichiers /dev/sda1 occupe a 92%"
+              description: "Un systeme de fichiers depasse 90% d'occupation"
+      - eval_time: 20m
+        groupname: host_metrics
+        alertname: filesystem_usage_critical
+        exp_alerts:
+          - exp_labels: {device: /dev/sdb1, type: ext4, severity: critical}
+            exp_annotations:
+              summary: "Systeme de fichiers /dev/sdb1 occupe a 97%"
+              description: "Un systeme de fichiers depasse 95% d'occupation"
+
+  # A guest that just restarted fires; a stopped guest (uptime 0) and a
+  # guest up for a long time do not.
+  - name: proxmox_guest_restarted
+    interval: 1m
+    input_series:
+      - series: 'proxmox_vm_uptime_seconds{name="web", vmid="101"}'
+        values: '60+60x5'
+      - series: 'proxmox_vm_uptime_seconds{name="stopped", vmid="102"}'
+        values: '0x5'
+      - series: 'proxmox_vm_uptime_seconds{name="old", vmid="103"}'
+        values: '86400+60x5'
+    alert_rule_test:
+      - eval_time: 2m
+        groupname: proxmox_metrics
+        alertname: proxmox_guest_restarted
+        exp_alerts:
+          - exp_labels: {name: web, vmid: "101", severity: warning}
+            exp_annotations:
+              summary: "Invite Proxmox web (101) redemarre il y a 180 s"
+              description: "Une VM ou un conteneur Proxmox a redemarre (uptime sous 10 minutes, les invites arretes sont ignores)"
+
+  # Send errors in every 10 minute window for 15 minutes fire; a single
+  # burst (an Alertmanager restart) does not.
+  - name: vmalert_send_failed
+    interval: 1m
+    input_series:
+      - series: 'vmalert_alerts_send_errors_total{job="vmalert-logs", addr="alertmanager:9093"}'
+        values: '0x5 3x30'
+      - series: 'vmalert_alerts_send_errors_total{job="vmalert-metrics", addr="alertmanager:9093"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: victoria_stack
+        alertname: vmalert_send_failed
+        exp_alerts: []
+      - eval_time: 25m
+        groupname: victoria_stack
+        alertname: vmalert_send_failed
+        exp_alerts:
+          - exp_labels: {job: vmalert-metrics, severity: warning}
+            exp_annotations:
+              summary: "vmalert-metrics n'arrive plus a envoyer ses alertes a Alertmanager"
+              description: "Des alertes declenchees n'atteignent pas Alertmanager : aucun SMS ne part pour elles"
+
+  # Same shape for Alertmanager: one failed push does not fire, failures
+  # in every 5 minute window for 10 minutes do.
+  - name: alertmanager_notifications_failed
+    interval: 1m
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{integration="webhook", receiver_name="watchdog", reason="other"}'
+        values: '0x5 1x30'
+      - series: 'alertmanager_notifications_failed_total{integration="webhook", receiver_name="sms", reason="other"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        groupname: victoria_stack
+        alertname: alertmanager_notifications_failed
+        exp_alerts:
+          - exp_labels: {integration: webhook, receiver_name: sms, severity: warning}
+            exp_annotations:
+              summary: "Alertmanager n'arrive plus a notifier sms (webhook)"
+              description: "Des notifications d'Alertmanager echouent : webhook injoignable ou en erreur"
+
+  # One failed evaluation (a datasource restart) does not fire, two in
+  # 2 hours do.
+  - name: vmalert_rule_errors
+    interval: 1m
+    input_series:
+      - series: 'vmalert_alerting_rules_errors_total{job="vmalert-logs", group="authentik", alertname="authentik_errors", id="1"}'
+        values: '0x5 1x30'
+      - series: 'vmalert_alerting_rules_errors_total{job="vmalert-logs", group="proxmox", alertname="proxmox_backup_failed", id="2"}'
+        values: '0x5 1x5 2x20'
+    alert_rule_test:
+      - eval_time: 20m
+        groupname: victoria_stack
+        alertname: vmalert_rule_errors
+        exp_alerts:
+          - exp_labels: {job: vmalert-logs, group: proxmox, exported_alertname: proxmox_backup_failed, severity: warning}
+            exp_annotations:
+              summary: "Regle proxmox_backup_failed (vmalert-logs) en erreur a plusieurs evaluations"
+              description: "vmalert n'arrive plus a evaluer une regle d'alerte : la regle ne peut plus se declencher"
+
+  # unpoller up but without UniFi data fires after 10 minutes; a device
+  # that stops reporting fires once its lag passes 10 minutes.
+  - name: unifi
+    interval: 1m
+    input_series:
+      # unpoller itself is up: only the UniFi data is missing.
+      - series: 'up{job="unpoller"}'
+        values: '1x40'
+      - series: 'unpoller_device_uptime_seconds{name="ap1", source="https://unifi"}'
+        values: '0+60x10'
+      - series: 'unpoller_device_uptime_seconds{name="ap2", source="https://unifi"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 5m
+        groupname: unifi_metrics
+        alertname: unpoller_no_unifi_data
+        exp_alerts: []
+      - eval_time: 25m
+        groupname: unifi_metrics
+        alertname: unpoller_no_unifi_data
+        exp_alerts:
+          - exp_labels: {job: unpoller, severity: warning}
+            exp_annotations:
+              summary: "Aucune donnee UniFi collectee par unpoller depuis 10 minutes"
+              description: "unpoller ne remonte aucun equipement UniFi : URL, compte ou controleur injoignable, ou unpoller arrete"
+      - eval_time: 25m
+        groupname: unifi_metrics
+        alertname: unifi_device_down
+        exp_alerts:
+          - exp_labels: {name: ap1, source: "https://unifi", severity: critical}
+            exp_annotations:
+              summary: "Equipement UniFi ap1 absent depuis 10 minutes"
+              description: "unpoller ne remonte plus cet equipement UniFi : hors ligne ou retire du controleur"
+  # unpoller reports its devices: no unpoller_no_unifi_data alert.
+  - name: unifi data present
+    interval: 1m
+    input_series:
+      - series: 'up{job="unpoller"}'
+        values: '1x40'
+      - series: 'unpoller_device_info{job="unpoller", name="ap1"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 25m
+        groupname: unifi_metrics
+        alertname: unpoller_no_unifi_data
+        exp_alerts: []
+
+  # Watchdog: fires while the SMS path is healthy, stops at once (no
+  # keep_firing_for) when vector goes down or free_mobile fails.
+  # An old, constant error count does not stop it once the 30m window
+  # no longer holds the start of the series. VictoriaMetrics counts the
+  # first sample of a new series in increase(): the first free_mobile
+  # error after a vector restart stops the watchdog, as wanted.
+  - name: watchdog healthy
+    interval: 1m
+    input_series:
+      - series: 'up{job="vector"}'
+        values: '1x50'
+      - series: 'up{job="victorialogs"}'
+        values: '1x50'
+      - series: 'up{job="vmalert-logs"}'
+        values: '1x50'
+      - series: 'vector_component_errors_total{component_id="free_mobile"}'
+        values: '4x50'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: victoria_stack
+        alertname: watchdog
+        exp_alerts: []
+      - eval_time: 40m
+        groupname: victoria_stack
+        alertname: watchdog
+        exp_alerts:
+          - exp_labels: {severity: none}
+            exp_annotations:
+              summary: "Chaine d'alerte victoria operationnelle"
+              description: "Toujours active tant que la chaine SMS fonctionne ; Uptime Kuma alerte quand elle se tait"
+  - name: watchdog stops
+    interval: 1m
+    input_series:
+      - series: 'up{job="vector"}'
+        values: '1x10 0x10'
+      - series: 'up{job="victorialogs"}'
+        values: '1x20'
+      - series: 'up{job="vmalert-logs"}'
+        values: '1x20'
+      - series: 'vector_component_errors_total{component_id="free_mobile"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 5m
+        groupname: victoria_stack
+        alertname: watchdog
+        exp_alerts:
+          - exp_labels: {severity: none}
+            exp_annotations:
+              summary: "Chaine d'alerte victoria operationnelle"
+              description: "Toujours active tant que la chaine SMS fonctionne ; Uptime Kuma alerte quand elle se tait"
+      - eval_time: 12m
+        groupname: victoria_stack
+        alertname: watchdog
+        exp_alerts: []
+  - name: watchdog stops on free_mobile errors
+    interval: 1m
+    input_series:
+      - series: 'up{job="vector"}'
+        values: '1x20'
+      - series: 'up{job="victorialogs"}'
+        values: '1x20'
+      - series: 'up{job="vmalert-logs"}'
+        values: '1x20'
+      - series: 'vector_component_errors_total{component_id="free_mobile"}'
+        values: '0x10 1x10'
+    alert_rule_test:
+      - eval_time: 15m
+        groupname: victoria_stack
+        alertname: watchdog
+        exp_alerts: []
+  - name: watchdog stops when vmalert-logs was never scraped
+    interval: 1m
+    input_series:
+      - series: 'up{job="vector"}'
+        values: '1x20'
+      - series: 'up{job="victorialogs"}'
+        values: '1x20'
+      - series: 'vector_component_errors_total{component_id="free_mobile"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: victoria_stack
+        alertname: watchdog
+        exp_alerts: []

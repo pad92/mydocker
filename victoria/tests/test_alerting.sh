@@ -5,9 +5,13 @@
 # - vmalert -dryRun with the rendered command of vmalert-logs and
 #   vmalert-metrics: every LogsQL and MetricsQL expression parses;
 # - amtool check-config on the Alertmanager config;
-# - consistency: one Alertmanager route per alert, its repeat_interval equal to
-#   the keep_firing_for of the alert, no route without an alert, and the
-#   receiver URL matches the alertmanager_webhook source of Vector. The
+# - vmalert-tool unittest of tests/metrics_rules_unittest.yaml on the rendered
+#   metrics rules: firing and quiet cases, exact labels and annotations;
+# - consistency: one Alertmanager route per alert, its repeat_interval at
+#   least the lifetime of a firing alert (query window + keep_firing_for +
+#   group interval: no second SMS while the same event is still firing), no
+#   route without an alert, inhibit_rules naming existing alerts only, and
+#   the receiver URL matches the alertmanager_webhook source of Vector. The
 #   watchdog is the exception: no keep_firing_for, first route, its own
 #   receiver (one webhook, send_resolved false) and a repeat_interval of at
 #   most 5m, under the heartbeat interval of the Uptime Kuma monitor.
@@ -47,6 +51,7 @@ version() { sed -n "s/^$1=//p" "$env_file"; }
 logs_image="victoriametrics/victoria-logs:$(version VICTORIA_LOGS_VERSION)"
 metrics_image="victoriametrics/victoria-metrics:$(version VICTORIA_METRICS_VERSION)"
 vmalert_image="victoriametrics/vmalert:$(version VMALERT_VERSION)"
+vmalert_tool_image="victoriametrics/vmalert-tool:$(version VMALERT_VERSION)"
 alertmanager_image="prom/alertmanager:$(version ALERTMANAGER_VERSION)"
 vector_image="timberio/vector:$(version VECTOR_VERSION)-distroless-libc"
 client_image="${CLIENT_IMAGE:-busybox:1.37}"
@@ -114,6 +119,15 @@ docker run --rm --entrypoint amtool -v "$work_dir/alertmanager.yml:/am.yml:ro" \
   "$alertmanager_image" check-config /am.yml > "$work_dir/amtool.log" 2>&1 \
   || { cat "$work_dir/amtool.log" >&2; fail "amtool check-config rejects the Alertmanager config"; }
 
+# --- Unit: vmalert-tool replays series through the rendered metrics rules
+# (production intervals): firing and quiet cases, exact labels and
+# annotations. It runs before the 5s patch of the test copy below.
+cp "$stack_dir/tests/metrics_rules_unittest.yaml" "$work_dir/"
+chmod a+r "$work_dir/metrics_rules_unittest.yaml"
+docker run --rm -v "$work_dir:/t:ro" "$vmalert_tool_image" \
+  unittest --files /t/metrics_rules_unittest.yaml > "$work_dir/unittest.log" 2>&1 \
+  || { cat "$work_dir/unittest.log" >&2; fail "vmalert-tool unit tests of the metrics rules"; }
+
 python3 -I - "$work_dir" <<'PY_EOF' || fail "alert and route consistency"
 import re, sys, yaml
 
@@ -129,8 +143,42 @@ def seconds(d):
         sys.exit(f"unreadable duration {d!r}")
     return sum(int(n) * units[u] for n, u in parts)
 
+# Event window of a rule: how long one event keeps its expression true.
+# LogsQL: the first _time filter, none when a count() if (_time:...) makes
+# it a presence check over a longer lookback. MetricsQL: the longest range,
+# none for lag() (a presence check). Silences and states have none.
+def window(rule, logs):
+    expr = rule["expr"]
+    if logs:
+        if "if (_time:" in expr:
+            return 0
+        m = re.search(r"_time:([0-9]+[smhd])\b", expr)
+        return seconds(m.group(1)) if m else 0
+    expr = re.sub(r"lag\([^\[]*\[[^\]]*\]\)", "", expr)
+    ranges = [seconds(r) for r in re.findall(r"\[([0-9]+[smhd])(?::[0-9]+[smhd])?\]", expr)]
+    return max(ranges, default=0)
+
+# Windows not written as a range: an uptime under 600s.
+implicit_windows = {"proxmox_guest_restarted": 600}
+
+# repeat_interval must outlast one event: window + keep_firing_for +
+# group interval, or a single event sends a second SMS. A self-check of
+# window() on known shapes, so a regex change cannot silently return 0.
+for expr, logs, want in [
+    ("_time:15m {a} | stats count() as n | filter n:>=1", True, 900),
+    ("_time:24h {a} | stats by (h) count() if (_time:30m) as r | filter r:<1", True, 0),
+    ("max by (h) (lag(m[24h])) > 600", False, 0),
+    ("sum(increase(m[2h])) >= 2 and lag(m[24h]) < 60", False, 7200),
+    ("m - min_over_time(m[24h]) > 0", False, 86400),
+    ("m >= 0.9", False, 0),
+]:
+    got = window({"expr": expr}, logs)
+    if got != want:
+        sys.exit(f"window() self-check: {expr!r} gives {got}s, expected {want}s")
+
 errors = []
 alerts = {}
+lifetimes = {}
 for rules in ("logs_rules.yml", "metrics_rules.yml"):
     for group in load(rules)["groups"]:
         for rule in group["rules"]:
@@ -161,6 +209,10 @@ for rules in ("logs_rules.yml", "metrics_rules.yml"):
                 errors.append(f"alert {name} has no keep_firing_for")
                 continue
             alerts[name] = seconds(rule["keep_firing_for"])
+            lifetimes[name] = (
+                implicit_windows.get(name, window(rule, rules == "logs_rules.yml"))
+                + alerts[name] + seconds(group["interval"])
+            )
 
 am = load("alertmanager.yml")
 routes = {}
@@ -191,9 +243,11 @@ for name in sorted(set(alerts) - set(routes)):
     errors.append(f"alert {name} has no route")
 for name in sorted(set(routes) - set(alerts)):
     errors.append(f"route {name} has no alert")
-for name in sorted(set(alerts) & set(routes)):
-    if alerts[name] != routes[name]:
-        errors.append(f"{name}: keep_firing_for {alerts[name]}s, repeat_interval {routes[name]}s")
+for name in sorted(set(lifetimes) & set(routes)):
+    if routes[name] < lifetimes[name]:
+        errors.append(f"{name}: repeat_interval {routes[name]}s under the {lifetimes[name]}s one event keeps it firing")
+for name in sorted(set(implicit_windows) - set(lifetimes)):
+    errors.append(f"implicit window for {name}, which is not an alert")
 
 receivers = {r["name"]: r for r in am["receivers"]}
 hooks = receivers.get(am["route"]["receiver"], {}).get("webhook_configs", [])
@@ -210,9 +264,23 @@ if len(watchdog_hooks) != 1 or "/api/push/" not in watchdog_hooks[0].get("url", 
 elif watchdog_hooks[0].get("send_resolved", True):
     errors.append("watchdog send_resolved is not false: a resolved watchdog would count as a push")
 
+# Inhibitions: every alert name they match must exist, or a renamed rule
+# leaves the inhibition silently dead. Only alertname matchers, so a
+# matcher on another label cannot widen one to every alert.
+for i, rule in enumerate(am.get("inhibit_rules", [])):
+    for side in ("source_matchers", "target_matchers"):
+        matchers = rule.get(side, [])
+        m = re.fullmatch(r'alertname(=~?)"([a-z0-9_|]+)"', matchers[0]) if len(matchers) == 1 else None
+        if m is None:
+            errors.append(f"inhibit_rules[{i}] {side} {matchers}: expected one alertname matcher")
+            continue
+        for name in m.group(2).split("|"):
+            if name not in alerts or name == "watchdog":
+                errors.append(f"inhibit_rules[{i}] {side}: no alert {name}")
+
 if errors:
     sys.exit("\n".join(errors))
-print(f"{len(alerts)} alerts, one route each")
+print(f"{len(alerts)} alerts, one route each, {len(am.get('inhibit_rules', []))} inhibitions")
 PY_EOF
 
 # --- Test copy: short group intervals, SMS sink to VictoriaLogs. Each change
@@ -434,6 +502,8 @@ done
 for q in 'alertmanager_notifications_failed_total{integration="webhook",receiver_name="watchdog"}' \
   'vmalert_alerting_rules_errors_total{job="vmalert-metrics",group="victoria_stack",alertname="watchdog"}' \
   'vmalert_alerting_rules_errors_total{job="vmalert-logs",alertname="proxmox_backup_failed"}' \
+  'vmalert_alerts_send_errors_total{job="vmalert-logs"}' \
+  'vmalert_alerts_send_errors_total{job="vmalert-metrics"}' \
   'vector_component_sent_events_total{component_id="free_mobile"}'; do
   found=""
   until [[ $SECONDS -ge $deadline ]]; do

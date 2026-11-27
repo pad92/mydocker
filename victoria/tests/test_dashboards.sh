@@ -8,9 +8,17 @@
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
 # - with the header a new user is created with the Viewer role and sees the
-#   fifteen provisioned dashboards (services, Authentik, Proxmox, UniFi,
+#   sixteen provisioned dashboards (services, Authentik, Proxmox, UniFi,
 #   Synology, hosts, logs, Docker, DNS, firewall, HTTP, alerts, disks, stack,
-#   Freebox);
+#   Freebox, network), each in its folder: the overview ones (services, hosts,
+#   logs, alerts, network) at the root (General), the detail ones in
+#   Infrastructure, "Équipements réseau" and Applications;
+# - static rules of the dashboards: every rate() of a range panel uses
+#   $__rate_interval (a fixed window undersamples a long time range), and the
+#   VictoriaMetrics datasource declares a timeInterval of at least the longest
+#   scrape interval, so that $__rate_interval always spans 4 samples; no
+#   VictoriaLogs query filters log_stream outside a stream filter {...}; every
+#   recording rule a dashboard reads is defined in the vmalert-metrics rules;
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
 # - every VictoriaLogs target of the dashboards, sent as the viewer to
@@ -26,7 +34,11 @@
 # - every VictoriaMetrics target answers 200 without error; the targets of
 #   the hosts dashboard also return data from host metrics imported before
 #   (one silent host, one degraded ZFS pool), except "silent hosts" for a host
-#   that still reports, which must return none. The host S.M.A.R.T. targets
+#   that still reports, which must return none; the services dashboard counts
+#   exactly one silent host. vmalert does not run here: the series of the
+#   host_name:metrics_age_seconds:max record is imported as vmalert would
+#   write it, and the record itself is unit tested in
+#   metrics_rules_unittest.yaml (test_alerting.sh). The host S.M.A.R.T. targets
 #   of the disks dashboard return data from smartctl_exporter series imported
 #   before. There is no Proxmox, UniFi or Synology metric in the test, so
 #   their targets only have to parse;
@@ -324,6 +336,13 @@ for state, step in (("idle", 50), ("user", 10)):
            [(m, (20 - m) * step) for m in recent])
 series("system_cpu_time_seconds_total", {"host_name": "old.example", "state": "idle"},
        [(m, (60 - m) * 50) for m in range(60, 29, -1)])
+# What vmalert records from the series above (host_name:metrics_age_seconds:max,
+# the age of the newest CPU sample): about 15 s for test.example, and for
+# old.example the time since its last sample 30 min ago.
+for minutes in recent:
+    series("host_name:metrics_age_seconds:max", {"host_name": "test.example"}, [(minutes, 15)])
+    series("host_name:metrics_age_seconds:max", {"host_name": "old.example"},
+           [(minutes, (30 - minutes) * 60)])
 series("system_memory_utilization_ratio", {"host_name": "test.example", "state": "used"},
        [(m, 0.4) for m in recent])
 series("system_cpu_load_average_5m", {"host_name": "test.example"}, [(m, 0.7) for m in recent])
@@ -446,6 +465,34 @@ def substitute(expr, datasource, variables, variant, all_values):
                                 else value.replace(".", "\\\\."))
     return expr.replace("$search", "*")
 
+def window_of(expr, start):
+    """Range window of the rate( call opening at start: the last [...] of
+    its argument, as label matchers may hold [a-z] classes."""
+    depth, quoted = 0, False
+    for i in range(start, len(expr)):
+        c = expr[i]
+        if c == '"' and expr[i - 1] != "\\":
+            quoted = not quoted
+        elif not quoted and c == "(":
+            depth += 1
+        elif not quoted and c == ")":
+            depth -= 1
+            if depth == 0:
+                found = re.search(r"\[([^\[\]]+)\]\s*$", expr[start:i])
+                return found.group(1) if found else None
+    return None
+
+compose = json.load(open(f"{work}/compose.json"))
+rules = compose["configs"]["vmalert_metrics_rules"]["content"]
+recorded = set(re.findall(r"^\s*-\s*record:\s*(\S+)", rules, re.M))
+scrape = compose["configs"]["victoriametrics_scrape"]["content"]
+seconds = lambda d: int(d[:-1]) * {"s": 1, "m": 60}[d[-1]]
+longest = max(seconds(d) for d in re.findall(r"scrape_interval:\s*(\d+[sm])", scrape))
+datasources = open(f"{work}/configs/grafana_datasources").read()
+time_interval = re.search(r"timeInterval:\s*(\d+[sm])", datasources)
+assert time_interval and seconds(time_interval.group(1)) >= longest, \
+    f"VictoriaMetrics datasource timeInterval {time_interval and time_interval.group(1)}, longest scrape {longest}s"
+
 index = []
 for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
              "docker", "dns", "firewall", "http", "alerts", "disks", "services", "stack", "freebox",
@@ -461,13 +508,26 @@ for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
     for panel in dash["panels"]:
         for target in panel.get("targets", []):
             datasource = target["datasource"]["uid"]
+            where = f'{dash["uid"]} / {panel["title"]}'
+            if datasource == "victorialogs":
+                assert "log_stream:" not in target["expr"], \
+                    f"{where}: log_stream filtered as a field, not as a stream: {target['expr']}"
+            else:
+                for used in re.findall(r"\b[a-z_]+:[a-z_]+:[a-z_]+\b", target["expr"]):
+                    assert used in recorded, f"{where}: {used} is no recording rule of vmalert-metrics"
+                if not target.get("instant"):
+                    for call in re.finditer(r"\b(?:i?rate)\(", target["expr"]):
+                        window = window_of(target["expr"], call.end() - 1)
+                        assert window == "$__rate_interval", \
+                            f"{where}: rate window [{window}] in a range panel, expected [$__rate_interval]"
             for variant in ("value", "all"):
-                if variant == "all" and "$" not in re.sub(r"\$__range\b", "", target["expr"]):
+                if variant == "all" and "$" not in re.sub(r"\$__(?:rate_interval|range)\b", "", target["expr"]):
                     continue
                 query = dict(target)
                 query["expr"] = substitute(target["expr"], datasource, variables, variant, all_values)
-                # $__range and a regex end anchor ($ before a closing quote) are not variables.
-                assert "$" not in re.sub(r'\$__range\b|\$(?=")', "", query["expr"]), \
+                # $__range and $__rate_interval, which Grafana fills in, and a
+                # regex end anchor ($ before a closing quote) are not variables.
+                assert "$" not in re.sub(r'\$__(?:rate_interval|range)\b|\$(?=")', "", query["expr"]), \
                     f'{dash["uid"]} / {panel["title"]}: {query["expr"]}'
                 n = len(index) + 1
                 json.dump({"from": "now-24h", "to": "now", "queries": [query]},
@@ -617,11 +677,15 @@ smart_panels = {("victoria-disks", title) for title in (
 tree_panel = ("victoria-network", "Internet → Freebox → gw → sw24poe → équipements")
 tree_expected = dict(zip("ABCDEFGHIJK", (1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0)))
 expected_empty = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "value")}
+# Host panels of the services dashboard, which read the imported record.
+services_hosts = {("victoria-services", "Hôtes silencieux"), ("victoria-services", "Hôtes")}
 # Exact values from the Traefik records: 4 lines match the four values (one
 # 404, one 503), 11 lines have a host (the hostless 404 probe must not count,
 # the 6 long-lived streams do). The p95 latency leaves out the streams: 900 ms
 # is the slowest short request, in both variants.
-expected_values = {("victoria-network", "Synology", "value"): 0,
+expected_values = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "all"): 1,
+                   ("victoria-services", "Hôtes silencieux", "value"): 1,
+                   ("victoria-network", "Synology", "value"): 0,
                    ("victoria-network", "UniFi", "value"): 4,
                    ("victoria-network", "Hôtes OpenTelemetry", "value"): 2,
                    ("victoria-http", "Requêtes", "value"): 4,
@@ -645,6 +709,21 @@ if search is not None:
     uids = sorted(d.get("uid") for d in search)
     if uids != expected_uids:
         errors.append(f"dashboards visible to the viewer: {uids}")
+    # Overview dashboards at the root, detail ones in a folder named after the
+    # sub-directory of their file. Links between them use uids and tags.
+    expected_folders = {
+        "victoria-services": None, "victoria-hosts": None, "victoria-logs": None,
+        "victoria-alerts": None, "victoria-network": None,
+        "victoria-proxmox": "Infrastructure", "victoria-synology": "Infrastructure",
+        "victoria-disks": "Infrastructure", "victoria-stack": "Infrastructure",
+        "victoria-unifi": "Équipements réseau", "victoria-freebox": "Équipements réseau",
+        "victoria-firewall": "Équipements réseau", "victoria-dns": "Équipements réseau",
+        "victoria-authentik": "Applications", "victoria-docker": "Applications",
+        "victoria-http": "Applications"}
+    for d in search:
+        folder = d.get("folderTitle") or None
+        if d.get("uid") in expected_folders and folder != expected_folders[d["uid"]]:
+            errors.append(f'{d["uid"]} in folder {folder!r}, expected {expected_folders[d["uid"]]!r}')
 
 plugin = load("plugin.json")
 if plugin is not None and plugin.get("info", {}).get("version") != pinned:
@@ -764,7 +843,7 @@ for q in index:
             errors.append(f"{label}: {got}, expected [{tree_expected[q['refId']]}]")
         continue
     if (q["datasource"] == "victorialogs" or q["dashboard"] in ("victoria-hosts", "victoria-network")
-            or (q["dashboard"], q["panel"]) in smart_panels):
+            or (q["dashboard"], q["panel"]) in smart_panels | services_hosts):
         found = any(has_data(f) for f in result.get("frames", []))
         key = (q["dashboard"], q["panel"], q["variant"])
         if key in expected_empty:
