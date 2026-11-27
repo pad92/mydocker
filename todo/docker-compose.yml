@@ -12,27 +12,50 @@ services:
     volumes:
       - ${TODO_DONETICK_DATA_DIR}:/donetick-data
       - ${TODO_DONETICK_DATA_DIR}:/config
+      # Authentik's certificate comes from the internal CA: Go reads this
+      # bundle by default, so the host one (with the CA) replaces the image's.
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
     networks:
       - traefik_gateway
     environment:
-      - DT_ENV=${DT_ENV}
-      - DT_SQLITE_PATH=${DT_SQLITE_PATH}
+      DT_ENV: "${DT_ENV}"
+      DT_SQLITE_PATH: "${DT_SQLITE_PATH}"
+      # Sign-in with Authentik (OpenID Connect), next to the local accounts.
+      # Donetick reads DT_OAUTH2_* over the oauth2 block of the YAML file in
+      # /config. The provider is the "donetick" application of the management
+      # blueprint, whose redirect URIs are https://<TODO_DOMAIN>/auth/oauth2
+      # and donetick://auth/oauth2 (mobile app).
+      DT_OAUTH2_NAME: "Authentik"
+      DT_OAUTH2_CLIENT_ID: "donetick"
+      # Copied from the Authentik provider; set it in Portainer, not in Git.
+      DT_OAUTH2_CLIENT_SECRET: "${DONETICK_OIDC_CLIENT_SECRET:?Set DONETICK_OIDC_CLIENT_SECRET}"
+      DT_OAUTH2_AUTH_URL: "https://${AUTHENTIK_DOMAIN:?Set AUTHENTIK_DOMAIN}/application/o/authorize/"
+      DT_OAUTH2_TOKEN_URL: "https://${AUTHENTIK_DOMAIN:?Set AUTHENTIK_DOMAIN}/application/o/token/"
+      DT_OAUTH2_USER_INFO_URL: "https://${AUTHENTIK_DOMAIN:?Set AUTHENTIK_DOMAIN}/application/o/userinfo/"
+      DT_OAUTH2_REDIRECT_URL: "https://${TODO_DOMAIN:?Set TODO_DOMAIN}/auth/oauth2"
+      # Comma-separated, no spaces: Donetick has no default scopes.
+      DT_OAUTH2_SCOPES: "openid,profile,email"
+      # admin_groups / manager_groups stay unset on purpose: as soon as one
+      # is set, every Authentik login rewrites the circle role, and a user in
+      # none of the groups (the circle owner included) becomes a member.
     labels:
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.donetick.loadbalancer.server.port: "2021"
 
-      traefik.http.routers.donetick_http.rule: "Host(`${TODO_DOMAIN}`)"
+      traefik.http.routers.donetick_http.rule: "Host(`${TODO_DOMAIN:?Set TODO_DOMAIN}`)"
       traefik.http.routers.donetick_http.entrypoints: web
       traefik.http.routers.donetick_http.middlewares: redirect-https
 
       traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
       traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
 
-      traefik.http.routers.donetick.rule: "Host(`${TODO_DOMAIN}`)"
+      traefik.http.routers.donetick.rule: "Host(`${TODO_DOMAIN:?Set TODO_DOMAIN}`)"
       traefik.http.routers.donetick.entrypoints: "websecure"
       traefik.http.routers.donetick.tls: "true"
       traefik.http.routers.donetick.tls.certresolver: "stepca"
+      # No Authentik forward auth: the mobile app and the external API
+      # (/eapi) call Donetick directly; sign-in goes through OIDC above.
 
     logging: *default-logging
 networks:
