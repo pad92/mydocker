@@ -6,7 +6,7 @@ behind Traefik. Other stacks, such as Gramps Web, also call the Ollama API.
 
 | Service | Image | Role |
 | --- | --- | --- |
-| `ollama` | `docker.io/ollama/ollama:0.40.18` | Model runtime and API (port 11434) |
+| `ollama` | `docker.io/ollama/ollama:0.24.0` | Model runtime and API (port 11434) |
 | `open-webui` | `ghcr.io/open-webui/open-webui:v0.13.5` | Chat interface (port 8080, through Traefik) |
 
 Traefik serves Open WebUI on `https://${OLLAMA_DOMAIN}` (entrypoint
@@ -19,10 +19,27 @@ the NVIDIA Container Toolkit; the image sets the `NVIDIA_*` variables itself.
 
 Both images are pinned, and Watchtower only pulls a newer build of the same
 tag. The GTX 1060 is a Pascal card (compute capability 6.1) with driver 550
-(CUDA 12.4): CUDA 13 no longer builds for Pascal, so a future Ollama release
-may stop running on it. To upgrade, set `OLLAMA_VERSION`, redeploy, load a
-model and check that `ollama ps` shows `100% GPU` and that
-`docker logs ollama` finds the card. Go back to the previous tag otherwise.
+(CUDA 12.4).
+
+Ollama is held at `0.24.0`, the last release that uses this card with
+driver 550. From `0.30.0`, Ollama wants driver 570 or newer. With an older
+driver it does not fail: it logs `NVIDIA driver too old` and runs every
+model on the CPU. Tested on the host in November 2026:
+
+| Ollama | Result with driver 550 |
+| --- | --- |
+| `0.22.1`, `0.24.0` | GPU (`library=CUDA`) |
+| `0.30.0` to `0.40.18` | CPU, `required_driver="570 or newer"` |
+
+With `0.24.0`, `qwen2.5:7b` and an 8192-token context, `ollama ps` shows
+`100% GPU`, 29 of 29 layers offloaded and about 5 GB of VRAM used.
+
+A newer Ollama needs a newer driver first. Driver 580 is the last branch
+that supports Pascal cards, and nothing says the Ollama CUDA build of that
+time still runs on compute capability 6.1. To upgrade, set
+`OLLAMA_VERSION`, redeploy, load a model, then check that
+`docker logs ollama` shows `inference compute` with `library=CUDA` and that
+`ollama ps` shows `100% GPU`. Go back to `0.24.0` otherwise.
 
 ## Exposure
 
@@ -61,7 +78,7 @@ Copy `.env.example` to `.env`, fill it in and run `chmod 600 .env`.
 | `WEBUI_SECRET_KEY` | required | Signs Open WebUI sessions; generate with `openssl rand -hex 32` |
 | `OLLAMA_OLLAMA_DATA_DIR` | required | Host directory for Ollama data and pulled models |
 | `OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR` | required | Open WebUI database and uploads |
-| `OLLAMA_VERSION` | `0.40.18` | Ollama image tag |
+| `OLLAMA_VERSION` | `0.24.0` | Ollama image tag (see GPU and versions) |
 | `OPEN_WEBUI_VERSION` | `v0.13.5` | Open WebUI image tag |
 | `OLLAMA_CONTEXT_LENGTH` | `8192` | Context window in tokens |
 | `OLLAMA_KEEP_ALIVE` | `5m` | How long a model stays in VRAM after the last request |
