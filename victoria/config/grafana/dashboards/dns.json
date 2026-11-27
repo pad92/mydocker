@@ -169,7 +169,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Requêtes DNS journalisées par les serveurs AdGuard Home, filtres du dashboard appliqués."
     },
     {
       "type": "stat",
@@ -219,7 +220,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Requêtes bloquées par une liste de filtrage, une règle personnalisée, le contrôle parental ou la navigation sécurisée."
     },
     {
       "type": "stat",
@@ -270,7 +272,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Part des requêtes bloquées. Une hausse soudaine vient souvent d'un appareil qui interroge en boucle un domaine bloqué (télémétrie, publicité)."
     },
     {
       "type": "stat",
@@ -321,7 +324,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Part des requêtes servies depuis le cache d'AdGuard, sans interroger un résolveur amont. Plus elle est haute, plus les réponses sont rapides."
     },
     {
       "type": "stat",
@@ -371,7 +375,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Nombre d'adresses IP clientes différentes ayant fait au moins une requête."
     },
     {
       "type": "stat",
@@ -422,7 +427,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "95e centile du temps de réponse des requêtes résolues par un serveur amont. Les réponses du cache et les requêtes bloquées sont exclues, car quasi instantanées : elles masqueraient la lenteur des résolveurs."
     },
     {
       "type": "row",
@@ -491,7 +497,8 @@
         "y": 6,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Requêtes par serveur AdGuard. Un serveur qui tombe à zéro alors que l'autre monte signale une bascule des clients."
     },
     {
       "type": "timeseries",
@@ -547,7 +554,8 @@
         "y": 6,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Requêtes par type d'enregistrement (A, AAAA, HTTPS, PTR...). Un afflux de PTR ou de TXT mérite d'identifier le client à l'origine."
     },
     {
       "type": "timeseries",
@@ -639,7 +647,8 @@
         "y": 14,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Requêtes par sort : bloquées, réécrites, autorisées par une règle explicite ou traitées normalement."
     },
     {
       "type": "timeseries",
@@ -707,7 +716,8 @@
         "y": 14,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Requêtes servies depuis le cache et requêtes résolues en amont. La part amont donne la charge réelle envoyée aux résolveurs."
     },
     {
       "type": "row",
@@ -776,7 +786,8 @@
         "y": 23,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "95e centile du temps de réponse hors cache, par serveur AdGuard. Comparer les serveurs aide à distinguer un problème de résolveur d'un problème local."
     },
     {
       "type": "timeseries",
@@ -832,7 +843,8 @@
         "y": 23,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Requêtes hors cache par résolveur amont. Un résolveur qui disparaît du graphe ne répond plus ou a été retiré de la configuration."
     },
     {
       "type": "row",
@@ -901,7 +913,8 @@
         "y": 32,
         "w": 12,
         "h": 9
-      }
+      },
+      "description": "Requêtes par IP cliente au fil du temps. Un client qui s'envole est souvent un appareil en boucle."
     },
     {
       "type": "table",
@@ -1067,7 +1080,8 @@
         "y": 32,
         "w": 12,
         "h": 9
-      }
+      },
+      "description": "Clients classés par nombre de requêtes. Le nom et la MAC viennent d'UniFi quand l'IP y est connue."
     },
     {
       "type": "row",
@@ -1162,7 +1176,8 @@
         "y": 42,
         "w": 12,
         "h": 10
-      }
+      },
+      "description": "Domaines les plus demandés sur la période."
     },
     {
       "type": "table",
@@ -1244,7 +1259,8 @@
         "y": 42,
         "w": 12,
         "h": 10
-      }
+      },
+      "description": "Domaines les plus bloqués. Un domaine légitime dans cette liste explique souvent un service qui ne fonctionne plus : à autoriser dans AdGuard."
     },
     {
       "type": "table",
@@ -1332,7 +1348,8 @@
         "y": 52,
         "w": 12,
         "h": 10
-      }
+      },
+      "description": "Domaines au temps de réponse amont le plus élevé, hors cache, avec au moins 3 requêtes pour écarter les cas isolés."
     },
     {
       "type": "table",
@@ -1492,7 +1509,8 @@
         "y": 52,
         "w": 12,
         "h": 10
-      }
+      },
+      "description": "Clients dont le plus de requêtes sont bloquées. Le nom et la MAC viennent d'UniFi quand l'IP y est connue."
     },
     {
       "type": "row",
@@ -1542,7 +1560,8 @@
         "y": 63,
         "w": 24,
         "h": 14
-      }
+      },
+      "description": "Les 200 dernières requêtes : serveur, client, type, domaine et résultat."
     }
   ]
 }

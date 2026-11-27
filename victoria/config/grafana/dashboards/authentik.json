@@ -146,7 +146,8 @@
         "y": 0,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Connexions abouties à Authentik sur la période (événements login)."
     },
     {
       "type": "stat",
@@ -196,7 +197,8 @@
         "y": 0,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Connexions refusées : mauvais mot de passe (login_failed) ou identifiant inconnu (invalid_identifier). Un pic venant d'une seule IP évoque une attaque par force brute."
     },
     {
       "type": "stat",
@@ -246,7 +248,8 @@
         "y": 0,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Requêtes de contrôle d'accès que Traefik envoie à l'outpost Authentik avant de servir une application protégée, pour les applications choisies."
     },
     {
       "type": "stat",
@@ -296,7 +299,8 @@
         "y": 0,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Logs Authentik de niveau error ou critical, pour les composants choisis. Zéro attendu."
     },
     {
       "type": "timeseries",
@@ -351,7 +355,8 @@
         "y": 4,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Connexions réussies et échouées au fil du temps. Des échecs sans réussite en face sont à examiner dans le tableau des échecs."
     },
     {
       "type": "barchart",
@@ -431,7 +436,8 @@
         "y": 4,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Les 20 types d'événements Authentik les plus fréquents (connexion, déconnexion, autorisation, modification de modèle...)."
     },
     {
       "type": "table",
@@ -515,7 +521,8 @@
         "y": 12,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Échecs de connexion regroupés par utilisateur et IP cliente. Beaucoup d'échecs pour une IP externe : tentative d'intrusion ; pour un utilisateur connu : mot de passe oublié ou appareil mal configuré."
     },
     {
       "type": "table",
@@ -585,7 +592,8 @@
         "y": 12,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Derniers événements Authentik, du plus récent au plus ancien."
     },
     {
       "type": "timeseries",
@@ -641,7 +649,8 @@
         "y": 20,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Requêtes forward-auth par application. Un creux brutal sur une application peut signaler un routeur Traefik qui ne passe plus par Authentik."
     },
     {
       "type": "table",
@@ -729,7 +738,8 @@
         "y": 20,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Par application : nombre de requêtes forward-auth, part refusée (redirection vers la connexion ou accès interdit) et latence de la décision. Une latence élevée ralentit toutes les pages de l'application."
     },
     {
       "type": "timeseries",
@@ -785,7 +795,8 @@
         "y": 28,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Logs warning, error et critical par composant Authentik (serveur, worker, outpost)."
     },
     {
       "type": "table",
@@ -857,7 +868,8 @@
         "y": 28,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Derniers avertissements et erreurs, avec le composant et le message."
     }
   ]
 }

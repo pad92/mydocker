@@ -224,7 +224,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Requêtes servies par Traefik sur la période. Les routeurs d'ingestion (_ingest@), qui reçoivent les logs et métriques de la stack, sont exclus pour ne pas noyer le trafic utilisateur."
     },
     {
       "type": "stat",
@@ -275,7 +276,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Part des réponses 4xx (requête refusée ou introuvable). Souvent des robots qui sondent des chemins connus, ou une authentification refusée."
     },
     {
       "type": "stat",
@@ -326,7 +328,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Part des réponses 5xx : le service derrière Traefik a échoué ou ne répond pas. Toute valeur durable est à examiner."
     },
     {
       "type": "stat",
@@ -377,7 +380,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "95e centile de la durée des requêtes, mesurée par Traefik de bout en bout. Les WebSocket et les téléchargements longs la gonflent."
     },
     {
       "type": "stat",
@@ -427,7 +431,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Octets envoyés aux clients sur la période."
     },
     {
       "type": "stat",
@@ -477,7 +482,8 @@
         "y": 1,
         "w": 4,
         "h": 4
-      }
+      },
+      "description": "Nombre d'adresses IP clientes différentes."
     },
     {
       "type": "row",
@@ -546,7 +552,8 @@
         "y": 6,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Requêtes par service Traefik au fil du temps."
     },
     {
       "type": "timeseries",
@@ -602,7 +609,8 @@
         "y": 6,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Réponses par classe de statut. 0xx : connexion WebSocket ou client parti avant la réponse, sans erreur côté serveur."
     },
     {
       "type": "timeseries",
@@ -658,7 +666,8 @@
         "y": 14,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "95e centile de la durée des requêtes, par service. Un service dont la courbe monte seul pointe vers ce service plutôt que vers Traefik."
     },
     {
       "type": "timeseries",
@@ -714,7 +723,8 @@
         "y": 14,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Réponses 5xx par service."
     },
     {
       "type": "row",
@@ -827,7 +837,8 @@
         "y": 23,
         "w": 12,
         "h": 10
-      }
+      },
+      "description": "Par nom d'hôte demandé : volume, erreurs et latence."
     },
     {
       "type": "table",
@@ -907,7 +918,8 @@
         "y": 23,
         "w": 12,
         "h": 10
-      }
+      },
+      "description": "Chemins qui répondent le plus souvent en 4xx ou 5xx."
     },
     {
       "type": "table",
@@ -1073,7 +1085,8 @@
         "y": 33,
         "w": 12,
         "h": 10
-      }
+      },
+      "description": "Clients classés par nombre de requêtes. Le nom et la MAC viennent d'UniFi quand l'IP y est connue."
     },
     {
       "type": "table",
@@ -1163,7 +1176,8 @@
         "y": 33,
         "w": 12,
         "h": 10
-      }
+      },
+      "description": "Chemins à la latence la plus élevée, avec au moins 3 requêtes pour écarter les cas isolés."
     },
     {
       "type": "table",
@@ -1257,7 +1271,8 @@
         "y": 43,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Par service Traefik : volume, taux d'erreur et latence."
     },
     {
       "type": "table",
@@ -1335,7 +1350,8 @@
         "y": 43,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Répartition des versions TLS et des protocoles HTTP. Du TLS 1.0 ou 1.1 désigne un client obsolète."
     },
     {
       "type": "row",
@@ -1385,7 +1401,8 @@
         "y": 52,
         "w": 24,
         "h": 14
-      }
+      },
+      "description": "Dernières réponses 4xx et 5xx, avec l'hôte, le chemin et le client."
     }
   ]
 }

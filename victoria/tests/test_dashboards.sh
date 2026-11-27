@@ -457,7 +457,22 @@ values = {
     "victoria-hosts": {"host_name": "test.example"},
     "victoria-http": {"requesthost": "cloud.home.lan", "service": "nextcloud@docker",
                       "method": "GET", "client": "192.168.0.57"},
+    "victoria-proxmox": {"guest": "guest-test"},
+    "victoria-unifi": {"device": "gw"},
+    "victoria-disks": {"host_name": "smart-test.example"},
 }
+
+def panels_of(dash):
+    """Every panel, those of collapsed rows included: Grafana keeps them in
+    row.panels, out of dash["panels"], until the row is opened. An expanded
+    row must hold none (Grafana would drop them), a collapsed one some."""
+    for panel in dash["panels"]:
+        yield panel
+        if panel["type"] == "row":
+            nested = panel.get("panels", [])
+            assert bool(nested) == bool(panel.get("collapsed")), \
+                f'{dash["uid"]} / row {panel["title"]}: collapsed={panel.get("collapsed")} with {len(nested)} nested panels'
+            yield from nested
 
 def substitute(expr, datasource, variables, variant, all_values):
     for var, value in variables.items():
@@ -509,7 +524,7 @@ for name in ("authentik", "proxmox", "unifi", "synology", "hosts", "logs",
     variables = values.get(dash["uid"], {})
     missing = declared - set(variables) - {"search"}
     assert not missing, f'{dash["uid"]}: no test value for {sorted(missing)}'
-    for panel in dash["panels"]:
+    for panel in panels_of(dash):
         for target in panel.get("targets", []):
             datasource = target["datasource"]["uid"]
             where = f'{dash["uid"]} / {panel["title"]}'
@@ -770,7 +785,7 @@ for name, uid in (("dns", "victoria-dns"), ("firewall", "victoria-firewall"),
                   ("http", "victoria-http")):
     dash = json.load(open(f"{work}/configs/grafana_dashboard_{name}"))
     found = set()
-    for panel in dash["panels"]:
+    for panel in (p for top in dash["panels"] for p in [top, *top.get("panels", [])]):
         refs = {t.get("refId"): t for t in panel.get("targets", [])}
         if "unpoller_" not in refs.get("B", {}).get("expr", ""):
             continue

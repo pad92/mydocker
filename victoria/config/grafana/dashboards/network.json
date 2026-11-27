@@ -1694,197 +1694,7 @@
       "gridPos": {
         "x": 0,
         "y": 21,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Latence du site",
-      "description": "Latence mesurée par le contrôleur UniFi vers Internet.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "victoriametrics"
-          },
-          "editorMode": "code",
-          "expr": "max(unpoller_site_latency_seconds{job=\"unpoller\", subsystem=\"www\"})",
-          "legendFormat": "latence",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 10,
-      "gridPos": {
-        "x": 12,
-        "y": 21,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Débit WAN de la gw",
-      "description": "Débit reçu et émis sur le WAN de la gw UniFi.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "victoriametrics"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(unpoller_device_wan_receive_bytes_total{job=\"unpoller\", name=\"gw\"}[$__rate_interval])) * 8",
-          "legendFormat": "reçu",
-          "range": true
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "victoriametrics"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(unpoller_device_wan_transmit_bytes_total{job=\"unpoller\", name=\"gw\"}[$__rate_interval])) * 8",
-          "legendFormat": "émis",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bps",
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 11,
-      "gridPos": {
-        "x": 0,
-        "y": 29,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Débit de la Freebox",
-      "description": "Débit reçu et émis par la Freebox.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "victoriametrics"
-          },
-          "editorMode": "code",
-          "expr": "max(fbx_exporter_connection_rate_down{job=\"freebox\"}) * 8",
-          "legendFormat": "reçu",
-          "range": true
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "victoriametrics"
-          },
-          "editorMode": "code",
-          "expr": "max(fbx_exporter_connection_rate_up{job=\"freebox\"}) * 8",
-          "legendFormat": "émis",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bps",
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 12,
-      "gridPos": {
-        "x": 12,
-        "y": 29,
-        "w": 12,
+        "w": 24,
         "h": 8
       }
     },
@@ -1896,7 +1706,7 @@
       "id": 13,
       "gridPos": {
         "x": 0,
-        "y": 37,
+        "y": 29,
         "w": 24,
         "h": 1
       }
@@ -1978,7 +1788,7 @@
       "id": 14,
       "gridPos": {
         "x": 0,
-        "y": 38,
+        "y": 30,
         "w": 8,
         "h": 10
       }
@@ -2015,7 +1825,7 @@
       "id": 15,
       "gridPos": {
         "x": 8,
-        "y": 38,
+        "y": 30,
         "w": 16,
         "h": 10
       }

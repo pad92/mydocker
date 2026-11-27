@@ -1640,9 +1640,8 @@ configs:
     content: |
       # OTLP/HTTP logs and UDP syslog to VictoriaLogs.
       #
-      #   otlp -> normalize -> route_streams --docker_like--> redact_url_secrets
-      #                                      |                 -> route_authentik --authentik--> parse_authentik
-      #                                      |--journald--> parse_http -> parse_proxmox
+      #   otlp -> normalize -> redact_url_secrets -> route_streams --docker_like--> route_authentik --authentik--> parse_authentik
+      #                                                           |--journald--> parse_http -> parse_proxmox
       #   syslog_udp -> parse_syslog
       #
       # Every branch ends in the victorialogs sink. The stream of a record is its
@@ -1859,26 +1858,35 @@ configs:
 
         route_streams:
           type: route
-          inputs: [normalize]
+          inputs: [redact_url_secrets]
           route:
             docker_like: '.log_stream == "docker" || .log_stream == "traefik"'
             journald: '.log_stream == "journald"'
 
         # Masks the values of secret-looking URL parameters (token, code,
-        # password and the like) in the container logs: OAuth codes, API keys and session
-        # IDs in request lines must not be readable by everyone with UI access.
+        # password and the like) on every OTLP record: OAuth codes, API keys and
+        # session IDs in request lines must not be readable by everyone with UI
+        # access. The only place that defines secret_re: the parsers downstream
+        # (parse_authentik, parse_http) read fields that are already masked.
         redact_url_secrets:
           type: remap
-          inputs: [route_streams.docker_like]
+          inputs: [normalize]
           source: |
             secret_re = r'(?i)([?&]|\b)((?:access[_-]?token|refresh[_-]?token|token|auth(?:orization)?|api[_-]?key|client[_-]?secret|credential|password|passwd|secret|session(?:[_-]?id)?|jwt|signature|sig|nonce(?:_[a-z0-9]+)?|code|key)=)([^&\s"\x27\\]*)'
             # body: the raw line; app_msg, app_message: the message of a JSON
-            # line; app_requestpath: path and query of the Traefik access log.
-            for_each(["body", "app_msg", "app_message", "app_requestpath"]) -> |_index, name| {
+            # line; app_requestpath: path and query of the Traefik access log;
+            # app_event, app_path, app_context_http_request: Authentik request.
+            for_each(["body", "app_msg", "app_message", "app_requestpath", "app_event", "app_path", "app_context_http_request"]) -> |_index, name| {
               value = get(., [name]) ?? null
               if is_string(value) {
                 . = set!(., [name], replace(string!(value), secret_re, "$$1$$2[REDACTED]"))
               }
+            }
+            # HAProxy httplog line in the journal: its request line carries the
+            # query string, and parse_http takes http_path from it. Other journal
+            # lines are left as they are: key=value is common in daemon messages.
+            if (string(.body_syslog_identifier) ?? "") == "haproxy" && is_string(.body_message) {
+              .body_message = replace(string!(.body_message), secret_re, "$$1$$2[REDACTED]")
             }
             # Traefik numeric fields arrive as float (302.0) or string ("302")
             # depending on the collector: one integer type for tables and filters.
@@ -1894,13 +1902,14 @@ configs:
 
         route_authentik:
           type: route
-          inputs: [redact_url_secrets]
+          inputs: [route_streams.docker_like]
           route:
             authentik: '.log_stream == "docker" && contains(string(.container_name) ?? "", "authentik_")'
 
         # Authentik logs (server, worker, postgresql) to their own authentik
         # stream, with ak_* fields. Runs after redact_url_secrets, which masked
-        # body, app_msg and app_message.
+        # body, app_msg, app_message, app_event, app_path and
+        # app_context_http_request.
         #
         # Two formats on authentik_server:
         # - Python/structlog: app_client_ip, app_runtime (ms), app_action for events;
@@ -1923,16 +1932,6 @@ configs:
           inputs: [route_authentik.authentik]
           source: |
             .log_stream = "authentik"
-            secret_re = r'(?i)([?&]|\b)((?:access[_-]?token|refresh[_-]?token|token|auth(?:orization)?|api[_-]?key|client[_-]?secret|credential|password|passwd|secret|session(?:[_-]?id)?|jwt|signature|sig|nonce(?:_[a-z0-9]+)?|code|key)=)([^&\s"\x27\\]*)'
-            if is_string(.app_event) {
-              .app_event = replace(string!(.app_event), secret_re, "$$1$$2[REDACTED]")
-            }
-            if is_string(.app_path) {
-              .app_path = replace(string!(.app_path), secret_re, "$$1$$2[REDACTED]")
-            }
-            if is_string(.app_context_http_request) {
-              .app_context_http_request = replace(string!(.app_context_http_request), secret_re, "$$1$$2[REDACTED]")
-            }
 
             name = string(.container_name) ?? ""
             .ak_component = replace(name, r'^authentik_', "")
@@ -2018,18 +2017,16 @@ configs:
               # 192.0.2.10:51234 [26/Nov/2026:10:00:00.123] fe~ be/srv 0/0/1/5/6 200 1234 - - ---- 1/1/0/0/0 0/0 "GET /path HTTP/1.1"
               h, err = parse_regex(msg, r'^(?P<ip>[0-9A-Fa-f.:]+):\d+ \[[^\]]+\] (?P<frontend>\S+) (?P<backend>[^/\s]+)/(?P<server>\S+) -?\d+/-?\d+/-?\d+/-?\d+/\+?(?P<ta>-?\d+) (?P<status>-?\d+) \+?(?P<bytes>\d+) .*?"(?P<method>[A-Z]+) (?P<path>\S+)')
               if err == null {
-                secret_re = r'(?i)([?&]|\b)((?:access[_-]?token|refresh[_-]?token|token|auth(?:orization)?|api[_-]?key|client[_-]?secret|credential|password|passwd|secret|session(?:[_-]?id)?|jwt|signature|sig|nonce(?:_[a-z0-9]+)?|code|key)=)([^&\s"\x27\\]*)'
                 .http_client_ip = h.ip
                 .http_frontend = h.frontend
                 .http_backend = h.backend
                 .http_server = h.server
                 .http_method = h.method
-                .http_path = replace(string!(h.path), secret_re, "$$1$$2[REDACTED]")
+                # Query secrets already masked by redact_url_secrets.
+                .http_path = h.path
                 .http_status = to_int(h.status) ?? null
                 .http_bytes = to_int(h.bytes) ?? null
                 .http_ta_ms = to_int(h.ta) ?? null
-                # The request line of the message carries the same query string.
-                .body_message = replace(msg, secret_re, "$$1$$2[REDACTED]")
               }
             } else if starts_with(msg, "util/http/http.c: ") {
               c, err = parse_regex(msg, r'^util/http/http\.c: (?:\S+: )?Client (?P<event>connected|disconnected) (?P<ip>[0-9A-Fa-f.:]+)')
@@ -2652,7 +2649,8 @@ configs:
               "y": 0,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Connexions abouties à Authentik sur la période (événements login)."
           },
           {
             "type": "stat",
@@ -2702,7 +2700,8 @@ configs:
               "y": 0,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Connexions refusées : mauvais mot de passe (login_failed) ou identifiant inconnu (invalid_identifier). Un pic venant d'une seule IP évoque une attaque par force brute."
           },
           {
             "type": "stat",
@@ -2752,7 +2751,8 @@ configs:
               "y": 0,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Requêtes de contrôle d'accès que Traefik envoie à l'outpost Authentik avant de servir une application protégée, pour les applications choisies."
           },
           {
             "type": "stat",
@@ -2802,7 +2802,8 @@ configs:
               "y": 0,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Logs Authentik de niveau error ou critical, pour les composants choisis. Zéro attendu."
           },
           {
             "type": "timeseries",
@@ -2857,7 +2858,8 @@ configs:
               "y": 4,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Connexions réussies et échouées au fil du temps. Des échecs sans réussite en face sont à examiner dans le tableau des échecs."
           },
           {
             "type": "barchart",
@@ -2937,7 +2939,8 @@ configs:
               "y": 4,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Les 20 types d'événements Authentik les plus fréquents (connexion, déconnexion, autorisation, modification de modèle...)."
           },
           {
             "type": "table",
@@ -3021,7 +3024,8 @@ configs:
               "y": 12,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Échecs de connexion regroupés par utilisateur et IP cliente. Beaucoup d'échecs pour une IP externe : tentative d'intrusion ; pour un utilisateur connu : mot de passe oublié ou appareil mal configuré."
           },
           {
             "type": "table",
@@ -3091,7 +3095,8 @@ configs:
               "y": 12,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Derniers événements Authentik, du plus récent au plus ancien."
           },
           {
             "type": "timeseries",
@@ -3147,7 +3152,8 @@ configs:
               "y": 20,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Requêtes forward-auth par application. Un creux brutal sur une application peut signaler un routeur Traefik qui ne passe plus par Authentik."
           },
           {
             "type": "table",
@@ -3235,7 +3241,8 @@ configs:
               "y": 20,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Par application : nombre de requêtes forward-auth, part refusée (redirection vers la connexion ou accès interdit) et latence de la décision. Une latence élevée ralentit toutes les pages de l'application."
           },
           {
             "type": "timeseries",
@@ -3291,7 +3298,8 @@ configs:
               "y": 28,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Logs warning, error et critical par composant Authentik (serveur, worker, outpost)."
           },
           {
             "type": "table",
@@ -3363,7 +3371,8 @@ configs:
               "y": 28,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Derniers avertissements et erreurs, avec le composant et le message."
           }
         ]
       }
@@ -3409,7 +3418,36 @@ configs:
           }
         ],
         "templating": {
-          "list": []
+          "list": [
+            {
+              "name": "guest",
+              "label": "Invité",
+              "type": "query",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "victoriametrics"
+              },
+              "definition": "label_values(proxmox_vm_cpu_percent, name)",
+              "query": {
+                "qryType": 1,
+                "query": "label_values(proxmox_vm_cpu_percent, name)",
+                "refId": "guest"
+              },
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".*",
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            }
+          ]
         },
         "annotations": {
           "list": []
@@ -3478,7 +3516,8 @@ configs:
               "y": 1,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Utilisation CPU actuelle de l'hôte Proxmox."
           },
           {
             "type": "stat",
@@ -3530,7 +3569,8 @@ configs:
               "y": 1,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Mémoire utilisée par l'hôte, sans le cache ARC de ZFS. L'ARC rend sa mémoire quand on la lui demande : le compter ferait croire à une saturation."
           },
           {
             "type": "stat",
@@ -3582,7 +3622,8 @@ configs:
               "y": 1,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Charge moyenne de l'hôte sur 5 minutes : processus en cours d'exécution ou en attente. À comparer au nombre de cœurs ; au-delà, des processus attendent un CPU."
           },
           {
             "type": "stat",
@@ -3633,7 +3674,8 @@ configs:
               "y": 1,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Temps écoulé depuis le dernier démarrage de l'hôte."
           },
           {
             "type": "timeseries",
@@ -3688,7 +3730,8 @@ configs:
               "y": 5,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Utilisation CPU de l'hôte au fil du temps."
           },
           {
             "type": "timeseries",
@@ -3765,7 +3808,8 @@ configs:
               "y": 5,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Charge moyenne sur 1, 5 et 15 minutes. Une courbe 1 min au-dessus de la 15 min indique une charge qui monte."
           },
           {
             "type": "timeseries",
@@ -3842,7 +3886,8 @@ configs:
               "y": 13,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Mémoire utilisée, part prise par l'ARC de ZFS, et mémoire totale. La différence entre utilisée et ARC est la vraie pression mémoire."
           },
           {
             "type": "timeseries",
@@ -3908,7 +3953,8 @@ configs:
               "y": 13,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Trafic des ponts réseau vmbr, par lesquels passent les invités."
           },
           {
             "type": "timeseries",
@@ -3963,7 +4009,8 @@ configs:
               "y": 21,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Swap utilisé par l'hôte. Une hausse durable signale un manque de mémoire."
           },
           {
             "type": "timeseries",
@@ -4061,7 +4108,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_cpu_percent",
+                "expr": "proxmox_vm_cpu_percent{name=~\"$$guest\"}",
                 "legendFormat": "{{name}}",
                 "range": true
               }
@@ -4099,7 +4146,8 @@ configs:
               "y": 30,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Utilisation CPU de chaque invité (VM et conteneur LXC) choisi."
           },
           {
             "type": "timeseries",
@@ -4116,7 +4164,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_mem_bytes",
+                "expr": "proxmox_vm_mem_bytes{name=~\"$$guest\"}",
                 "legendFormat": "{{name}}",
                 "range": true
               }
@@ -4154,7 +4202,8 @@ configs:
               "y": 30,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Mémoire utilisée par chaque invité choisi."
           },
           {
             "type": "timeseries",
@@ -4171,7 +4220,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_netin_bytes_total[$$__rate_interval])",
+                "expr": "rate(proxmox_vm_netin_bytes_total{name=~\"$$guest\"}[$$__rate_interval])",
                 "legendFormat": "{{name}} in",
                 "range": true
               },
@@ -4182,7 +4231,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_netout_bytes_total[$$__rate_interval])",
+                "expr": "rate(proxmox_vm_netout_bytes_total{name=~\"$$guest\"}[$$__rate_interval])",
                 "legendFormat": "{{name}} out",
                 "range": true
               }
@@ -4220,7 +4269,8 @@ configs:
               "y": 38,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Trafic réseau de chaque invité choisi, reçu et émis."
           },
           {
             "type": "timeseries",
@@ -4237,7 +4287,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_diskread_bytes_total[$$__rate_interval])",
+                "expr": "rate(proxmox_vm_diskread_bytes_total{name=~\"$$guest\"}[$$__rate_interval])",
                 "legendFormat": "{{name}} read",
                 "range": true
               },
@@ -4248,7 +4298,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(proxmox_vm_diskwrite_bytes_total[$$__rate_interval])",
+                "expr": "rate(proxmox_vm_diskwrite_bytes_total{name=~\"$$guest\"}[$$__rate_interval])",
                 "legendFormat": "{{name}} write",
                 "range": true
               }
@@ -4286,7 +4336,8 @@ configs:
               "y": 38,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Lectures et écritures disque de chaque invité choisi."
           },
           {
             "type": "timeseries",
@@ -4303,7 +4354,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_disk_bytes / proxmox_vm_maxdisk_bytes",
+                "expr": "proxmox_vm_disk_bytes{name=~\"$$guest\"} / proxmox_vm_maxdisk_bytes{name=~\"$$guest\"}",
                 "legendFormat": "{{name}}",
                 "range": true
               }
@@ -4341,7 +4392,8 @@ configs:
               "y": 46,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Occupation du disque de chaque invité choisi. Proxmox ne la mesure que pour les conteneurs LXC."
           },
           {
             "type": "timeseries",
@@ -4358,7 +4410,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_uptime_seconds",
+                "expr": "proxmox_vm_uptime_seconds{name=~\"$$guest\"}",
                 "legendFormat": "{{name}}",
                 "range": true
               }
@@ -4396,7 +4448,8 @@ configs:
               "y": 46,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Temps écoulé depuis le démarrage de chaque invité choisi. Un retour à zéro signale un redémarrage."
           },
           {
             "type": "timeseries",
@@ -4413,7 +4466,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (vmid, name, type) ({__name__=~\"proxmox_vm_pressurecpusome_(percent|ratio)\"})",
+                "expr": "max by (vmid, name, type) ({name=~\"$$guest\", __name__=~\"proxmox_vm_pressurecpusome_(percent|ratio)\"})",
                 "legendFormat": "{{name}} cpu",
                 "range": true
               },
@@ -4424,7 +4477,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_pressureiosome_ratio",
+                "expr": "proxmox_vm_pressureiosome_ratio{name=~\"$$guest\"}",
                 "legendFormat": "{{name}} io",
                 "range": true
               },
@@ -4435,7 +4488,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "proxmox_vm_pressurememorysome_bytes",
+                "expr": "proxmox_vm_pressurememorysome_bytes{name=~\"$$guest\"}",
                 "legendFormat": "{{name}} mem",
                 "range": true
               }
@@ -4473,7 +4526,8 @@ configs:
               "y": 54,
               "w": 24,
               "h": 8
-            }
+            },
+            "description": "Pression (PSI, some) : part du temps où au moins une tâche de l'invité attend le CPU, le disque ou la mémoire. Une pression durable désigne la ressource qui manque."
           },
           {
             "id": 19,
@@ -4541,7 +4595,8 @@ configs:
               "y": 63,
               "w": 8,
               "h": 8
-            }
+            },
+            "description": "Part occupée de chaque stockage Proxmox."
           },
           {
             "type": "timeseries",
@@ -4596,7 +4651,8 @@ configs:
               "y": 63,
               "w": 8,
               "h": 8
-            }
+            },
+            "description": "Espace libre restant sur chaque stockage."
           },
           {
             "type": "timeseries",
@@ -4651,680 +4707,693 @@ configs:
               "y": 63,
               "w": 8,
               "h": 8
-            }
+            },
+            "description": "Espace utilisé sur chaque stockage."
           },
           {
             "id": 23,
             "type": "row",
             "title": "Journal PVE",
-            "collapsed": false,
+            "collapsed": true,
             "gridPos": {
               "x": 0,
               "y": 71,
               "w": 24,
               "h": 1
             },
-            "panels": []
-          },
-          {
-            "type": "stat",
-            "title": "Tâches en échec",
-            "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
-            },
-            "targets": [
+            "panels": [
               {
-                "refId": "A",
+                "type": "stat",
+                "title": "Tâches en échec",
                 "datasource": {
                   "type": "victoriametrics-logs-datasource",
                   "uid": "victorialogs"
                 },
-                "editorMode": "code",
-                "expr": "{log_stream=\"proxmox\"} pve_task_failed:=true | stats count() as n",
-                "queryType": "stats"
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "unit": "short",
-                "noValue": "0",
-                "color": {
-                  "mode": "fixed",
-                  "fixedColor": "red"
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "reduceOptions": {
-                "calcs": [
-                  "lastNotNull"
-                ],
-                "fields": "",
-                "values": false
-              },
-              "colorMode": "value",
-              "graphMode": "none",
-              "textMode": "value"
-            },
-            "id": 24,
-            "gridPos": {
-              "x": 0,
-              "y": 72,
-              "w": 6,
-              "h": 4
-            }
-          },
-          {
-            "type": "stat",
-            "title": "Sauvegardes en échec",
-            "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
-            },
-            "targets": [
-              {
-                "refId": "A",
-                "datasource": {
-                  "type": "victoriametrics-logs-datasource",
-                  "uid": "victorialogs"
-                },
-                "editorMode": "code",
-                "expr": "{log_stream=\"proxmox\"} pve_backup_event:in(job_failed,vm_failed) | stats count() as n",
-                "queryType": "stats"
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "unit": "short",
-                "noValue": "0",
-                "color": {
-                  "mode": "fixed",
-                  "fixedColor": "red"
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "reduceOptions": {
-                "calcs": [
-                  "lastNotNull"
-                ],
-                "fields": "",
-                "values": false
-              },
-              "colorMode": "value",
-              "graphMode": "none",
-              "textMode": "value"
-            },
-            "id": 25,
-            "gridPos": {
-              "x": 6,
-              "y": 72,
-              "w": 6,
-              "h": 4
-            }
-          },
-          {
-            "type": "stat",
-            "title": "Sauvegardes réussies",
-            "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
-            },
-            "targets": [
-              {
-                "refId": "A",
-                "datasource": {
-                  "type": "victoriametrics-logs-datasource",
-                  "uid": "victorialogs"
-                },
-                "editorMode": "code",
-                "expr": "{log_stream=\"proxmox\"} pve_backup_event:=vm_ok | stats count() as n",
-                "queryType": "stats"
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "unit": "short",
-                "noValue": "0",
-                "color": {
-                  "mode": "fixed",
-                  "fixedColor": "green"
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "reduceOptions": {
-                "calcs": [
-                  "lastNotNull"
-                ],
-                "fields": "",
-                "values": false
-              },
-              "colorMode": "value",
-              "graphMode": "none",
-              "textMode": "value"
-            },
-            "id": 26,
-            "gridPos": {
-              "x": 12,
-              "y": 72,
-              "w": 6,
-              "h": 4
-            }
-          },
-          {
-            "type": "stat",
-            "title": "Échecs d'authentification",
-            "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
-            },
-            "targets": [
-              {
-                "refId": "A",
-                "datasource": {
-                  "type": "victoriametrics-logs-datasource",
-                  "uid": "victorialogs"
-                },
-                "editorMode": "code",
-                "expr": "{log_stream=\"proxmox\"} pve_auth_result:=failure | stats count() as n",
-                "queryType": "stats"
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "unit": "short",
-                "noValue": "0",
-                "color": {
-                  "mode": "fixed",
-                  "fixedColor": "orange"
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "reduceOptions": {
-                "calcs": [
-                  "lastNotNull"
-                ],
-                "fields": "",
-                "values": false
-              },
-              "colorMode": "value",
-              "graphMode": "none",
-              "textMode": "value"
-            },
-            "id": 27,
-            "gridPos": {
-              "x": 18,
-              "y": 72,
-              "w": 6,
-              "h": 4
-            }
-          },
-          {
-            "type": "timeseries",
-            "title": "Tâches lancées par type",
-            "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
-            },
-            "targets": [
-              {
-                "refId": "A",
-                "datasource": {
-                  "type": "victoriametrics-logs-datasource",
-                  "uid": "victorialogs"
-                },
-                "editorMode": "code",
-                "expr": "{log_stream=\"proxmox\"} pve_task_event:=start | stats by (pve_task_type) count() as n",
-                "queryType": "statsRange",
-                "step": "5m",
-                "legendFormat": "{{pve_task_type}}"
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "unit": "short",
-                "custom": {
-                  "drawStyle": "bars",
-                  "fillOpacity": 80,
-                  "lineWidth": 1,
-                  "showPoints": "never",
-                  "stacking": {
-                    "mode": "normal",
-                    "group": "A"
+                "targets": [
+                  {
+                    "refId": "A",
+                    "datasource": {
+                      "type": "victoriametrics-logs-datasource",
+                      "uid": "victorialogs"
+                    },
+                    "editorMode": "code",
+                    "expr": "{log_stream=\"proxmox\"} pve_task_failed:=true | stats count() as n",
+                    "queryType": "stats"
                   }
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "legend": {
-                "displayMode": "list",
-                "placement": "bottom",
-                "showLegend": true
-              },
-              "tooltip": {
-                "mode": "multi",
-                "sort": "desc"
-              }
-            },
-            "id": 28,
-            "gridPos": {
-              "x": 0,
-              "y": 76,
-              "w": 12,
-              "h": 8
-            }
-          },
-          {
-            "type": "timeseries",
-            "title": "Logs par niveau",
-            "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
-            },
-            "targets": [
-              {
-                "refId": "A",
-                "datasource": {
-                  "type": "victoriametrics-logs-datasource",
-                  "uid": "victorialogs"
-                },
-                "editorMode": "code",
-                "expr": "{log_stream=\"proxmox\"} | stats by (pve_level) count() as n",
-                "queryType": "statsRange",
-                "step": "5m",
-                "legendFormat": "{{pve_level}}"
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "unit": "short",
-                "custom": {
-                  "drawStyle": "bars",
-                  "fillOpacity": 80,
-                  "lineWidth": 1,
-                  "showPoints": "never",
-                  "stacking": {
-                    "mode": "normal",
-                    "group": "A"
-                  }
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "legend": {
-                "displayMode": "list",
-                "placement": "bottom",
-                "showLegend": true
-              },
-              "tooltip": {
-                "mode": "multi",
-                "sort": "desc"
-              }
-            },
-            "id": 29,
-            "gridPos": {
-              "x": 12,
-              "y": 76,
-              "w": 12,
-              "h": 8
-            }
-          },
-          {
-            "type": "timeseries",
-            "title": "Durée de sauvegarde par invité (s)",
-            "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
-            },
-            "targets": [
-              {
-                "refId": "A",
-                "datasource": {
-                  "type": "victoriametrics-logs-datasource",
-                  "uid": "victorialogs"
-                },
-                "editorMode": "code",
-                "expr": "{log_stream=\"proxmox\"} pve_backup_event:=vm_ok | stats by (pve_vmid) max(pve_duration_s) as duree",
-                "queryType": "statsRange",
-                "step": "5m",
-                "legendFormat": "{{pve_vmid}}"
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "unit": "s",
-                "custom": {
-                  "drawStyle": "line",
-                  "fillOpacity": 10,
-                  "lineWidth": 1,
-                  "showPoints": "never",
-                  "stacking": {
-                    "mode": "none",
-                    "group": "A"
-                  }
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "legend": {
-                "displayMode": "list",
-                "placement": "bottom",
-                "showLegend": true
-              },
-              "tooltip": {
-                "mode": "multi",
-                "sort": "desc"
-              }
-            },
-            "id": 30,
-            "gridPos": {
-              "x": 0,
-              "y": 84,
-              "w": 12,
-              "h": 8
-            }
-          },
-          {
-            "type": "table",
-            "title": "Dernières sauvegardes",
-            "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
-            },
-            "targets": [
-              {
-                "refId": "A",
-                "datasource": {
-                  "type": "victoriametrics-logs-datasource",
-                  "uid": "victorialogs"
-                },
-                "editorMode": "code",
-                "expr": "{log_stream=\"proxmox\"} pve_kind:=backup | fields _time, pve_backup_event, pve_vmid, pve_duration_s, _msg | sort by (_time desc) | limit 100",
-                "queryType": "instant"
-              }
-            ],
-            "transformations": [
-              {
-                "id": "extractFields",
-                "options": {
-                  "source": "labels",
-                  "format": "json",
-                  "replace": true,
-                  "keepTime": true
-                }
-              },
-              {
-                "id": "convertFieldType",
-                "options": {
-                  "conversions": [
-                    {
-                      "targetField": "pve_duration_s",
-                      "destinationType": "number"
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "short",
+                    "noValue": "0",
+                    "color": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
                     }
-                  ],
-                  "fields": {}
-                }
-              },
-              {
-                "id": "organize",
+                  },
+                  "overrides": []
+                },
                 "options": {
-                  "indexByName": {
-                    "Time": 0,
-                    "pve_backup_event": 1,
-                    "pve_vmid": 2,
-                    "pve_duration_s": 3,
-                    "_msg": 4
+                  "reduceOptions": {
+                    "calcs": [
+                      "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
                   },
-                  "renameByName": {
-                    "Time": "heure",
-                    "pve_backup_event": "événement",
-                    "pve_vmid": "vmid",
-                    "pve_duration_s": "durée (s)",
-                    "_msg": "message"
-                  },
-                  "excludeByName": {}
-                }
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "custom": {
-                  "filterable": true
-                }
+                  "colorMode": "value",
+                  "graphMode": "none",
+                  "textMode": "value"
+                },
+                "id": 24,
+                "gridPos": {
+                  "x": 0,
+                  "y": 72,
+                  "w": 6,
+                  "h": 4
+                },
+                "description": "Tâches Proxmox terminées en erreur (sauvegarde, migration, démarrage...)."
               },
-              "overrides": []
-            },
-            "options": {
-              "showHeader": true,
-              "cellHeight": "sm"
-            },
-            "id": 31,
-            "gridPos": {
-              "x": 12,
-              "y": 84,
-              "w": 12,
-              "h": 8
-            }
-          },
-          {
-            "type": "table",
-            "title": "Tâches en échec",
-            "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
-            },
-            "targets": [
               {
-                "refId": "A",
+                "type": "stat",
+                "title": "Sauvegardes en échec",
                 "datasource": {
                   "type": "victoriametrics-logs-datasource",
                   "uid": "victorialogs"
                 },
-                "editorMode": "code",
-                "expr": "{log_stream=\"proxmox\"} pve_task_failed:=true | fields _time, pve_component, pve_task_type, pve_vmid, pve_user, pve_task_status | sort by (_time desc) | limit 100",
-                "queryType": "instant"
-              }
-            ],
-            "transformations": [
-              {
-                "id": "extractFields",
+                "targets": [
+                  {
+                    "refId": "A",
+                    "datasource": {
+                      "type": "victoriametrics-logs-datasource",
+                      "uid": "victorialogs"
+                    },
+                    "editorMode": "code",
+                    "expr": "{log_stream=\"proxmox\"} pve_backup_event:in(job_failed,vm_failed) | stats count() as n",
+                    "queryType": "stats"
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "short",
+                    "noValue": "0",
+                    "color": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  },
+                  "overrides": []
+                },
                 "options": {
-                  "source": "labels",
-                  "format": "json",
-                  "replace": true,
-                  "keepTime": true
-                }
+                  "reduceOptions": {
+                    "calcs": [
+                      "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                  },
+                  "colorMode": "value",
+                  "graphMode": "none",
+                  "textMode": "value"
+                },
+                "id": 25,
+                "gridPos": {
+                  "x": 6,
+                  "y": 72,
+                  "w": 6,
+                  "h": 4
+                },
+                "description": "Sauvegardes vzdump en échec, au niveau d'un invité ou du job entier. Zéro attendu."
               },
               {
-                "id": "organize",
-                "options": {
-                  "indexByName": {
-                    "Time": 0,
-                    "pve_component": 1,
-                    "pve_task_type": 2,
-                    "pve_vmid": 3,
-                    "pve_user": 4,
-                    "pve_task_status": 5
-                  },
-                  "renameByName": {
-                    "Time": "heure",
-                    "pve_component": "composant",
-                    "pve_task_type": "type",
-                    "pve_vmid": "id",
-                    "pve_user": "utilisateur",
-                    "pve_task_status": "statut"
-                  },
-                  "excludeByName": {}
-                }
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "custom": {
-                  "filterable": true
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "showHeader": true,
-              "cellHeight": "sm"
-            },
-            "id": 32,
-            "gridPos": {
-              "x": 0,
-              "y": 92,
-              "w": 12,
-              "h": 8
-            }
-          },
-          {
-            "type": "table",
-            "title": "Authentifications",
-            "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
-            },
-            "targets": [
-              {
-                "refId": "A",
+                "type": "stat",
+                "title": "Sauvegardes réussies",
                 "datasource": {
                   "type": "victoriametrics-logs-datasource",
                   "uid": "victorialogs"
                 },
-                "editorMode": "code",
-                "expr": "{log_stream=\"proxmox\"} pve_kind:=auth | fields _time, pve_auth_result, pve_user, pve_client_ip, pve_component | sort by (_time desc) | limit 100",
-                "queryType": "instant"
-              }
-            ],
-            "transformations": [
-              {
-                "id": "extractFields",
+                "targets": [
+                  {
+                    "refId": "A",
+                    "datasource": {
+                      "type": "victoriametrics-logs-datasource",
+                      "uid": "victorialogs"
+                    },
+                    "editorMode": "code",
+                    "expr": "{log_stream=\"proxmox\"} pve_backup_event:=vm_ok | stats count() as n",
+                    "queryType": "stats"
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "short",
+                    "noValue": "0",
+                    "color": {
+                      "mode": "fixed",
+                      "fixedColor": "green"
+                    }
+                  },
+                  "overrides": []
+                },
                 "options": {
-                  "source": "labels",
-                  "format": "json",
-                  "replace": true,
-                  "keepTime": true
-                }
+                  "reduceOptions": {
+                    "calcs": [
+                      "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                  },
+                  "colorMode": "value",
+                  "graphMode": "none",
+                  "textMode": "value"
+                },
+                "id": 26,
+                "gridPos": {
+                  "x": 12,
+                  "y": 72,
+                  "w": 6,
+                  "h": 4
+                },
+                "description": "Sauvegardes d'invités réussies sur la période."
               },
               {
-                "id": "organize",
-                "options": {
-                  "indexByName": {
-                    "Time": 0,
-                    "pve_auth_result": 1,
-                    "pve_user": 2,
-                    "pve_client_ip": 3,
-                    "pve_component": 4
-                  },
-                  "renameByName": {
-                    "Time": "heure",
-                    "pve_auth_result": "résultat",
-                    "pve_user": "utilisateur",
-                    "pve_client_ip": "ip",
-                    "pve_component": "composant"
-                  },
-                  "excludeByName": {}
-                }
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "custom": {
-                  "filterable": true
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "showHeader": true,
-              "cellHeight": "sm"
-            },
-            "id": 33,
-            "gridPos": {
-              "x": 12,
-              "y": 92,
-              "w": 12,
-              "h": 8
-            }
-          },
-          {
-            "type": "table",
-            "title": "Avertissements et erreurs",
-            "datasource": {
-              "type": "victoriametrics-logs-datasource",
-              "uid": "victorialogs"
-            },
-            "targets": [
-              {
-                "refId": "A",
+                "type": "stat",
+                "title": "Échecs d'authentification",
                 "datasource": {
                   "type": "victoriametrics-logs-datasource",
                   "uid": "victorialogs"
                 },
-                "editorMode": "code",
-                "expr": "{log_stream=\"proxmox\"} pve_level:in(warning,error,critical) | fields _time, pve_level, pve_component, _msg | sort by (_time desc) | limit 200",
-                "queryType": "instant"
-              }
-            ],
-            "transformations": [
-              {
-                "id": "extractFields",
+                "targets": [
+                  {
+                    "refId": "A",
+                    "datasource": {
+                      "type": "victoriametrics-logs-datasource",
+                      "uid": "victorialogs"
+                    },
+                    "editorMode": "code",
+                    "expr": "{log_stream=\"proxmox\"} pve_auth_result:=failure | stats count() as n",
+                    "queryType": "stats"
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "short",
+                    "noValue": "0",
+                    "color": {
+                      "mode": "fixed",
+                      "fixedColor": "orange"
+                    }
+                  },
+                  "overrides": []
+                },
                 "options": {
-                  "source": "labels",
-                  "format": "json",
-                  "replace": true,
-                  "keepTime": true
-                }
+                  "reduceOptions": {
+                    "calcs": [
+                      "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                  },
+                  "colorMode": "value",
+                  "graphMode": "none",
+                  "textMode": "value"
+                },
+                "id": 27,
+                "gridPos": {
+                  "x": 18,
+                  "y": 72,
+                  "w": 6,
+                  "h": 4
+                },
+                "description": "Connexions refusées à l'interface ou à l'API Proxmox."
               },
               {
-                "id": "organize",
+                "type": "timeseries",
+                "title": "Tâches lancées par type",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "targets": [
+                  {
+                    "refId": "A",
+                    "datasource": {
+                      "type": "victoriametrics-logs-datasource",
+                      "uid": "victorialogs"
+                    },
+                    "editorMode": "code",
+                    "expr": "{log_stream=\"proxmox\"} pve_task_event:=start | stats by (pve_task_type) count() as n",
+                    "queryType": "statsRange",
+                    "step": "5m",
+                    "legendFormat": "{{pve_task_type}}"
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "short",
+                    "custom": {
+                      "drawStyle": "bars",
+                      "fillOpacity": 80,
+                      "lineWidth": 1,
+                      "showPoints": "never",
+                      "stacking": {
+                        "mode": "normal",
+                        "group": "A"
+                      }
+                    }
+                  },
+                  "overrides": []
+                },
                 "options": {
-                  "indexByName": {
-                    "Time": 0,
-                    "pve_level": 1,
-                    "pve_component": 2,
-                    "_msg": 3
+                  "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
                   },
-                  "renameByName": {
-                    "Time": "heure",
-                    "pve_level": "niveau",
-                    "pve_component": "composant",
-                    "_msg": "message"
-                  },
-                  "excludeByName": {}
-                }
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "custom": {
-                  "filterable": true
-                }
+                  "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                  }
+                },
+                "id": 28,
+                "gridPos": {
+                  "x": 0,
+                  "y": 76,
+                  "w": 12,
+                  "h": 8
+                },
+                "description": "Tâches Proxmox lancées, par type."
               },
-              "overrides": []
-            },
-            "options": {
-              "showHeader": true,
-              "cellHeight": "sm"
-            },
-            "id": 34,
-            "gridPos": {
-              "x": 0,
-              "y": 100,
-              "w": 24,
-              "h": 10
-            }
+              {
+                "type": "timeseries",
+                "title": "Logs par niveau",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "targets": [
+                  {
+                    "refId": "A",
+                    "datasource": {
+                      "type": "victoriametrics-logs-datasource",
+                      "uid": "victorialogs"
+                    },
+                    "editorMode": "code",
+                    "expr": "{log_stream=\"proxmox\"} | stats by (pve_level) count() as n",
+                    "queryType": "statsRange",
+                    "step": "5m",
+                    "legendFormat": "{{pve_level}}"
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "short",
+                    "custom": {
+                      "drawStyle": "bars",
+                      "fillOpacity": 80,
+                      "lineWidth": 1,
+                      "showPoints": "never",
+                      "stacking": {
+                        "mode": "normal",
+                        "group": "A"
+                      }
+                    }
+                  },
+                  "overrides": []
+                },
+                "options": {
+                  "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                  },
+                  "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                  }
+                },
+                "id": 29,
+                "gridPos": {
+                  "x": 12,
+                  "y": 76,
+                  "w": 12,
+                  "h": 8
+                },
+                "description": "Lignes du journal Proxmox par niveau."
+              },
+              {
+                "type": "timeseries",
+                "title": "Durée de sauvegarde par invité (s)",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "targets": [
+                  {
+                    "refId": "A",
+                    "datasource": {
+                      "type": "victoriametrics-logs-datasource",
+                      "uid": "victorialogs"
+                    },
+                    "editorMode": "code",
+                    "expr": "{log_stream=\"proxmox\"} pve_backup_event:=vm_ok | stats by (pve_vmid) max(pve_duration_s) as duree",
+                    "queryType": "statsRange",
+                    "step": "5m",
+                    "legendFormat": "{{pve_vmid}}"
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "s",
+                    "custom": {
+                      "drawStyle": "line",
+                      "fillOpacity": 10,
+                      "lineWidth": 1,
+                      "showPoints": "never",
+                      "stacking": {
+                        "mode": "none",
+                        "group": "A"
+                      }
+                    }
+                  },
+                  "overrides": []
+                },
+                "options": {
+                  "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                  },
+                  "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                  }
+                },
+                "id": 30,
+                "gridPos": {
+                  "x": 0,
+                  "y": 84,
+                  "w": 12,
+                  "h": 8
+                },
+                "description": "Durée des sauvegardes réussies, par invité. Une durée qui s'allonge signale un invité qui grossit ou un stockage de sauvegarde lent."
+              },
+              {
+                "type": "table",
+                "title": "Dernières sauvegardes",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "targets": [
+                  {
+                    "refId": "A",
+                    "datasource": {
+                      "type": "victoriametrics-logs-datasource",
+                      "uid": "victorialogs"
+                    },
+                    "editorMode": "code",
+                    "expr": "{log_stream=\"proxmox\"} pve_kind:=backup | fields _time, pve_backup_event, pve_vmid, pve_duration_s, _msg | sort by (_time desc) | limit 100",
+                    "queryType": "instant"
+                  }
+                ],
+                "transformations": [
+                  {
+                    "id": "extractFields",
+                    "options": {
+                      "source": "labels",
+                      "format": "json",
+                      "replace": true,
+                      "keepTime": true
+                    }
+                  },
+                  {
+                    "id": "convertFieldType",
+                    "options": {
+                      "conversions": [
+                        {
+                          "targetField": "pve_duration_s",
+                          "destinationType": "number"
+                        }
+                      ],
+                      "fields": {}
+                    }
+                  },
+                  {
+                    "id": "organize",
+                    "options": {
+                      "indexByName": {
+                        "Time": 0,
+                        "pve_backup_event": 1,
+                        "pve_vmid": 2,
+                        "pve_duration_s": 3,
+                        "_msg": 4
+                      },
+                      "renameByName": {
+                        "Time": "heure",
+                        "pve_backup_event": "événement",
+                        "pve_vmid": "vmid",
+                        "pve_duration_s": "durée (s)",
+                        "_msg": "message"
+                      },
+                      "excludeByName": {}
+                    }
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "custom": {
+                      "filterable": true
+                    }
+                  },
+                  "overrides": []
+                },
+                "options": {
+                  "showHeader": true,
+                  "cellHeight": "sm"
+                },
+                "id": 31,
+                "gridPos": {
+                  "x": 12,
+                  "y": 84,
+                  "w": 12,
+                  "h": 8
+                },
+                "description": "Derniers événements de sauvegarde, avec l'invité, la durée et le message."
+              },
+              {
+                "type": "table",
+                "title": "Tâches en échec",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "targets": [
+                  {
+                    "refId": "A",
+                    "datasource": {
+                      "type": "victoriametrics-logs-datasource",
+                      "uid": "victorialogs"
+                    },
+                    "editorMode": "code",
+                    "expr": "{log_stream=\"proxmox\"} pve_task_failed:=true | fields _time, pve_component, pve_task_type, pve_vmid, pve_user, pve_task_status | sort by (_time desc) | limit 100",
+                    "queryType": "instant"
+                  }
+                ],
+                "transformations": [
+                  {
+                    "id": "extractFields",
+                    "options": {
+                      "source": "labels",
+                      "format": "json",
+                      "replace": true,
+                      "keepTime": true
+                    }
+                  },
+                  {
+                    "id": "organize",
+                    "options": {
+                      "indexByName": {
+                        "Time": 0,
+                        "pve_component": 1,
+                        "pve_task_type": 2,
+                        "pve_vmid": 3,
+                        "pve_user": 4,
+                        "pve_task_status": 5
+                      },
+                      "renameByName": {
+                        "Time": "heure",
+                        "pve_component": "composant",
+                        "pve_task_type": "type",
+                        "pve_vmid": "id",
+                        "pve_user": "utilisateur",
+                        "pve_task_status": "statut"
+                      },
+                      "excludeByName": {}
+                    }
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "custom": {
+                      "filterable": true
+                    }
+                  },
+                  "overrides": []
+                },
+                "options": {
+                  "showHeader": true,
+                  "cellHeight": "sm"
+                },
+                "id": 32,
+                "gridPos": {
+                  "x": 0,
+                  "y": 92,
+                  "w": 12,
+                  "h": 8
+                },
+                "description": "Dernières tâches en erreur, avec le type, l'invité et l'utilisateur."
+              },
+              {
+                "type": "table",
+                "title": "Authentifications",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "targets": [
+                  {
+                    "refId": "A",
+                    "datasource": {
+                      "type": "victoriametrics-logs-datasource",
+                      "uid": "victorialogs"
+                    },
+                    "editorMode": "code",
+                    "expr": "{log_stream=\"proxmox\"} pve_kind:=auth | fields _time, pve_auth_result, pve_user, pve_client_ip, pve_component | sort by (_time desc) | limit 100",
+                    "queryType": "instant"
+                  }
+                ],
+                "transformations": [
+                  {
+                    "id": "extractFields",
+                    "options": {
+                      "source": "labels",
+                      "format": "json",
+                      "replace": true,
+                      "keepTime": true
+                    }
+                  },
+                  {
+                    "id": "organize",
+                    "options": {
+                      "indexByName": {
+                        "Time": 0,
+                        "pve_auth_result": 1,
+                        "pve_user": 2,
+                        "pve_client_ip": 3,
+                        "pve_component": 4
+                      },
+                      "renameByName": {
+                        "Time": "heure",
+                        "pve_auth_result": "résultat",
+                        "pve_user": "utilisateur",
+                        "pve_client_ip": "ip",
+                        "pve_component": "composant"
+                      },
+                      "excludeByName": {}
+                    }
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "custom": {
+                      "filterable": true
+                    }
+                  },
+                  "overrides": []
+                },
+                "options": {
+                  "showHeader": true,
+                  "cellHeight": "sm"
+                },
+                "id": 33,
+                "gridPos": {
+                  "x": 12,
+                  "y": 92,
+                  "w": 12,
+                  "h": 8
+                },
+                "description": "Dernières authentifications, réussies ou non, avec l'utilisateur et l'IP cliente."
+              },
+              {
+                "type": "table",
+                "title": "Avertissements et erreurs",
+                "datasource": {
+                  "type": "victoriametrics-logs-datasource",
+                  "uid": "victorialogs"
+                },
+                "targets": [
+                  {
+                    "refId": "A",
+                    "datasource": {
+                      "type": "victoriametrics-logs-datasource",
+                      "uid": "victorialogs"
+                    },
+                    "editorMode": "code",
+                    "expr": "{log_stream=\"proxmox\"} pve_level:in(warning,error,critical) | fields _time, pve_level, pve_component, _msg | sort by (_time desc) | limit 200",
+                    "queryType": "instant"
+                  }
+                ],
+                "transformations": [
+                  {
+                    "id": "extractFields",
+                    "options": {
+                      "source": "labels",
+                      "format": "json",
+                      "replace": true,
+                      "keepTime": true
+                    }
+                  },
+                  {
+                    "id": "organize",
+                    "options": {
+                      "indexByName": {
+                        "Time": 0,
+                        "pve_level": 1,
+                        "pve_component": 2,
+                        "_msg": 3
+                      },
+                      "renameByName": {
+                        "Time": "heure",
+                        "pve_level": "niveau",
+                        "pve_component": "composant",
+                        "_msg": "message"
+                      },
+                      "excludeByName": {}
+                    }
+                  }
+                ],
+                "fieldConfig": {
+                  "defaults": {
+                    "custom": {
+                      "filterable": true
+                    }
+                  },
+                  "overrides": []
+                },
+                "options": {
+                  "showHeader": true,
+                  "cellHeight": "sm"
+                },
+                "id": 34,
+                "gridPos": {
+                  "x": 0,
+                  "y": 100,
+                  "w": 24,
+                  "h": 10
+                },
+                "description": "Derniers avertissements et erreurs du journal Proxmox."
+              }
+            ]
           }
         ]
       }
@@ -5369,7 +5438,36 @@ configs:
           }
         ],
         "templating": {
-          "list": []
+          "list": [
+            {
+              "name": "device",
+              "label": "Équipement",
+              "type": "query",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "victoriametrics"
+              },
+              "definition": "label_values(unpoller_device_info, name)",
+              "query": {
+                "qryType": 1,
+                "query": "label_values(unpoller_device_info, name)",
+                "refId": "device"
+              },
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".*",
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            }
+          ]
         },
         "annotations": {
           "list": []
@@ -5437,7 +5535,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "État de la collecte par unpoller : 1 si le contrôleur UniFi répond. À 0, tout le dashboard est figé."
           },
           {
             "type": "stat",
@@ -5488,7 +5587,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Équipements UniFi connus du contrôleur (passerelle, switchs, points d'accès)."
           },
           {
             "type": "stat",
@@ -5539,7 +5639,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Équipements adoptés mais injoignables par le contrôleur. Zéro attendu."
           },
           {
             "type": "stat",
@@ -5590,7 +5691,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Clients filaires et Wi-Fi connectés au réseau."
           },
           {
             "type": "stat",
@@ -5641,7 +5743,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Équipements pour lesquels une mise à jour du firmware est proposée."
           },
           {
             "type": "stat",
@@ -5693,7 +5796,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Latence vers Internet mesurée par le contrôleur UniFi (sous-système www)."
           },
           {
             "id": 8,
@@ -5723,7 +5827,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "unpoller_device_cpu_utilization_ratio",
+                "expr": "unpoller_device_cpu_utilization_ratio{name=~\"$$device\"}",
                 "legendFormat": "{{name}}",
                 "range": true
               }
@@ -5761,7 +5865,8 @@ configs:
               "y": 6,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Utilisation CPU de chaque équipement choisi."
           },
           {
             "type": "timeseries",
@@ -5778,7 +5883,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "unpoller_device_memory_utilization_ratio",
+                "expr": "unpoller_device_memory_utilization_ratio{name=~\"$$device\"}",
                 "legendFormat": "{{name}}",
                 "range": true
               }
@@ -5816,7 +5921,8 @@ configs:
               "y": 6,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Utilisation mémoire de chaque équipement choisi."
           },
           {
             "type": "timeseries",
@@ -5833,7 +5939,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "unpoller_device_temperature_celsius",
+                "expr": "unpoller_device_temperature_celsius{name=~\"$$device\"}",
                 "legendFormat": "{{name}} {{temp_area}}",
                 "range": true
               }
@@ -5871,7 +5977,8 @@ configs:
               "y": 14,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Température des équipements qui l'exposent (passerelle, certains switchs)."
           },
           {
             "type": "timeseries",
@@ -5888,7 +5995,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (name) (unpoller_device_stations)",
+                "expr": "sum by (name) (unpoller_device_stations{name=~\"$$device\"})",
                 "legendFormat": "{{name}}",
                 "range": true
               }
@@ -5926,7 +6033,8 @@ configs:
               "y": 14,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Clients rattachés à chaque équipement. Un point d'accès qui se vide d'un coup a redémarré ou perdu son lien."
           },
           {
             "id": 13,
@@ -6005,7 +6113,8 @@ configs:
               "y": 23,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Débit de l'interface WAN de la passerelle, reçu et émis."
           },
           {
             "type": "timeseries",
@@ -6022,7 +6131,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "rate(unpoller_device_bytes_total[$$__rate_interval])",
+                "expr": "rate(unpoller_device_bytes_total{name=~\"$$device\"}[$$__rate_interval])",
                 "legendFormat": "{{name}}",
                 "range": true
               }
@@ -6060,7 +6169,8 @@ configs:
               "y": 23,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Débit total de chaque équipement choisi."
           },
           {
             "type": "timeseries",
@@ -6113,7 +6223,64 @@ configs:
             "gridPos": {
               "x": 0,
               "y": 31,
-              "w": 24,
+              "w": 12,
+              "h": 8
+            },
+            "description": "Les 10 clients au plus fort débit, reçu et émis cumulés."
+          },
+          {
+            "type": "timeseries",
+            "title": "Latence Internet",
+            "description": "Latence vers Internet mesurée par le contrôleur UniFi (sous-système www). Une hausse durable sans hausse du débit WAN pointe vers le FAI.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(unpoller_site_latency_seconds{subsystem=\"www\"})",
+                "legendFormat": "latence",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 17,
+            "gridPos": {
+              "x": 12,
+              "y": 31,
+              "w": 12,
               "h": 8
             }
           }
@@ -6228,7 +6395,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "État de la collecte SNMP du NAS : 1 si le NAS répond. À 0, tout le dashboard est figé."
           },
           {
             "type": "stat",
@@ -6279,7 +6447,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Composants dont l'état n'est pas normal : système, alimentation, ventilateurs. Zéro attendu."
           },
           {
             "type": "stat",
@@ -6330,7 +6499,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Disques dont l'état ou la santé n'est pas normal, chaque disque compté une fois."
           },
           {
             "type": "stat",
@@ -6381,7 +6551,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Pools et volumes qui ne sont pas normaux : dégradés, en panne ou en maintenance (reconstruction, scrub...)."
           },
           {
             "type": "stat",
@@ -6432,7 +6603,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Température système du NAS."
           },
           {
             "type": "stat",
@@ -6483,7 +6655,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Temps écoulé depuis le dernier démarrage du NAS."
           },
           {
             "id": 8,
@@ -6551,7 +6724,8 @@ configs:
               "y": 6,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Utilisation CPU du NAS."
           },
           {
             "type": "timeseries",
@@ -6606,7 +6780,8 @@ configs:
               "y": 6,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Utilisation mémoire du NAS."
           },
           {
             "type": "timeseries",
@@ -6661,7 +6836,8 @@ configs:
               "y": 14,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Part occupée de chaque volume."
           },
           {
             "type": "timeseries",
@@ -6716,7 +6892,8 @@ configs:
               "y": 14,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Température de chaque disque. L'alerte se déclenche au-dessus de 55 °C."
           },
           {
             "id": 13,
@@ -6795,7 +6972,8 @@ configs:
               "y": 23,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Débit des interfaces physiques et du bond, reçu et émis."
           },
           {
             "type": "timeseries",
@@ -6861,7 +7039,8 @@ configs:
               "y": 23,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Lectures et écritures de chaque disque."
           },
           {
             "type": "timeseries",
@@ -7016,7 +7195,8 @@ configs:
               "y": 39,
               "w": 24,
               "h": 8
-            }
+            },
+            "description": "Charge de la batterie de l'onduleur et charge électrique qu'il supporte."
           }
         ]
       }
@@ -8107,7 +8287,8 @@ configs:
               "y": 1,
               "w": 8,
               "h": 4
-            }
+            },
+            "description": "Lignes de log reçues pour les flux et hôtes choisis."
           },
           {
             "type": "stat",
@@ -8157,7 +8338,8 @@ configs:
               "y": 1,
               "w": 8,
               "h": 4
-            }
+            },
+            "description": "Lignes de niveau error ou crit, quand le niveau a pu être extrait."
           },
           {
             "type": "stat",
@@ -8207,7 +8389,8 @@ configs:
               "y": 1,
               "w": 8,
               "h": 4
-            }
+            },
+            "description": "Hôtes ayant envoyé au moins une ligne de log sur la période."
           },
           {
             "type": "timeseries",
@@ -8263,7 +8446,8 @@ configs:
               "y": 5,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Lignes de log par flux (docker, journald, proxmox, traefik...). Un flux qui tombe à zéro signale une collecte arrêtée."
           },
           {
             "type": "timeseries",
@@ -8319,7 +8503,8 @@ configs:
               "y": 5,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Lignes de log par hôte. Un hôte qui disparaît n'envoie plus rien : agent arrêté ou hôte éteint."
           },
           {
             "type": "timeseries",
@@ -8375,7 +8560,8 @@ configs:
               "y": 13,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Lignes error ou crit par hôte."
           },
           {
             "type": "table",
@@ -8453,7 +8639,8 @@ configs:
               "y": 13,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Erreurs regroupées par hôte et flux, pour savoir où chercher."
           },
           {
             "type": "row",
@@ -8522,7 +8709,8 @@ configs:
               "y": 22,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Lignes de log Docker par conteneur, tous projets confondus."
           },
           {
             "type": "table",
@@ -8602,7 +8790,8 @@ configs:
               "y": 22,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Erreurs Docker par hôte et conteneur."
           },
           {
             "type": "row",
@@ -8652,7 +8841,8 @@ configs:
               "y": 31,
               "w": 24,
               "h": 14
-            }
+            },
+            "description": "Les 200 dernières lignes, filtres appliqués."
           }
         ]
       }
@@ -8856,7 +9046,8 @@ configs:
               "y": 1,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Lignes de log émises par les conteneurs choisis sur la période."
           },
           {
             "type": "stat",
@@ -8906,7 +9097,8 @@ configs:
               "y": 1,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Lignes de log de niveau error ou crit, quand le niveau a pu être extrait du message."
           },
           {
             "type": "stat",
@@ -8956,7 +9148,8 @@ configs:
               "y": 1,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Conteneurs ayant émis au moins une ligne de log sur la période."
           },
           {
             "type": "stat",
@@ -9007,7 +9200,8 @@ configs:
               "y": 1,
               "w": 6,
               "h": 4
-            }
+            },
+            "description": "Part des lignes écrites sur stderr. Beaucoup d'applications y écrivent tous leurs logs : c'est un indice, pas une erreur."
           },
           {
             "type": "row",
@@ -9076,7 +9270,8 @@ configs:
               "y": 6,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Lignes de log par conteneur. Un conteneur qui devient très bavard est souvent en boucle d'erreur ou de redémarrage."
           },
           {
             "type": "timeseries",
@@ -9132,7 +9327,8 @@ configs:
               "y": 6,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Lignes error ou crit par conteneur."
           },
           {
             "type": "timeseries",
@@ -9188,7 +9384,8 @@ configs:
               "y": 14,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Lignes écrites sur stdout et sur stderr au fil du temps."
           },
           {
             "type": "timeseries",
@@ -9244,7 +9441,8 @@ configs:
               "y": 14,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Lignes de log par niveau extrait. Les lignes sans niveau reconnaissable n'apparaissent pas."
           },
           {
             "type": "row",
@@ -9337,7 +9535,8 @@ configs:
               "y": 23,
               "w": 16,
               "h": 10
-            }
+            },
+            "description": "Messages d'erreur les plus fréquents. Un même message répété en masse désigne la panne à traiter en premier."
           },
           {
             "type": "table",
@@ -9417,7 +9616,8 @@ configs:
               "y": 23,
               "w": 8,
               "h": 10
-            }
+            },
+            "description": "Nombre d'erreurs par conteneur sur la période."
           },
           {
             "type": "row",
@@ -9510,7 +9710,8 @@ configs:
               "y": 34,
               "w": 24,
               "h": 8
-            }
+            },
+            "description": "Conteneurs qui ont logué sur la période mais plus depuis une heure : arrêtés, bloqués ou simplement silencieux."
           },
           {
             "type": "row",
@@ -9560,7 +9761,8 @@ configs:
               "y": 43,
               "w": 24,
               "h": 14
-            }
+            },
+            "description": "Les 200 dernières lignes de log des conteneurs choisis."
           }
         ]
       }
@@ -9737,7 +9939,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Requêtes DNS journalisées par les serveurs AdGuard Home, filtres du dashboard appliqués."
           },
           {
             "type": "stat",
@@ -9787,7 +9990,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Requêtes bloquées par une liste de filtrage, une règle personnalisée, le contrôle parental ou la navigation sécurisée."
           },
           {
             "type": "stat",
@@ -9838,7 +10042,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Part des requêtes bloquées. Une hausse soudaine vient souvent d'un appareil qui interroge en boucle un domaine bloqué (télémétrie, publicité)."
           },
           {
             "type": "stat",
@@ -9889,7 +10094,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Part des requêtes servies depuis le cache d'AdGuard, sans interroger un résolveur amont. Plus elle est haute, plus les réponses sont rapides."
           },
           {
             "type": "stat",
@@ -9939,7 +10145,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Nombre d'adresses IP clientes différentes ayant fait au moins une requête."
           },
           {
             "type": "stat",
@@ -9990,7 +10197,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "95e centile du temps de réponse des requêtes résolues par un serveur amont. Les réponses du cache et les requêtes bloquées sont exclues, car quasi instantanées : elles masqueraient la lenteur des résolveurs."
           },
           {
             "type": "row",
@@ -10059,7 +10267,8 @@ configs:
               "y": 6,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Requêtes par serveur AdGuard. Un serveur qui tombe à zéro alors que l'autre monte signale une bascule des clients."
           },
           {
             "type": "timeseries",
@@ -10115,7 +10324,8 @@ configs:
               "y": 6,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Requêtes par type d'enregistrement (A, AAAA, HTTPS, PTR...). Un afflux de PTR ou de TXT mérite d'identifier le client à l'origine."
           },
           {
             "type": "timeseries",
@@ -10207,7 +10417,8 @@ configs:
               "y": 14,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Requêtes par sort : bloquées, réécrites, autorisées par une règle explicite ou traitées normalement."
           },
           {
             "type": "timeseries",
@@ -10275,7 +10486,8 @@ configs:
               "y": 14,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Requêtes servies depuis le cache et requêtes résolues en amont. La part amont donne la charge réelle envoyée aux résolveurs."
           },
           {
             "type": "row",
@@ -10344,7 +10556,8 @@ configs:
               "y": 23,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "95e centile du temps de réponse hors cache, par serveur AdGuard. Comparer les serveurs aide à distinguer un problème de résolveur d'un problème local."
           },
           {
             "type": "timeseries",
@@ -10400,7 +10613,8 @@ configs:
               "y": 23,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Requêtes hors cache par résolveur amont. Un résolveur qui disparaît du graphe ne répond plus ou a été retiré de la configuration."
           },
           {
             "type": "row",
@@ -10469,7 +10683,8 @@ configs:
               "y": 32,
               "w": 12,
               "h": 9
-            }
+            },
+            "description": "Requêtes par IP cliente au fil du temps. Un client qui s'envole est souvent un appareil en boucle."
           },
           {
             "type": "table",
@@ -10635,7 +10850,8 @@ configs:
               "y": 32,
               "w": 12,
               "h": 9
-            }
+            },
+            "description": "Clients classés par nombre de requêtes. Le nom et la MAC viennent d'UniFi quand l'IP y est connue."
           },
           {
             "type": "row",
@@ -10730,7 +10946,8 @@ configs:
               "y": 42,
               "w": 12,
               "h": 10
-            }
+            },
+            "description": "Domaines les plus demandés sur la période."
           },
           {
             "type": "table",
@@ -10812,7 +11029,8 @@ configs:
               "y": 42,
               "w": 12,
               "h": 10
-            }
+            },
+            "description": "Domaines les plus bloqués. Un domaine légitime dans cette liste explique souvent un service qui ne fonctionne plus : à autoriser dans AdGuard."
           },
           {
             "type": "table",
@@ -10900,7 +11118,8 @@ configs:
               "y": 52,
               "w": 12,
               "h": 10
-            }
+            },
+            "description": "Domaines au temps de réponse amont le plus élevé, hors cache, avec au moins 3 requêtes pour écarter les cas isolés."
           },
           {
             "type": "table",
@@ -11060,7 +11279,8 @@ configs:
               "y": 52,
               "w": 12,
               "h": 10
-            }
+            },
+            "description": "Clients dont le plus de requêtes sont bloquées. Le nom et la MAC viennent d'UniFi quand l'IP y est connue."
           },
           {
             "type": "row",
@@ -11110,7 +11330,8 @@ configs:
               "y": 63,
               "w": 24,
               "h": 14
-            }
+            },
+            "description": "Les 200 dernières requêtes : serveur, client, type, domaine et résultat."
           }
         ]
       }
@@ -12908,7 +13129,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Requêtes servies par Traefik sur la période. Les routeurs d'ingestion (_ingest@), qui reçoivent les logs et métriques de la stack, sont exclus pour ne pas noyer le trafic utilisateur."
           },
           {
             "type": "stat",
@@ -12959,7 +13181,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Part des réponses 4xx (requête refusée ou introuvable). Souvent des robots qui sondent des chemins connus, ou une authentification refusée."
           },
           {
             "type": "stat",
@@ -13010,7 +13233,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Part des réponses 5xx : le service derrière Traefik a échoué ou ne répond pas. Toute valeur durable est à examiner."
           },
           {
             "type": "stat",
@@ -13061,7 +13285,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "95e centile de la durée des requêtes, mesurée par Traefik de bout en bout. Les WebSocket et les téléchargements longs la gonflent."
           },
           {
             "type": "stat",
@@ -13111,7 +13336,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Octets envoyés aux clients sur la période."
           },
           {
             "type": "stat",
@@ -13161,7 +13387,8 @@ configs:
               "y": 1,
               "w": 4,
               "h": 4
-            }
+            },
+            "description": "Nombre d'adresses IP clientes différentes."
           },
           {
             "type": "row",
@@ -13230,7 +13457,8 @@ configs:
               "y": 6,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Requêtes par service Traefik au fil du temps."
           },
           {
             "type": "timeseries",
@@ -13286,7 +13514,8 @@ configs:
               "y": 6,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Réponses par classe de statut. 0xx : connexion WebSocket ou client parti avant la réponse, sans erreur côté serveur."
           },
           {
             "type": "timeseries",
@@ -13342,7 +13571,8 @@ configs:
               "y": 14,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "95e centile de la durée des requêtes, par service. Un service dont la courbe monte seul pointe vers ce service plutôt que vers Traefik."
           },
           {
             "type": "timeseries",
@@ -13398,7 +13628,8 @@ configs:
               "y": 14,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Réponses 5xx par service."
           },
           {
             "type": "row",
@@ -13511,7 +13742,8 @@ configs:
               "y": 23,
               "w": 12,
               "h": 10
-            }
+            },
+            "description": "Par nom d'hôte demandé : volume, erreurs et latence."
           },
           {
             "type": "table",
@@ -13591,7 +13823,8 @@ configs:
               "y": 23,
               "w": 12,
               "h": 10
-            }
+            },
+            "description": "Chemins qui répondent le plus souvent en 4xx ou 5xx."
           },
           {
             "type": "table",
@@ -13757,7 +13990,8 @@ configs:
               "y": 33,
               "w": 12,
               "h": 10
-            }
+            },
+            "description": "Clients classés par nombre de requêtes. Le nom et la MAC viennent d'UniFi quand l'IP y est connue."
           },
           {
             "type": "table",
@@ -13847,7 +14081,8 @@ configs:
               "y": 33,
               "w": 12,
               "h": 10
-            }
+            },
+            "description": "Chemins à la latence la plus élevée, avec au moins 3 requêtes pour écarter les cas isolés."
           },
           {
             "type": "table",
@@ -13941,7 +14176,8 @@ configs:
               "y": 43,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Par service Traefik : volume, taux d'erreur et latence."
           },
           {
             "type": "table",
@@ -14019,7 +14255,8 @@ configs:
               "y": 43,
               "w": 12,
               "h": 8
-            }
+            },
+            "description": "Répartition des versions TLS et des protocoles HTTP. Du TLS 1.0 ou 1.1 désigne un client obsolète."
           },
           {
             "type": "row",
@@ -14069,7 +14306,8 @@ configs:
               "y": 52,
               "w": 24,
               "h": 14
-            }
+            },
+            "description": "Dernières réponses 4xx et 5xx, avec l'hôte, le chemin et le client."
           }
         ]
       }
@@ -15000,7 +15238,36 @@ configs:
           }
         ],
         "templating": {
-          "list": []
+          "list": [
+            {
+              "name": "host_name",
+              "label": "Hôte",
+              "type": "query",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "victoriametrics"
+              },
+              "definition": "label_values({__name__=~\"system_disk_io_bytes_total|smartctl_device\"}, host_name)",
+              "query": {
+                "qryType": 1,
+                "query": "label_values({__name__=~\"system_disk_io_bytes_total|smartctl_device\"}, host_name)",
+                "refId": "host_name"
+              },
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".*",
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            }
+          ]
         },
         "annotations": {
           "list": []
@@ -17048,7 +17315,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (rate(system_disk_io_time_seconds_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[$$__rate_interval]))",
+                "expr": "max by (host_name, device) (rate(system_disk_io_time_seconds_total{host_name=~\"$$host_name\", device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} {{device}}",
                 "range": true
               }
@@ -17121,7 +17388,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (host_name, device) (rate(system_disk_io_bytes_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\", direction=\"read\"}[$$__rate_interval]))",
+                "expr": "sum by (host_name, device) (rate(system_disk_io_bytes_total{host_name=~\"$$host_name\", device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\", direction=\"read\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} {{device}} lecture",
                 "range": true
               },
@@ -17132,7 +17399,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "-sum by (host_name, device) (rate(system_disk_io_bytes_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\", direction=\"write\"}[$$__rate_interval]))",
+                "expr": "-sum by (host_name, device) (rate(system_disk_io_bytes_total{host_name=~\"$$host_name\", device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\", direction=\"write\"}[$$__rate_interval]))",
                 "legendFormat": "{{host_name}} {{device}} écriture",
                 "range": true
               }
@@ -17188,7 +17455,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "sum by (host_name, device) (rate(system_disk_operation_time_seconds_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[$$__rate_interval])) / sum by (host_name, device) (rate(system_disk_operations_total{device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[$$__rate_interval]) > 0)",
+                "expr": "sum by (host_name, device) (rate(system_disk_operation_time_seconds_total{host_name=~\"$$host_name\", device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[$$__rate_interval])) / sum by (host_name, device) (rate(system_disk_operations_total{host_name=~\"$$host_name\", device=~\"sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+\"}[$$__rate_interval]) > 0)",
                 "legendFormat": "{{host_name}} {{device}}",
                 "range": true
               }
@@ -17258,7 +17525,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device, model_name, protocol) (smartctl_device_capacity_bytes * on(host_name, device) group_left(model_name, protocol) smartctl_device)",
+                "expr": "max by (host_name, device, model_name, protocol) (smartctl_device_capacity_bytes{host_name=~\"$$host_name\"} * on(host_name, device) group_left(model_name, protocol) smartctl_device{host_name=~\"$$host_name\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17271,7 +17538,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_smart_status)",
+                "expr": "max by (host_name, device) (smartctl_device_smart_status{host_name=~\"$$host_name\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17284,7 +17551,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_temperature{temperature_type=\"current\"})",
+                "expr": "max by (host_name, device) (smartctl_device_temperature{host_name=~\"$$host_name\", temperature_type=\"current\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17297,7 +17564,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_power_on_seconds_total)",
+                "expr": "max by (host_name, device) (smartctl_device_power_on_seconds_total{host_name=~\"$$host_name\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17310,7 +17577,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_power_cycle_count_total)",
+                "expr": "max by (host_name, device) (smartctl_device_power_cycle_count_total{host_name=~\"$$host_name\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17323,7 +17590,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"raw\", attribute_name=~\"Reallocated_Sector_Ct\"})",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{host_name=~\"$$host_name\", attribute_value_type=\"raw\", attribute_name=~\"Reallocated_Sector_Ct\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17336,7 +17603,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"raw\", attribute_name=~\"Current_Pending_Sector|Current_Pending_ECC_Cnt\"})",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{host_name=~\"$$host_name\", attribute_value_type=\"raw\", attribute_name=~\"Current_Pending_Sector|Current_Pending_ECC_Cnt\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17349,7 +17616,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"raw\", attribute_name=~\"Offline_Uncorrectable\"})",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{host_name=~\"$$host_name\", attribute_value_type=\"raw\", attribute_name=~\"Offline_Uncorrectable\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17362,7 +17629,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"raw\", attribute_name=~\"UDMA_CRC_Error_Count|CRC_Error_Count\"})",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{host_name=~\"$$host_name\", attribute_value_type=\"raw\", attribute_name=~\"UDMA_CRC_Error_Count|CRC_Error_Count\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17375,7 +17642,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_error_log_count{error_log_type=\"summary\"})",
+                "expr": "max by (host_name, device) (smartctl_device_error_log_count{host_name=~\"$$host_name\", error_log_type=\"summary\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17388,7 +17655,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"value\", attribute_name=~\"Percent_Lifetime_Remain|Wear_Leveling_Count|Media_Wearout_Indicator|SSD_Life_Left\"}) or max by (host_name, device) (100 - smartctl_device_percentage_used)",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{host_name=~\"$$host_name\", attribute_value_type=\"value\", attribute_name=~\"Percent_Lifetime_Remain|Wear_Leveling_Count|Media_Wearout_Indicator|SSD_Life_Left\"}) or max by (host_name, device) (100 - smartctl_device_percentage_used{host_name=~\"$$host_name\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false,
@@ -17826,7 +18093,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "smartctl_device_temperature{temperature_type=\"current\"}",
+                "expr": "smartctl_device_temperature{host_name=~\"$$host_name\", temperature_type=\"current\"}",
                 "legendFormat": "{{host_name}} {{device}}",
                 "range": true
               }
@@ -17898,7 +18165,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device, attribute_name) (smartctl_device_attribute{attribute_value_type=\"raw\", attribute_name=~\"Reallocated_Sector_Ct|Current_Pending_Sector|Current_Pending_ECC_Cnt|Offline_Uncorrectable\"})",
+                "expr": "max by (host_name, device, attribute_name) (smartctl_device_attribute{host_name=~\"$$host_name\", attribute_value_type=\"raw\", attribute_name=~\"Reallocated_Sector_Ct|Current_Pending_Sector|Current_Pending_ECC_Cnt|Offline_Uncorrectable\"})",
                 "legendFormat": "{{host_name}} {{device}} {{attribute_name}}",
                 "range": true
               }
@@ -17955,7 +18222,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_attribute{attribute_value_type=\"value\", attribute_name=~\"Percent_Lifetime_Remain|Wear_Leveling_Count|Media_Wearout_Indicator|SSD_Life_Left\"}) or max by (host_name, device) (100 - smartctl_device_percentage_used)",
+                "expr": "max by (host_name, device) (smartctl_device_attribute{host_name=~\"$$host_name\", attribute_value_type=\"value\", attribute_name=~\"Percent_Lifetime_Remain|Wear_Leveling_Count|Media_Wearout_Indicator|SSD_Life_Left\"}) or max by (host_name, device) (100 - smartctl_device_percentage_used{host_name=~\"$$host_name\"})",
                 "legendFormat": "{{host_name}} {{device}}",
                 "range": true
               }
@@ -18028,7 +18295,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max by (host_name, device) (smartctl_device_error_log_count{error_log_type=\"summary\"})",
+                "expr": "max by (host_name, device) (smartctl_device_error_log_count{host_name=~\"$$host_name\", error_log_type=\"summary\"})",
                 "legendFormat": "{{host_name}} {{device}}",
                 "range": true
               }
@@ -23789,197 +24056,7 @@ configs:
             "gridPos": {
               "x": 0,
               "y": 21,
-              "w": 12,
-              "h": 8
-            }
-          },
-          {
-            "type": "timeseries",
-            "title": "Latence du site",
-            "description": "Latence mesurée par le contrôleur UniFi vers Internet.",
-            "datasource": {
-              "type": "prometheus",
-              "uid": "victoriametrics"
-            },
-            "targets": [
-              {
-                "refId": "A",
-                "datasource": {
-                  "type": "prometheus",
-                  "uid": "victoriametrics"
-                },
-                "editorMode": "code",
-                "expr": "max(unpoller_site_latency_seconds{job=\"unpoller\", subsystem=\"www\"})",
-                "legendFormat": "latence",
-                "range": true
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "unit": "s",
-                "custom": {
-                  "drawStyle": "line",
-                  "fillOpacity": 10,
-                  "lineWidth": 1,
-                  "showPoints": "never",
-                  "stacking": {
-                    "mode": "none",
-                    "group": "A"
-                  }
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "legend": {
-                "displayMode": "list",
-                "placement": "bottom",
-                "showLegend": true
-              },
-              "tooltip": {
-                "mode": "multi",
-                "sort": "desc"
-              }
-            },
-            "id": 10,
-            "gridPos": {
-              "x": 12,
-              "y": 21,
-              "w": 12,
-              "h": 8
-            }
-          },
-          {
-            "type": "timeseries",
-            "title": "Débit WAN de la gw",
-            "description": "Débit reçu et émis sur le WAN de la gw UniFi.",
-            "datasource": {
-              "type": "prometheus",
-              "uid": "victoriametrics"
-            },
-            "targets": [
-              {
-                "refId": "A",
-                "datasource": {
-                  "type": "prometheus",
-                  "uid": "victoriametrics"
-                },
-                "editorMode": "code",
-                "expr": "sum(rate(unpoller_device_wan_receive_bytes_total{job=\"unpoller\", name=\"gw\"}[$$__rate_interval])) * 8",
-                "legendFormat": "reçu",
-                "range": true
-              },
-              {
-                "refId": "B",
-                "datasource": {
-                  "type": "prometheus",
-                  "uid": "victoriametrics"
-                },
-                "editorMode": "code",
-                "expr": "sum(rate(unpoller_device_wan_transmit_bytes_total{job=\"unpoller\", name=\"gw\"}[$$__rate_interval])) * 8",
-                "legendFormat": "émis",
-                "range": true
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "unit": "bps",
-                "custom": {
-                  "drawStyle": "line",
-                  "fillOpacity": 10,
-                  "lineWidth": 1,
-                  "showPoints": "never",
-                  "stacking": {
-                    "mode": "none",
-                    "group": "A"
-                  }
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "legend": {
-                "displayMode": "list",
-                "placement": "bottom",
-                "showLegend": true
-              },
-              "tooltip": {
-                "mode": "multi",
-                "sort": "desc"
-              }
-            },
-            "id": 11,
-            "gridPos": {
-              "x": 0,
-              "y": 29,
-              "w": 12,
-              "h": 8
-            }
-          },
-          {
-            "type": "timeseries",
-            "title": "Débit de la Freebox",
-            "description": "Débit reçu et émis par la Freebox.",
-            "datasource": {
-              "type": "prometheus",
-              "uid": "victoriametrics"
-            },
-            "targets": [
-              {
-                "refId": "A",
-                "datasource": {
-                  "type": "prometheus",
-                  "uid": "victoriametrics"
-                },
-                "editorMode": "code",
-                "expr": "max(fbx_exporter_connection_rate_down{job=\"freebox\"}) * 8",
-                "legendFormat": "reçu",
-                "range": true
-              },
-              {
-                "refId": "B",
-                "datasource": {
-                  "type": "prometheus",
-                  "uid": "victoriametrics"
-                },
-                "editorMode": "code",
-                "expr": "max(fbx_exporter_connection_rate_up{job=\"freebox\"}) * 8",
-                "legendFormat": "émis",
-                "range": true
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "unit": "bps",
-                "custom": {
-                  "drawStyle": "line",
-                  "fillOpacity": 10,
-                  "lineWidth": 1,
-                  "showPoints": "never",
-                  "stacking": {
-                    "mode": "none",
-                    "group": "A"
-                  }
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "legend": {
-                "displayMode": "list",
-                "placement": "bottom",
-                "showLegend": true
-              },
-              "tooltip": {
-                "mode": "multi",
-                "sort": "desc"
-              }
-            },
-            "id": 12,
-            "gridPos": {
-              "x": 12,
-              "y": 29,
-              "w": 12,
+              "w": 24,
               "h": 8
             }
           },
@@ -23991,7 +24068,7 @@ configs:
             "id": 13,
             "gridPos": {
               "x": 0,
-              "y": 37,
+              "y": 29,
               "w": 24,
               "h": 1
             }
@@ -24073,7 +24150,7 @@ configs:
             "id": 14,
             "gridPos": {
               "x": 0,
-              "y": 38,
+              "y": 30,
               "w": 8,
               "h": 10
             }
@@ -24110,7 +24187,7 @@ configs:
             "id": 15,
             "gridPos": {
               "x": 8,
-              "y": 38,
+              "y": 30,
               "w": 16,
               "h": 10
             }

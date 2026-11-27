@@ -239,6 +239,30 @@ tests:
               assert!(!exists(.http_client_ip))
               assert!(!exists(.http_status))
 
+  - name: URL secrets are masked outside Authentik, other journal lines kept
+    inputs:
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {"stream-name": "docker", "attributes": {"container.name": "web", "app.path": "/cb?code=s3cr3t&x=1"}, "message": "ok"}
+      - insert_at: normalize
+        type: vrl
+        source: |
+          . = {"stream-name": "journald", "message": {"SYSLOG_IDENTIFIER": "sshd", "MESSAGE": "pam: user=bob key=k3y"}}
+    outputs:
+      - extract_from: route_authentik._unmatched
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.app_path, "/cb?code=[REDACTED]&x=1")
+      - extract_from: parse_proxmox
+        conditions:
+          - type: vrl
+            source: |
+              # Only HAProxy journal lines are masked: key=value is common in
+              # daemon messages, masking them all would hide useful context.
+              assert_eq!(.body_message, "pam: user=bob key=k3y")
+
   - name: camera-streamer client connections
     inputs:
       - insert_at: normalize

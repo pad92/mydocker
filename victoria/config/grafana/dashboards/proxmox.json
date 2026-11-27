@@ -38,7 +38,36 @@
     }
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "guest",
+        "label": "Invité",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "victoriametrics"
+        },
+        "definition": "label_values(proxmox_vm_cpu_percent, name)",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(proxmox_vm_cpu_percent, name)",
+          "refId": "guest"
+        },
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
   },
   "annotations": {
     "list": []
@@ -107,7 +136,8 @@
         "y": 1,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Utilisation CPU actuelle de l'hôte Proxmox."
     },
     {
       "type": "stat",
@@ -159,7 +189,8 @@
         "y": 1,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Mémoire utilisée par l'hôte, sans le cache ARC de ZFS. L'ARC rend sa mémoire quand on la lui demande : le compter ferait croire à une saturation."
     },
     {
       "type": "stat",
@@ -211,7 +242,8 @@
         "y": 1,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Charge moyenne de l'hôte sur 5 minutes : processus en cours d'exécution ou en attente. À comparer au nombre de cœurs ; au-delà, des processus attendent un CPU."
     },
     {
       "type": "stat",
@@ -262,7 +294,8 @@
         "y": 1,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Temps écoulé depuis le dernier démarrage de l'hôte."
     },
     {
       "type": "timeseries",
@@ -317,7 +350,8 @@
         "y": 5,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Utilisation CPU de l'hôte au fil du temps."
     },
     {
       "type": "timeseries",
@@ -394,7 +428,8 @@
         "y": 5,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Charge moyenne sur 1, 5 et 15 minutes. Une courbe 1 min au-dessus de la 15 min indique une charge qui monte."
     },
     {
       "type": "timeseries",
@@ -471,7 +506,8 @@
         "y": 13,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Mémoire utilisée, part prise par l'ARC de ZFS, et mémoire totale. La différence entre utilisée et ARC est la vraie pression mémoire."
     },
     {
       "type": "timeseries",
@@ -537,7 +573,8 @@
         "y": 13,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Trafic des ponts réseau vmbr, par lesquels passent les invités."
     },
     {
       "type": "timeseries",
@@ -592,7 +629,8 @@
         "y": 21,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Swap utilisé par l'hôte. Une hausse durable signale un manque de mémoire."
     },
     {
       "type": "timeseries",
@@ -690,7 +728,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "proxmox_vm_cpu_percent",
+          "expr": "proxmox_vm_cpu_percent{name=~\"$guest\"}",
           "legendFormat": "{{name}}",
           "range": true
         }
@@ -728,7 +766,8 @@
         "y": 30,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Utilisation CPU de chaque invité (VM et conteneur LXC) choisi."
     },
     {
       "type": "timeseries",
@@ -745,7 +784,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "proxmox_vm_mem_bytes",
+          "expr": "proxmox_vm_mem_bytes{name=~\"$guest\"}",
           "legendFormat": "{{name}}",
           "range": true
         }
@@ -783,7 +822,8 @@
         "y": 30,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Mémoire utilisée par chaque invité choisi."
     },
     {
       "type": "timeseries",
@@ -800,7 +840,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "rate(proxmox_vm_netin_bytes_total[$__rate_interval])",
+          "expr": "rate(proxmox_vm_netin_bytes_total{name=~\"$guest\"}[$__rate_interval])",
           "legendFormat": "{{name}} in",
           "range": true
         },
@@ -811,7 +851,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "rate(proxmox_vm_netout_bytes_total[$__rate_interval])",
+          "expr": "rate(proxmox_vm_netout_bytes_total{name=~\"$guest\"}[$__rate_interval])",
           "legendFormat": "{{name}} out",
           "range": true
         }
@@ -849,7 +889,8 @@
         "y": 38,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Trafic réseau de chaque invité choisi, reçu et émis."
     },
     {
       "type": "timeseries",
@@ -866,7 +907,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "rate(proxmox_vm_diskread_bytes_total[$__rate_interval])",
+          "expr": "rate(proxmox_vm_diskread_bytes_total{name=~\"$guest\"}[$__rate_interval])",
           "legendFormat": "{{name}} read",
           "range": true
         },
@@ -877,7 +918,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "rate(proxmox_vm_diskwrite_bytes_total[$__rate_interval])",
+          "expr": "rate(proxmox_vm_diskwrite_bytes_total{name=~\"$guest\"}[$__rate_interval])",
           "legendFormat": "{{name}} write",
           "range": true
         }
@@ -915,7 +956,8 @@
         "y": 38,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Lectures et écritures disque de chaque invité choisi."
     },
     {
       "type": "timeseries",
@@ -932,7 +974,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "proxmox_vm_disk_bytes / proxmox_vm_maxdisk_bytes",
+          "expr": "proxmox_vm_disk_bytes{name=~\"$guest\"} / proxmox_vm_maxdisk_bytes{name=~\"$guest\"}",
           "legendFormat": "{{name}}",
           "range": true
         }
@@ -970,7 +1012,8 @@
         "y": 46,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Occupation du disque de chaque invité choisi. Proxmox ne la mesure que pour les conteneurs LXC."
     },
     {
       "type": "timeseries",
@@ -987,7 +1030,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "proxmox_vm_uptime_seconds",
+          "expr": "proxmox_vm_uptime_seconds{name=~\"$guest\"}",
           "legendFormat": "{{name}}",
           "range": true
         }
@@ -1025,7 +1068,8 @@
         "y": 46,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Temps écoulé depuis le démarrage de chaque invité choisi. Un retour à zéro signale un redémarrage."
     },
     {
       "type": "timeseries",
@@ -1042,7 +1086,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "max by (vmid, name, type) ({__name__=~\"proxmox_vm_pressurecpusome_(percent|ratio)\"})",
+          "expr": "max by (vmid, name, type) ({name=~\"$guest\", __name__=~\"proxmox_vm_pressurecpusome_(percent|ratio)\"})",
           "legendFormat": "{{name}} cpu",
           "range": true
         },
@@ -1053,7 +1097,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "proxmox_vm_pressureiosome_ratio",
+          "expr": "proxmox_vm_pressureiosome_ratio{name=~\"$guest\"}",
           "legendFormat": "{{name}} io",
           "range": true
         },
@@ -1064,7 +1108,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "proxmox_vm_pressurememorysome_bytes",
+          "expr": "proxmox_vm_pressurememorysome_bytes{name=~\"$guest\"}",
           "legendFormat": "{{name}} mem",
           "range": true
         }
@@ -1102,7 +1146,8 @@
         "y": 54,
         "w": 24,
         "h": 8
-      }
+      },
+      "description": "Pression (PSI, some) : part du temps où au moins une tâche de l'invité attend le CPU, le disque ou la mémoire. Une pression durable désigne la ressource qui manque."
     },
     {
       "id": 19,
@@ -1170,7 +1215,8 @@
         "y": 63,
         "w": 8,
         "h": 8
-      }
+      },
+      "description": "Part occupée de chaque stockage Proxmox."
     },
     {
       "type": "timeseries",
@@ -1225,7 +1271,8 @@
         "y": 63,
         "w": 8,
         "h": 8
-      }
+      },
+      "description": "Espace libre restant sur chaque stockage."
     },
     {
       "type": "timeseries",
@@ -1280,680 +1327,693 @@
         "y": 63,
         "w": 8,
         "h": 8
-      }
+      },
+      "description": "Espace utilisé sur chaque stockage."
     },
     {
       "id": 23,
       "type": "row",
       "title": "Journal PVE",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "x": 0,
         "y": 71,
         "w": 24,
         "h": 1
       },
-      "panels": []
-    },
-    {
-      "type": "stat",
-      "title": "Tâches en échec",
-      "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
-      },
-      "targets": [
+      "panels": [
         {
-          "refId": "A",
+          "type": "stat",
+          "title": "Tâches en échec",
           "datasource": {
             "type": "victoriametrics-logs-datasource",
             "uid": "victorialogs"
           },
-          "editorMode": "code",
-          "expr": "{log_stream=\"proxmox\"} pve_task_failed:=true | stats count() as n",
-          "queryType": "stats"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "noValue": "0",
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "red"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "value"
-      },
-      "id": 24,
-      "gridPos": {
-        "x": 0,
-        "y": 72,
-        "w": 6,
-        "h": 4
-      }
-    },
-    {
-      "type": "stat",
-      "title": "Sauvegardes en échec",
-      "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "victoriametrics-logs-datasource",
-            "uid": "victorialogs"
-          },
-          "editorMode": "code",
-          "expr": "{log_stream=\"proxmox\"} pve_backup_event:in(job_failed,vm_failed) | stats count() as n",
-          "queryType": "stats"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "noValue": "0",
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "red"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "value"
-      },
-      "id": 25,
-      "gridPos": {
-        "x": 6,
-        "y": 72,
-        "w": 6,
-        "h": 4
-      }
-    },
-    {
-      "type": "stat",
-      "title": "Sauvegardes réussies",
-      "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "victoriametrics-logs-datasource",
-            "uid": "victorialogs"
-          },
-          "editorMode": "code",
-          "expr": "{log_stream=\"proxmox\"} pve_backup_event:=vm_ok | stats count() as n",
-          "queryType": "stats"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "noValue": "0",
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "green"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "value"
-      },
-      "id": 26,
-      "gridPos": {
-        "x": 12,
-        "y": 72,
-        "w": 6,
-        "h": 4
-      }
-    },
-    {
-      "type": "stat",
-      "title": "Échecs d'authentification",
-      "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "victoriametrics-logs-datasource",
-            "uid": "victorialogs"
-          },
-          "editorMode": "code",
-          "expr": "{log_stream=\"proxmox\"} pve_auth_result:=failure | stats count() as n",
-          "queryType": "stats"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "noValue": "0",
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "orange"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "value"
-      },
-      "id": 27,
-      "gridPos": {
-        "x": 18,
-        "y": 72,
-        "w": 6,
-        "h": 4
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Tâches lancées par type",
-      "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "victoriametrics-logs-datasource",
-            "uid": "victorialogs"
-          },
-          "editorMode": "code",
-          "expr": "{log_stream=\"proxmox\"} pve_task_event:=start | stats by (pve_task_type) count() as n",
-          "queryType": "statsRange",
-          "step": "5m",
-          "legendFormat": "{{pve_task_type}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 80,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "editorMode": "code",
+              "expr": "{log_stream=\"proxmox\"} pve_task_failed:=true | stats count() as n",
+              "queryType": "stats"
             }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 28,
-      "gridPos": {
-        "x": 0,
-        "y": 76,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Logs par niveau",
-      "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "victoriametrics-logs-datasource",
-            "uid": "victorialogs"
-          },
-          "editorMode": "code",
-          "expr": "{log_stream=\"proxmox\"} | stats by (pve_level) count() as n",
-          "queryType": "statsRange",
-          "step": "5m",
-          "legendFormat": "{{pve_level}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 80,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 29,
-      "gridPos": {
-        "x": 12,
-        "y": 76,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Durée de sauvegarde par invité (s)",
-      "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "victoriametrics-logs-datasource",
-            "uid": "victorialogs"
-          },
-          "editorMode": "code",
-          "expr": "{log_stream=\"proxmox\"} pve_backup_event:=vm_ok | stats by (pve_vmid) max(pve_duration_s) as duree",
-          "queryType": "statsRange",
-          "step": "5m",
-          "legendFormat": "{{pve_vmid}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 30,
-      "gridPos": {
-        "x": 0,
-        "y": 84,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "table",
-      "title": "Dernières sauvegardes",
-      "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "victoriametrics-logs-datasource",
-            "uid": "victorialogs"
-          },
-          "editorMode": "code",
-          "expr": "{log_stream=\"proxmox\"} pve_kind:=backup | fields _time, pve_backup_event, pve_vmid, pve_duration_s, _msg | sort by (_time desc) | limit 100",
-          "queryType": "instant"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "extractFields",
-          "options": {
-            "source": "labels",
-            "format": "json",
-            "replace": true,
-            "keepTime": true
-          }
-        },
-        {
-          "id": "convertFieldType",
-          "options": {
-            "conversions": [
-              {
-                "targetField": "pve_duration_s",
-                "destinationType": "number"
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "0",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "red"
               }
-            ],
-            "fields": {}
-          }
-        },
-        {
-          "id": "organize",
+            },
+            "overrides": []
+          },
           "options": {
-            "indexByName": {
-              "Time": 0,
-              "pve_backup_event": 1,
-              "pve_vmid": 2,
-              "pve_duration_s": 3,
-              "_msg": 4
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
             },
-            "renameByName": {
-              "Time": "heure",
-              "pve_backup_event": "événement",
-              "pve_vmid": "vmid",
-              "pve_duration_s": "durée (s)",
-              "_msg": "message"
-            },
-            "excludeByName": {}
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "filterable": true
-          }
+            "colorMode": "value",
+            "graphMode": "none",
+            "textMode": "value"
+          },
+          "id": 24,
+          "gridPos": {
+            "x": 0,
+            "y": 72,
+            "w": 6,
+            "h": 4
+          },
+          "description": "Tâches Proxmox terminées en erreur (sauvegarde, migration, démarrage...)."
         },
-        "overrides": []
-      },
-      "options": {
-        "showHeader": true,
-        "cellHeight": "sm"
-      },
-      "id": 31,
-      "gridPos": {
-        "x": 12,
-        "y": 84,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "table",
-      "title": "Tâches en échec",
-      "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
-      },
-      "targets": [
         {
-          "refId": "A",
+          "type": "stat",
+          "title": "Sauvegardes en échec",
           "datasource": {
             "type": "victoriametrics-logs-datasource",
             "uid": "victorialogs"
           },
-          "editorMode": "code",
-          "expr": "{log_stream=\"proxmox\"} pve_task_failed:=true | fields _time, pve_component, pve_task_type, pve_vmid, pve_user, pve_task_status | sort by (_time desc) | limit 100",
-          "queryType": "instant"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "extractFields",
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "editorMode": "code",
+              "expr": "{log_stream=\"proxmox\"} pve_backup_event:in(job_failed,vm_failed) | stats count() as n",
+              "queryType": "stats"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "0",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "red"
+              }
+            },
+            "overrides": []
+          },
           "options": {
-            "source": "labels",
-            "format": "json",
-            "replace": true,
-            "keepTime": true
-          }
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "none",
+            "textMode": "value"
+          },
+          "id": 25,
+          "gridPos": {
+            "x": 6,
+            "y": 72,
+            "w": 6,
+            "h": 4
+          },
+          "description": "Sauvegardes vzdump en échec, au niveau d'un invité ou du job entier. Zéro attendu."
         },
         {
-          "id": "organize",
-          "options": {
-            "indexByName": {
-              "Time": 0,
-              "pve_component": 1,
-              "pve_task_type": 2,
-              "pve_vmid": 3,
-              "pve_user": 4,
-              "pve_task_status": 5
-            },
-            "renameByName": {
-              "Time": "heure",
-              "pve_component": "composant",
-              "pve_task_type": "type",
-              "pve_vmid": "id",
-              "pve_user": "utilisateur",
-              "pve_task_status": "statut"
-            },
-            "excludeByName": {}
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "showHeader": true,
-        "cellHeight": "sm"
-      },
-      "id": 32,
-      "gridPos": {
-        "x": 0,
-        "y": 92,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "table",
-      "title": "Authentifications",
-      "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
-      },
-      "targets": [
-        {
-          "refId": "A",
+          "type": "stat",
+          "title": "Sauvegardes réussies",
           "datasource": {
             "type": "victoriametrics-logs-datasource",
             "uid": "victorialogs"
           },
-          "editorMode": "code",
-          "expr": "{log_stream=\"proxmox\"} pve_kind:=auth | fields _time, pve_auth_result, pve_user, pve_client_ip, pve_component | sort by (_time desc) | limit 100",
-          "queryType": "instant"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "extractFields",
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "editorMode": "code",
+              "expr": "{log_stream=\"proxmox\"} pve_backup_event:=vm_ok | stats count() as n",
+              "queryType": "stats"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "0",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "green"
+              }
+            },
+            "overrides": []
+          },
           "options": {
-            "source": "labels",
-            "format": "json",
-            "replace": true,
-            "keepTime": true
-          }
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "none",
+            "textMode": "value"
+          },
+          "id": 26,
+          "gridPos": {
+            "x": 12,
+            "y": 72,
+            "w": 6,
+            "h": 4
+          },
+          "description": "Sauvegardes d'invités réussies sur la période."
         },
         {
-          "id": "organize",
-          "options": {
-            "indexByName": {
-              "Time": 0,
-              "pve_auth_result": 1,
-              "pve_user": 2,
-              "pve_client_ip": 3,
-              "pve_component": 4
-            },
-            "renameByName": {
-              "Time": "heure",
-              "pve_auth_result": "résultat",
-              "pve_user": "utilisateur",
-              "pve_client_ip": "ip",
-              "pve_component": "composant"
-            },
-            "excludeByName": {}
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "showHeader": true,
-        "cellHeight": "sm"
-      },
-      "id": 33,
-      "gridPos": {
-        "x": 12,
-        "y": 92,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "table",
-      "title": "Avertissements et erreurs",
-      "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
-      },
-      "targets": [
-        {
-          "refId": "A",
+          "type": "stat",
+          "title": "Échecs d'authentification",
           "datasource": {
             "type": "victoriametrics-logs-datasource",
             "uid": "victorialogs"
           },
-          "editorMode": "code",
-          "expr": "{log_stream=\"proxmox\"} pve_level:in(warning,error,critical) | fields _time, pve_level, pve_component, _msg | sort by (_time desc) | limit 200",
-          "queryType": "instant"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "extractFields",
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "editorMode": "code",
+              "expr": "{log_stream=\"proxmox\"} pve_auth_result:=failure | stats count() as n",
+              "queryType": "stats"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "0",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "orange"
+              }
+            },
+            "overrides": []
+          },
           "options": {
-            "source": "labels",
-            "format": "json",
-            "replace": true,
-            "keepTime": true
-          }
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "none",
+            "textMode": "value"
+          },
+          "id": 27,
+          "gridPos": {
+            "x": 18,
+            "y": 72,
+            "w": 6,
+            "h": 4
+          },
+          "description": "Connexions refusées à l'interface ou à l'API Proxmox."
         },
         {
-          "id": "organize",
+          "type": "timeseries",
+          "title": "Tâches lancées par type",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "editorMode": "code",
+              "expr": "{log_stream=\"proxmox\"} pve_task_event:=start | stats by (pve_task_type) count() as n",
+              "queryType": "statsRange",
+              "step": "5m",
+              "legendFormat": "{{pve_task_type}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "lineWidth": 1,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": []
+          },
           "options": {
-            "indexByName": {
-              "Time": 0,
-              "pve_level": 1,
-              "pve_component": 2,
-              "_msg": 3
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
             },
-            "renameByName": {
-              "Time": "heure",
-              "pve_level": "niveau",
-              "pve_component": "composant",
-              "_msg": "message"
-            },
-            "excludeByName": {}
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "filterable": true
-          }
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 28,
+          "gridPos": {
+            "x": 0,
+            "y": 76,
+            "w": 12,
+            "h": 8
+          },
+          "description": "Tâches Proxmox lancées, par type."
         },
-        "overrides": []
-      },
-      "options": {
-        "showHeader": true,
-        "cellHeight": "sm"
-      },
-      "id": 34,
-      "gridPos": {
-        "x": 0,
-        "y": 100,
-        "w": 24,
-        "h": 10
-      }
+        {
+          "type": "timeseries",
+          "title": "Logs par niveau",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "editorMode": "code",
+              "expr": "{log_stream=\"proxmox\"} | stats by (pve_level) count() as n",
+              "queryType": "statsRange",
+              "step": "5m",
+              "legendFormat": "{{pve_level}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "lineWidth": 1,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 29,
+          "gridPos": {
+            "x": 12,
+            "y": 76,
+            "w": 12,
+            "h": 8
+          },
+          "description": "Lignes du journal Proxmox par niveau."
+        },
+        {
+          "type": "timeseries",
+          "title": "Durée de sauvegarde par invité (s)",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "editorMode": "code",
+              "expr": "{log_stream=\"proxmox\"} pve_backup_event:=vm_ok | stats by (pve_vmid) max(pve_duration_s) as duree",
+              "queryType": "statsRange",
+              "step": "5m",
+              "legendFormat": "{{pve_vmid}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 30,
+          "gridPos": {
+            "x": 0,
+            "y": 84,
+            "w": 12,
+            "h": 8
+          },
+          "description": "Durée des sauvegardes réussies, par invité. Une durée qui s'allonge signale un invité qui grossit ou un stockage de sauvegarde lent."
+        },
+        {
+          "type": "table",
+          "title": "Dernières sauvegardes",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "editorMode": "code",
+              "expr": "{log_stream=\"proxmox\"} pve_kind:=backup | fields _time, pve_backup_event, pve_vmid, pve_duration_s, _msg | sort by (_time desc) | limit 100",
+              "queryType": "instant"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "extractFields",
+              "options": {
+                "source": "labels",
+                "format": "json",
+                "replace": true,
+                "keepTime": true
+              }
+            },
+            {
+              "id": "convertFieldType",
+              "options": {
+                "conversions": [
+                  {
+                    "targetField": "pve_duration_s",
+                    "destinationType": "number"
+                  }
+                ],
+                "fields": {}
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "indexByName": {
+                  "Time": 0,
+                  "pve_backup_event": 1,
+                  "pve_vmid": 2,
+                  "pve_duration_s": 3,
+                  "_msg": 4
+                },
+                "renameByName": {
+                  "Time": "heure",
+                  "pve_backup_event": "événement",
+                  "pve_vmid": "vmid",
+                  "pve_duration_s": "durée (s)",
+                  "_msg": "message"
+                },
+                "excludeByName": {}
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          },
+          "id": 31,
+          "gridPos": {
+            "x": 12,
+            "y": 84,
+            "w": 12,
+            "h": 8
+          },
+          "description": "Derniers événements de sauvegarde, avec l'invité, la durée et le message."
+        },
+        {
+          "type": "table",
+          "title": "Tâches en échec",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "editorMode": "code",
+              "expr": "{log_stream=\"proxmox\"} pve_task_failed:=true | fields _time, pve_component, pve_task_type, pve_vmid, pve_user, pve_task_status | sort by (_time desc) | limit 100",
+              "queryType": "instant"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "extractFields",
+              "options": {
+                "source": "labels",
+                "format": "json",
+                "replace": true,
+                "keepTime": true
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "indexByName": {
+                  "Time": 0,
+                  "pve_component": 1,
+                  "pve_task_type": 2,
+                  "pve_vmid": 3,
+                  "pve_user": 4,
+                  "pve_task_status": 5
+                },
+                "renameByName": {
+                  "Time": "heure",
+                  "pve_component": "composant",
+                  "pve_task_type": "type",
+                  "pve_vmid": "id",
+                  "pve_user": "utilisateur",
+                  "pve_task_status": "statut"
+                },
+                "excludeByName": {}
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          },
+          "id": 32,
+          "gridPos": {
+            "x": 0,
+            "y": 92,
+            "w": 12,
+            "h": 8
+          },
+          "description": "Dernières tâches en erreur, avec le type, l'invité et l'utilisateur."
+        },
+        {
+          "type": "table",
+          "title": "Authentifications",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "editorMode": "code",
+              "expr": "{log_stream=\"proxmox\"} pve_kind:=auth | fields _time, pve_auth_result, pve_user, pve_client_ip, pve_component | sort by (_time desc) | limit 100",
+              "queryType": "instant"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "extractFields",
+              "options": {
+                "source": "labels",
+                "format": "json",
+                "replace": true,
+                "keepTime": true
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "indexByName": {
+                  "Time": 0,
+                  "pve_auth_result": 1,
+                  "pve_user": 2,
+                  "pve_client_ip": 3,
+                  "pve_component": 4
+                },
+                "renameByName": {
+                  "Time": "heure",
+                  "pve_auth_result": "résultat",
+                  "pve_user": "utilisateur",
+                  "pve_client_ip": "ip",
+                  "pve_component": "composant"
+                },
+                "excludeByName": {}
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          },
+          "id": 33,
+          "gridPos": {
+            "x": 12,
+            "y": 92,
+            "w": 12,
+            "h": 8
+          },
+          "description": "Dernières authentifications, réussies ou non, avec l'utilisateur et l'IP cliente."
+        },
+        {
+          "type": "table",
+          "title": "Avertissements et erreurs",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "victoriametrics-logs-datasource",
+                "uid": "victorialogs"
+              },
+              "editorMode": "code",
+              "expr": "{log_stream=\"proxmox\"} pve_level:in(warning,error,critical) | fields _time, pve_level, pve_component, _msg | sort by (_time desc) | limit 200",
+              "queryType": "instant"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "extractFields",
+              "options": {
+                "source": "labels",
+                "format": "json",
+                "replace": true,
+                "keepTime": true
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "indexByName": {
+                  "Time": 0,
+                  "pve_level": 1,
+                  "pve_component": 2,
+                  "_msg": 3
+                },
+                "renameByName": {
+                  "Time": "heure",
+                  "pve_level": "niveau",
+                  "pve_component": "composant",
+                  "_msg": "message"
+                },
+                "excludeByName": {}
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          },
+          "id": 34,
+          "gridPos": {
+            "x": 0,
+            "y": 100,
+            "w": 24,
+            "h": 10
+          },
+          "description": "Derniers avertissements et erreurs du journal Proxmox."
+        }
+      ]
     }
   ]
 }

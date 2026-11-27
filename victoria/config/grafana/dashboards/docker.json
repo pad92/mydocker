@@ -196,7 +196,8 @@
         "y": 1,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Lignes de log émises par les conteneurs choisis sur la période."
     },
     {
       "type": "stat",
@@ -246,7 +247,8 @@
         "y": 1,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Lignes de log de niveau error ou crit, quand le niveau a pu être extrait du message."
     },
     {
       "type": "stat",
@@ -296,7 +298,8 @@
         "y": 1,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Conteneurs ayant émis au moins une ligne de log sur la période."
     },
     {
       "type": "stat",
@@ -347,7 +350,8 @@
         "y": 1,
         "w": 6,
         "h": 4
-      }
+      },
+      "description": "Part des lignes écrites sur stderr. Beaucoup d'applications y écrivent tous leurs logs : c'est un indice, pas une erreur."
     },
     {
       "type": "row",
@@ -416,7 +420,8 @@
         "y": 6,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Lignes de log par conteneur. Un conteneur qui devient très bavard est souvent en boucle d'erreur ou de redémarrage."
     },
     {
       "type": "timeseries",
@@ -472,7 +477,8 @@
         "y": 6,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Lignes error ou crit par conteneur."
     },
     {
       "type": "timeseries",
@@ -528,7 +534,8 @@
         "y": 14,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Lignes écrites sur stdout et sur stderr au fil du temps."
     },
     {
       "type": "timeseries",
@@ -584,7 +591,8 @@
         "y": 14,
         "w": 12,
         "h": 8
-      }
+      },
+      "description": "Lignes de log par niveau extrait. Les lignes sans niveau reconnaissable n'apparaissent pas."
     },
     {
       "type": "row",
@@ -677,7 +685,8 @@
         "y": 23,
         "w": 16,
         "h": 10
-      }
+      },
+      "description": "Messages d'erreur les plus fréquents. Un même message répété en masse désigne la panne à traiter en premier."
     },
     {
       "type": "table",
@@ -757,7 +766,8 @@
         "y": 23,
         "w": 8,
         "h": 10
-      }
+      },
+      "description": "Nombre d'erreurs par conteneur sur la période."
     },
     {
       "type": "row",
@@ -850,7 +860,8 @@
         "y": 34,
         "w": 24,
         "h": 8
-      }
+      },
+      "description": "Conteneurs qui ont logué sur la période mais plus depuis une heure : arrêtés, bloqués ou simplement silencieux."
     },
     {
       "type": "row",
@@ -900,7 +911,8 @@
         "y": 43,
         "w": 24,
         "h": 14
-      }
+      },
+      "description": "Les 200 dernières lignes de log des conteneurs choisis."
     }
   ]
 }
