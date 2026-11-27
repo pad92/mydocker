@@ -58,6 +58,55 @@ that already ran with an older URL, the `OLLAMA_BASE_URL` of the Compose
 file may be ignored: check Admin Panel > Settings > Connections and set the
 Ollama URL to `http://ollama:11434` if needed.
 
+## Sign-in through Authentik
+
+Open WebUI signs users in through Authentik with OpenID Connect. The
+*Open WebUI* provider, its application and the groups `open-webui-admins`
+and `open-webui-users` come from the management blueprint
+`20-forward-auth-apps.yaml`. Only the web interface is concerned: the Ollama
+API on port 11434 does not go through Traefik or Authentik, and Immich,
+Gramps Web and the other clients keep calling it as before.
+
+The role is set from the Authentik groups at each sign-in:
+`open-webui-admins` gives admin, `open-webui-users` gives user. A user in
+neither group gets a 403, and a role changed in Open WebUI is overwritten at
+the next sign-in: change the group in Authentik instead. The first Authentik
+sign-in creates the Open WebUI account, or attaches it to the local account
+that has the same e-mail address, with its chats and settings.
+
+Be careful with the existing admin account: if its owner signs in through
+Authentik without being in `open-webui-admins`, the account becomes a plain
+user. Add that person to the group before the first sign-in.
+
+Setup:
+
+1. Set `OLLAMA_HOST_LOCAL` in the `.env` of the `management` stack to the
+   value of `OLLAMA_DOMAIN`, then redeploy it. The redirect URI
+   `https://<OLLAMA_DOMAIN>/oauth/oidc/login/callback` is built from it.
+2. In Authentik, add the admin to `open-webui-admins` and the other users
+   to `open-webui-users` (Directory > Groups).
+3. Copy the client secret of the *Open WebUI* provider (Applications >
+   Providers) into `OPEN_WEBUI_OIDC_CLIENT_SECRET`, and the Authentik host
+   into `AUTHENTIK_DOMAIN`, in the Portainer stack variables. The stack does
+   not deploy while either is empty.
+4. Redeploy this stack, open `https://<OLLAMA_DOMAIN>` and use
+   *Continue with Authentik*.
+
+The local login form stays available as a fallback. Once the Authentik
+sign-in works for the admin, it can be turned off from the admin settings
+(`ENABLE_LOGIN_FORM`). That setting is kept in the Open WebUI database, not in
+the Compose file.
+
+Why OpenID Connect and not the Authentik forward auth of the other stacks:
+Open WebUI would have to trust a user header set by the proxy, and any
+container on `traefik_gateway` could send it directly. Forward auth would
+also block the Open WebUI API keys, which carry no Authentik session.
+
+Authentik uses a certificate of the internal CA: the host bundle
+`/etc/ssl/certs/ca-certificates.crt` is mounted read-only, and
+`SSL_CERT_FILE`, `AIOHTTP_CLIENT_SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE`
+point at it, so the host must trust that CA.
+
 ## Context length
 
 Ollama picks the context window from the free VRAM when nothing sets it,
@@ -76,6 +125,8 @@ Copy `.env.example` to `.env`, fill it in and run `chmod 600 .env`.
 | `OLLAMA_BIND_ADDRESS` | required | Host address port 11434 is published on (see above) |
 | `OLLAMA_DOMAIN` | required | Traefik host of Open WebUI |
 | `WEBUI_SECRET_KEY` | required | Signs Open WebUI sessions; generate with `openssl rand -hex 32` |
+| `AUTHENTIK_DOMAIN` | required | Authentik host, for the OpenID Connect discovery URL |
+| `OPEN_WEBUI_OIDC_CLIENT_SECRET` | required | Client secret of the *Open WebUI* provider in Authentik |
 | `OLLAMA_OLLAMA_DATA_DIR` | required | Host directory for Ollama data and pulled models |
 | `OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR` | required | Open WebUI database and uploads |
 | `OLLAMA_VERSION` | `0.24.0` | Ollama image tag (see GPU and versions) |
@@ -92,7 +143,9 @@ once checked to be empty.
 ## Tests
 
 `tests/test_stack.sh` renders the Compose file with test values and checks
-the port binding, the internal Open WebUI URL, the context length, the GPU
-reservation, the pinned images, the mounts, the Traefik routers and the
-failure without each required variable. It needs Docker
+the port binding, the internal Open WebUI URL, the Authentik sign-in
+settings (OIDC, roles, CA bundle, no forward auth, nothing on the Ollama
+service), the context length, the GPU reservation, the pinned images, the
+mounts, the Traefik routers and the failure without each required variable.
+The blueprint side is checked by `management/tests/test_blueprints.sh`. It needs Docker
 Compose and `jq`.

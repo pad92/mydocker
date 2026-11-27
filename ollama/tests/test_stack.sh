@@ -11,11 +11,21 @@
 # - the GPU comes from the device reservation alone: no `runtime: nvidia` and
 #   no NVIDIA_* variable (an empty NVIDIA_VISIBLE_DEVICES hides the GPU);
 # - both images are pinned to a release, and the tags are overridable;
-# - each service mounts its data directory and nothing else;
+# - each service mounts its data directory and nothing else, plus the host CA
+#   bundle (read-only) for Open WebUI;
+# - Open WebUI signs in through Authentik with OpenID Connect: client
+#   "open-webui", discovery URL on AUTHENTIK_DOMAIN, the redirect URI that the
+#   management blueprint registers, account creation and merge by e-mail, and
+#   roles from the "groups" claim (open-webui-admins, open-webui-users); the
+#   CA bundle is trusted by each HTTP client it uses;
 # - Traefik serves Open WebUI on its host over HTTPS (websecure, stepca) and
-#   redirects plain HTTP, with no other router.
-# Rendering fails without the bind address, the Open WebUI secret, the domain
-# or a data directory.
+#   redirects plain HTTP, with no other router and no middleware on the HTTPS
+#   router (no forward auth: it would break API keys, and only the web UI
+#   signs in through Authentik);
+# - the Ollama service is untouched by the sign-in: no OAuth variable, no
+#   Traefik label, still published on the bind address only.
+# Rendering fails without the bind address, the Open WebUI secret, the domain,
+# a data directory, the Authentik host or the OIDC client secret.
 # Needs Docker Compose and jq. Usage: ./tests/test_stack.sh
 set -euo pipefail
 
@@ -25,13 +35,17 @@ bind=192.0.2.10
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 domain=chat.example.test
+sso=sso.example.test
+ca=/etc/ssl/certs/ca-certificates.crt
 
 required=(OLLAMA_BIND_ADDRESS WEBUI_SECRET_KEY OLLAMA_DOMAIN
-  OLLAMA_OLLAMA_DATA_DIR OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR)
+  OLLAMA_OLLAMA_DATA_DIR OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR
+  AUTHENTIK_DOMAIN OPEN_WEBUI_OIDC_CLIENT_SECRET)
 
 test_env=(OLLAMA_BIND_ADDRESS="$bind" WEBUI_SECRET_KEY=test-secret
   OLLAMA_DOMAIN="$domain" OLLAMA_OLLAMA_DATA_DIR=/srv/test/ollama
-  OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR=/srv/test/webui-backend)
+  OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR=/srv/test/webui-backend
+  AUTHENTIK_DOMAIN="$sso" OPEN_WEBUI_OIDC_CLIENT_SECRET=test-oidc-secret)
 
 render() {
   env "${test_env[@]}" "$@" docker compose --project-directory "$stack_dir" \
@@ -56,6 +70,34 @@ expect open-webui OLLAMA_BASE_URL http://ollama:11434
 expect open-webui WEBUI_SECRET_KEY test-secret
 legacy="$(jq -r '.services["open-webui"].environment | keys[] | select(startswith("OLLAMA_API_"))' <<<"$config")"
 [ -z "$legacy" ] || fail "open-webui: legacy variables still set: $legacy"
+
+# Sign-in through Authentik (OpenID Connect).
+expect open-webui WEBUI_URL "https://$domain"
+expect open-webui OAUTH_PROVIDER_NAME Authentik
+expect open-webui OAUTH_CLIENT_ID open-webui
+expect open-webui OAUTH_CLIENT_SECRET test-oidc-secret
+expect open-webui OPENID_PROVIDER_URL \
+  "https://$sso/application/o/open-webui/.well-known/openid-configuration"
+# Must match the redirect URI of the management blueprint, built from
+# OLLAMA_HOST_LOCAL there.
+expect open-webui OPENID_REDIRECT_URI "https://$domain/oauth/oidc/login/callback"
+expect open-webui ENABLE_OAUTH_SIGNUP true
+expect open-webui OAUTH_MERGE_ACCOUNTS_BY_EMAIL true
+expect open-webui ENABLE_OAUTH_ROLE_MANAGEMENT true
+expect open-webui OAUTH_ROLES_CLAIM groups
+expect open-webui OAUTH_ALLOWED_ROLES open-webui-users
+expect open-webui OAUTH_ADMIN_ROLES open-webui-admins
+for v in SSL_CERT_FILE AIOHTTP_CLIENT_SSL_CERT_FILE REQUESTS_CA_BUNDLE; do
+  expect open-webui "$v" "$ca"
+done
+# Not set: the OAuth settings would otherwise be saved in the database and
+# win over the Compose file after the first start.
+expect open-webui ENABLE_OAUTH_PERSISTENT_CONFIG "<unset>"
+oauth_on_ollama="$(jq -r '.services.ollama.environment // {} | keys[]
+  | select(test("OAUTH|OPENID|WEBUI"))' <<<"$config")"
+[ -z "$oauth_on_ollama" ] || fail "ollama: sign-in variables set: $oauth_on_ollama"
+[ "$(jq -r '.services.ollama.labels // {} | length' <<<"$config")" = 0 ] \
+  || fail "ollama: has labels, the API must not go through Traefik"
 
 expect ollama OLLAMA_HOST 0.0.0.0:11434
 expect ollama OLLAMA_CONTEXT_LENGTH 8192
@@ -96,11 +138,12 @@ pinned="$(render OLLAMA_VERSION=9.9.9 OPEN_WEBUI_VERSION=v9.9.9)"
 [ "$(image "$pinned" open-webui)" = ghcr.io/open-webui/open-webui:v9.9.9 ] \
   || fail "OPEN_WEBUI_VERSION override ignored: $(image "$pinned" open-webui)"
 
-# Mounts: the data directory of each service, nothing else.
-mounts() { jq -r --arg s "$1" '[.services[$s].volumes // [] | .[] | "\(.source):\(.target)"] | join(" ")' <<<"$config"; }
-[ "$(mounts ollama)" = "/srv/test/ollama:/root/.ollama" ] \
+# Mounts: the data directory of each service, plus the CA bundle (read-only)
+# for Open WebUI.
+mounts() { jq -r --arg s "$1" '[.services[$s].volumes // [] | .[] | "\(.source):\(.target):\(.read_only // false)"] | join(" ")' <<<"$config"; }
+[ "$(mounts ollama)" = "/srv/test/ollama:/root/.ollama:false" ] \
   || fail "ollama: unexpected mounts: $(mounts ollama)"
-[ "$(mounts open-webui)" = "/srv/test/webui-backend:/app/backend/data" ] \
+[ "$(mounts open-webui)" = "/srv/test/webui-backend:/app/backend/data:false $ca:$ca:true" ] \
   || fail "open-webui: unexpected mounts: $(mounts open-webui)"
 [ "$(jq -r '.services["open-webui"].environment.MODEL_DOWNLOAD_DIR // "<unset>"' <<<"$config")" = "<unset>" ] \
   || fail "open-webui: MODEL_DOWNLOAD_DIR is set, Open WebUI does not read it"
@@ -125,6 +168,11 @@ expect_label traefik.http.middlewares.redirect-https.redirectscheme.scheme https
 routers="$(jq -r '[.services[] | .labels // {} | keys[]
   | select(startswith("traefik.http.routers.")) | split(".")[3]] | unique | join(" ")' <<<"$config")"
 [ "$routers" = "open-webui open-webui_http" ] || fail "unexpected routers: $routers"
+# No forward auth: Open WebUI signs in through OIDC itself.
+expect_label "$r.open-webui.middlewares" "<unset>"
+fwd="$(jq -r '[.services[] | .labels // {} | to_entries[]
+  | select(.value | test("authentik|forwardauth"; "i")) | .key] | join(" ")' <<<"$config")"
+[ -z "$fwd" ] || fail "forward auth configured: $fwd"
 
 for missing in "${required[@]}"; do
   out="$(render "$missing=" 2>&1 >/dev/null)" \
