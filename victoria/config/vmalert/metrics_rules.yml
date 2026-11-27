@@ -506,3 +506,21 @@ groups:
         annotations:
           summary: "Vector : {{ $value }} erreurs du composant {{ $labels.component_id }} en 30 minutes"
           description: "Un composant de Vector echoue : des logs ou des metriques sont perdus ou retardes"
+  # VRAM per process on the GPU, named after its container. The name
+  # comes from docker_container_info (vmalert-logs, one day back); a
+  # process of a container with no log for a day, or one outside any
+  # container (empty container_id), keeps its series without
+  # container_name instead of being dropped.
+  - name: gpu
+    interval: 1m
+    rules:
+      - record: container:nvidia_smi_compute_app_used_memory_bytes
+        expr: >-
+          (
+            nvidia_smi_compute_app_used_memory_bytes
+              * on (container_id) group_left (container_name)
+                (max by (container_id, container_name) (
+                  last_over_time(docker_container_info{container_id!=""}[1d])
+                ) * 0 + 1)
+          )
+          or on (uuid, pid) nvidia_smi_compute_app_used_memory_bytes

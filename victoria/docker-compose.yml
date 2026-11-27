@@ -110,7 +110,8 @@ services:
       # system.cpu.time becomes system_cpu_time_seconds_total, as the
       # Prometheus exporters name it, so that usual queries work.
       - -opentelemetry.usePrometheusNaming
-      # Pull targets (unpoller, snmp-exporter), in the victoriametrics_scrape entry under
+      # Pull targets (unpoller, snmp-exporter, freebox-exporter, nvidia-gpu-exporter),
+      # in the victoriametrics_scrape entry under
       # configs: at the end of this file.
       - -promscrape.config=/etc/victoria/scrape.yml
     # Same reasoning as victorialogs. The healthcheck gates the start of the
@@ -136,7 +137,7 @@ services:
     security_opt:
       - no-new-privileges:true
     labels:
-      mydocker.config-hash: "2345ef2b7b3e8778198c3e139ca10cde1b9eb2645acee3d3d599e3a2c636e389"
+      mydocker.config-hash: "f5f5ee6244a7889cbac55aa3e1bae58f8db8ffae37e9180210f587f57b72688f"
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.victoriametrics.loadbalancer.server.port: "8428"
@@ -279,6 +280,40 @@ services:
       - no-new-privileges:true
     logging: *default-logging
 
+  # GPU metrics of the host (NVML): totals and the VRAM of each process on
+  # the GPU, with the id of its container. pid: host is required: NVML
+  # returns host PIDs and the exporter reads /proc/<pid>/cgroup for the
+  # container id. The container sees every host process, so it gets
+  # nothing else: no capability, read-only root, nobody user, no port, no
+  # Traefik label, only the internal victoria network. The device request
+  # asks for the utility capability only (NVML, no CUDA). The image is
+  # distroless (no shell, no wget): no healthcheck, the nvidia-gpu job of
+  # victoriametrics_scrape (up) shows a dead exporter. The container name
+  # of each process comes from container:nvidia_smi_compute_app_used_memory_bytes.
+  nvidia-gpu-exporter:
+    image: utkuozdemir/nvidia_gpu_exporter:${NVIDIA_GPU_EXPORTER_VERSION:-1.18.0-nvml@sha256:bf82122fdf8cc960b1233e33dea82767a711343fa2919d525ca9199e83cc5195}
+    container_name: nvidia-gpu-exporter
+    restart: unless-stopped
+    user: "65534:65534"
+    pid: host
+    read_only: true
+    cap_drop: [ALL]
+    command:
+      - --collect.compute-apps
+      - --collect.compute-apps-identity
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [utility]
+    networks:
+      - victoria
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
   # Log ingestion: OTLP/HTTP logs of the collectors and UDP syslog of the
   # network devices, parsed and written to victorialogs. Pipeline in the
   # vector_config entry under configs: at the end of this file.
@@ -347,7 +382,7 @@ services:
       - source: vmalert_logs_rules
         target: /etc/vmalert/rules.yml
     labels:
-      mydocker.config-hash: "ae59ee9b6da124e0423c01931802cda9eaedbb3d0f650ba182593c106539eeb7"
+      mydocker.config-hash: "c82e78e0fb0435de3efcb6ce7682503eb4240cf6352e46463268162619b1cde4"
     networks:
       - victoria
     mem_limit: 128m
@@ -386,7 +421,7 @@ services:
       - source: vmalert_metrics_rules
         target: /etc/vmalert/rules.yml
     labels:
-      mydocker.config-hash: "ee03b66f2b815ae2eeaa5ae937931b59fa367881c9b6ce7c76ddd881f351532c"
+      mydocker.config-hash: "ecc2ded0702861ee6ea202932758f52256398ed5616089e1eccb2c51481d926a"
     networks:
       - victoria
     mem_limit: 128m
@@ -645,6 +680,8 @@ configs:
   # the request itself goes to snmp-exporter. The stack itself: one job per
   # component, its up series feeds the victoria_stack alert group and the
   # watchdog (vmalert_metrics_rules).
+  # nvidia-gpu-exporter every 30s: the VRAM of a short GPU job (a few
+  # seconds of inference) only shows if it lasts past one scrape.
   victoriametrics_scrape:
     content: |
       scrape_configs:
@@ -705,6 +742,12 @@ configs:
           scrape_interval: 60s
           static_configs:
             - targets: ["freebox-exporter:9102"]
+        # nvidia-gpu-exporter (NVML): GPU totals and the VRAM of each process
+        # on the GPU, with its container_id.
+        - job_name: nvidia-gpu
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["nvidia-gpu-exporter:9835"]
   # SNMPv3 auth of snmp-exporter. The exporter expands the ${...}
   # references from its own environment, not Compose.
   snmp_exporter_auth:
@@ -999,6 +1042,19 @@ configs:
               annotations:
                 summary: "{{ $$value }} erreurs 5xx de {{ $$labels.app_servicename }} en 30 minutes"
                 description: "Un service derriere Traefik repond en erreur 5xx depuis au moins 15 minutes"
+        # Container id to name, for the metrics that only carry the id (the
+        # GPU processes of nvidia-gpu-exporter). Recorded into
+        # victoriametrics; the value is the line count, only the labels
+        # matter. A container that wrote no log in the hour has no series;
+        # container:nvidia_smi_compute_app_used_memory_bytes reads one day
+        # back. Lines without a full id would name the host processes.
+        - name: docker_containers
+          interval: 5m
+          rules:
+            - record: docker_container_info
+              expr: >-
+                _time:1h {log_stream="docker"} container_id:~"^[0-9a-f]{64}$$"
+                | stats by (host_name, container_id, container_name) count()
 
   # Alert rules on VictoriaMetrics (MetricsQL), evaluated by vmalert-metrics.
   # Metric and label names as the Proxmox VE OpenTelemetry metric server is
@@ -1514,6 +1570,24 @@ configs:
               annotations:
                 summary: "Vector : {{ $$value }} erreurs du composant {{ $$labels.component_id }} en 30 minutes"
                 description: "Un composant de Vector echoue : des logs ou des metriques sont perdus ou retardes"
+        # VRAM per process on the GPU, named after its container. The name
+        # comes from docker_container_info (vmalert-logs, one day back); a
+        # process of a container with no log for a day, or one outside any
+        # container (empty container_id), keeps its series without
+        # container_name instead of being dropped.
+        - name: gpu
+          interval: 1m
+          rules:
+            - record: container:nvidia_smi_compute_app_used_memory_bytes
+              expr: >-
+                (
+                  nvidia_smi_compute_app_used_memory_bytes
+                    * on (container_id) group_left (container_name)
+                      (max by (container_id, container_name) (
+                        last_over_time(docker_container_info{container_id!=""}[1d])
+                      ) * 0 + 1)
+                )
+                or on (uuid, pid) nvidia_smi_compute_app_used_memory_bytes
 
   # One route per alert. Its repeat_interval is at least the event window
   # of the rule, plus its keep_firing_for, plus its group interval: the

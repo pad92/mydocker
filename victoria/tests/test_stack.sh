@@ -33,9 +33,15 @@
 #   .env.example and reach the auth file as ${...} references that the
 #   exporter expands, never as values written into the compose file;
 # - freebox-exporter has no Traefik label, no port and no volume, runs as
-#   65534 with a pinned image tag, joins only the freebox network (its route
-#   out, which only it joins) and victoria, keeps its token on a tmpfs, and
-#   its token is empty in .env.example; victoriametrics scrapes it on 9102;
+#   65534 with an image pinned by tag and digest, joins only the freebox
+#   network (its route out, which only it joins) and victoria, keeps its
+#   token on a tmpfs, and its token is empty in .env.example; victoriametrics scrapes it on 9102;
+# - nvidia-gpu-exporter shares the host PID namespace, so it has no Traefik
+#   label, port or volume, joins only victoria, runs as 65534 with a
+#   read-only root, no capability and no-new-privileges, gets the nvidia
+#   device with the utility capability only, and its image is pinned by
+#   digest; victoriametrics scrapes it on 9835, and the two recording rules
+#   that name the containers of GPU processes are in the vmalert configs;
 # - victoriametrics loads the scrape config that targets unpoller:9130,
 #   sends the synology job to snmp-exporter:9116, and scrapes every component
 #   of the stack (vector on its prometheus_exporter sink, 9598);
@@ -191,7 +197,7 @@ done
 
 # Alerting services: reachable from the victoria network only.
 for s in vmalert-logs vmalert-metrics; do
-  jq -e --arg s "$s" '.services[$s] | ((.labels // {}) | length) == 0
+  jq -e --arg s "$s" '.services[$s] | ((.labels // {}) | del(.["mydocker.config-hash"]) | length) == 0
     and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
     and (.networks | keys) == ["victoria"]' <<<"$config" >/dev/null \
     || fail "$s has labels, ports or a network other than victoria"
@@ -200,7 +206,7 @@ jq -e '.networks.victoria.internal == true' <<<"$config" >/dev/null \
   || fail "the victoria network is not internal"
 # alertmanager: same, plus the alertmanager network, which only it joins, as
 # the route out to the Uptime Kuma push URL (watchdog receiver).
-jq -e '.services.alertmanager | ((.labels // {}) | length) == 0
+jq -e '.services.alertmanager | ((.labels // {}) | del(.["mydocker.config-hash"]) | length) == 0
   and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
   and (.networks | keys) == ["alertmanager", "victoria"]' <<<"$config" >/dev/null \
   || fail "alertmanager has labels, ports or unexpected networks"
@@ -219,7 +225,7 @@ grep -qx 'ALERTMANAGER_WATCHDOG_URL=https://uptime.example.com/api/push/CHANGE_M
 
 # unpoller: no Traefik label, no port, the victoria network for the scrape and
 # the unpoller network, which only it joins, for the route to the gateway.
-jq -e '.services.unpoller | ((.labels // {}) | length) == 0
+jq -e '.services.unpoller | ((.labels // {}) | del(.["mydocker.config-hash"]) | length) == 0
   and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
   and (.networks | keys) == ["unpoller", "victoria"]' <<<"$config" >/dev/null \
   || fail "unpoller has labels, ports or unexpected networks"
@@ -247,7 +253,7 @@ jq -e '.services.unpoller.volumes | any(.type == "bind"
   <<<"$config" >/dev/null || fail "unpoller does not get the host CA bundle read-only"
 
 # snmp-exporter: same isolation as unpoller, on the snmp network.
-jq -e '.services["snmp-exporter"] | ((.labels // {}) | length) == 0
+jq -e '.services["snmp-exporter"] | ((.labels // {}) | del(.["mydocker.config-hash"]) | length) == 0
   and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
   and (.networks | keys) == ["snmp", "victoria"]' <<<"$config" >/dev/null \
   || fail "snmp-exporter has labels, ports or unexpected networks"
@@ -274,7 +280,7 @@ done
 # freebox-exporter: same isolation, on the freebox network. The app token
 # comes from the environment only and is written to a tmpfs, never to a
 # host directory; the image tag is pinned.
-jq -e '.services["freebox-exporter"] | ((.labels // {}) | length) == 0
+jq -e '.services["freebox-exporter"] | ((.labels // {}) | del(.["mydocker.config-hash"]) | length) == 0
   and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
   and (.networks | keys) == ["freebox", "victoria"]
   and ((.volumes // []) | length) == 0
@@ -291,13 +297,48 @@ jq -e '.networks.freebox["internal"] != true' <<<"$config" >/dev/null \
 [ "$(jq -r '.services["freebox-exporter"].environment.FREEBOX_APP_TOKEN // "unset"' <<<"$config")" = "" ] \
   || fail "FREEBOX_APP_TOKEN has a value in .env.example or the compose file"
 jq -r '.services["freebox-exporter"].image' <<<"$config" \
-  | grep -qE '^ghcr\.io/shackerd/freebox-exporter-rs:v[0-9]+\.[0-9]+\.[0-9]+$' \
-  || fail "freebox-exporter image is not pinned to a release tag"
+  | grep -qE '^ghcr\.io/shackerd/freebox-exporter-rs:v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?@sha256:[0-9a-f]{64}$' \
+  || fail "freebox-exporter image is not pinned to a version tag and digest"
 jq -e '.configs.freebox_exporter_config.content | test("data_directory = \"/data\"\n")' \
   <<<"$config" >/dev/null || fail "freebox_exporter_config does not keep its data on /data"
 jq -e '.configs.victoriametrics_scrape.content
   | test("- job_name: freebox\n(.*\n)*? *- targets: \\[\"freebox-exporter:9102\"\\]\n")' \
   <<<"$config" >/dev/null || fail "victoriametrics_scrape has no freebox job on freebox-exporter:9102"
+
+# nvidia-gpu-exporter: pid: host (it maps the PIDs of the GPU to their
+# cgroup), so everything else is locked down: no label, port or volume,
+# victoria network only (internal, no route out), 65534, read-only root,
+# no capability, no privilege gain, and the nvidia device with the utility
+# capability only (NVML, no compute). The image is pinned by digest.
+jq -e '.services["nvidia-gpu-exporter"] | ((.labels // {}) | del(.["mydocker.config-hash"]) | length) == 0
+  and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
+  and ((.volumes // []) | length) == 0
+  and (.networks | keys) == ["victoria"]
+  and .pid == "host" and .user == "65534:65534" and .read_only == true
+  and (.cap_drop | index("ALL")) and (.security_opt | index("no-new-privileges:true"))' \
+  <<<"$config" >/dev/null \
+  || fail "nvidia-gpu-exporter is not isolated (labels, ports, volumes, networks, user, read_only, caps)"
+jq -e '.services["nvidia-gpu-exporter"].deploy.resources.reservations.devices
+  | length == 1 and .[0].driver == "nvidia" and .[0].capabilities == ["utility"]' \
+  <<<"$config" >/dev/null || fail "nvidia-gpu-exporter gets more than the nvidia utility capability"
+jq -r '.services["nvidia-gpu-exporter"].image' <<<"$config" \
+  | grep -qE '^utkuozdemir/nvidia_gpu_exporter:[0-9]+\.[0-9]+\.[0-9]+-nvml@sha256:[0-9a-f]{64}$' \
+  || fail "nvidia-gpu-exporter image is not the NVML build pinned by digest"
+for flag in --collect.compute-apps --collect.compute-apps-identity; do
+  jq -e --arg f "$flag" '.services["nvidia-gpu-exporter"].command | index($f)' <<<"$config" >/dev/null \
+    || fail "nvidia-gpu-exporter runs without $flag"
+done
+jq -e '.configs.victoriametrics_scrape.content
+  | test("- job_name: nvidia-gpu\n(.*\n)*? *- targets: \\[\"nvidia-gpu-exporter:9835\"\\]\n")' \
+  <<<"$config" >/dev/null || fail "victoriametrics_scrape has no nvidia-gpu job on nvidia-gpu-exporter:9835"
+# The container name of a GPU process: vmalert-logs records the
+# container_id -> container_name pairs, vmalert-metrics joins them
+# (metrics_rules_unittest.yaml checks the join itself).
+jq -e '.configs.vmalert_logs_rules.content | test("- record: docker_container_info\n")' \
+  <<<"$config" >/dev/null || fail "vmalert_logs_rules does not record docker_container_info"
+jq -e '.configs.vmalert_metrics_rules.content
+  | test("- record: container:nvidia_smi_compute_app_used_memory_bytes\n")' \
+  <<<"$config" >/dev/null || fail "vmalert_metrics_rules does not record the VRAM per container"
 
 # victoriametrics scrapes unpoller with the victoriametrics_scrape config
 # (test_unpoller.sh checks that VictoriaMetrics accepts it and scrapes).

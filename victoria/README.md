@@ -11,6 +11,7 @@ This stack replaces OpenObserve. It deploys the following services:
 - `unpoller`: polls the UniFi gateway and exposes its metrics to VictoriaMetrics, which scrapes them.
 - `snmp-exporter`: polls the Synology NAS over SNMPv3 when VictoriaMetrics scrapes it.
 - `freebox-exporter`: polls the Freebox API (connection, fiber, system) and exposes the metrics to VictoriaMetrics, which scrapes them.
+- `nvidia-gpu-exporter`: reads the GPU of the Docker host through NVML (totals and the VRAM of each process) and exposes the metrics to VictoriaMetrics, which scrapes them.
 - `victoria-init`: one-shot container that fixes the ownership of the data directories.
 
 ## Service-Specific Configuration Variables
@@ -26,6 +27,7 @@ This stack replaces OpenObserve. It deploys the following services:
 | `UNPOLLER_VERSION` | unpoller image tag (`ghcr.io/unpoller/unpoller`). | `v5.9.6` |
 | `SNMP_EXPORTER_VERSION` | snmp_exporter image tag (`prom/snmp-exporter`, the compose file adds the `-distroless` suffix). | `v0.31.0` |
 | `FREEBOX_EXPORTER_VERSION` | freebox-exporter-rs image reference (`ghcr.io/shackerd/freebox-exporter-rs`), tag and digest. `v0.0.29-beta2` is a beta built from `main` with no git tag or release: the digest pins the image, since the tag can be pushed again. | `v0.0.29-beta2@sha256:7da4b43d…` |
+| `NVIDIA_GPU_EXPORTER_VERSION` | nvidia_gpu_exporter image reference (`utkuozdemir/nvidia_gpu_exporter`), `-nvml` tag and digest. The `-nvml` variant reads NVML directly and needs no `nvidia-smi` binary in the image. | `1.18.0-nvml@sha256:bf82122f…` |
 | `GRAFANA_LOGS_PLUGIN_VERSION` | Version of the `victoriametrics-logs-datasource` Grafana plugin. | `0.34.0` |
 | `GRAFANA_MCP_VERSION` | mcp-grafana image tag (`grafana/mcp-grafana`, no `v` prefix). | `2.4.0` |
 | `VICTORIA_LOGS_DOMAIN` | Host name of the logs UI and of the OTLP logs endpoint. Must equal `VICTORIA_LOGS_HOST_LOCAL` in `management/.env`. | `logs.example.com` |
@@ -258,6 +260,39 @@ ssh <docker-host> "docker exec vmalert-logs wget -qO- 'http://victoriametrics:84
 ```
 
 `up` must be `1`, and `fbx_exporter_connection_state{state="up"}` too. The other useful metrics are `fbx_exporter_connection_ftth_link`, `fbx_exporter_connection_ftth_sfp_has_signal`, `fbx_exporter_connection_rate_down` and `_rate_up` (current throughput), `fbx_exporter_connection_bandwidth_down` and `_bandwidth_up` (line capacity), `fbx_exporter_system_uptime_val`, `fbx_exporter_system_temp_cpum` and the other temperatures, and `fbx_exporter_system_fan_rpm`. Some metrics carry their value as a label set to `1`: `fbx_exporter_connection_media{media}`, `fbx_exporter_system_box_model_name{model_name}` and `fbx_exporter_connection_ipv4{ipv4}`, which holds the public IP. These names come from the exporter source and are not yet checked against the box. No dashboard uses them yet.
+
+### GPU Metrics (`nvidia-gpu-exporter`)
+The Docker host has one NVIDIA GeForce GTX 1060 6 GB, shared by Immich machine learning, Ollama, AudioMuse and any other container that asks for the GPU. [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter) reads it through NVML and exposes the metrics on port 9835. The `nvidia-gpu` job of `victoriametrics_scrape` scrapes `nvidia-gpu-exporter:9835` every 30 seconds. Two flags turn on the per-process metrics: `--collect.compute-apps` adds `nvidia_smi_compute_app_used_memory_bytes{uuid, pid}`, the VRAM of each process on the GPU, and `--collect.compute-apps-identity` adds the `container_id` label of that process.
+
+The exporter needs `pid: host`. NVML reports host PIDs, and the exporter finds the container of a PID by reading `/proc/<pid>/cgroup`, which it can only see in the host PID namespace. This lets the container see every process of the host, so the rest of the service is locked down: user `65534:65534`, read-only root file system, every capability dropped, `no-new-privileges`, no volume, no label, no published port and no Traefik route. It is on the internal `victoria` network only. The GPU reservation asks for the `utility` capability alone, which gives NVML and no CUDA compute. `tests/test_stack.sh` checks each of these settings.
+
+The exporter labels a process with its `container_id` (64 hex characters) and no container name. Two recording rules add the name:
+
+1. `vmalert-logs` (group `docker_containers`, every 5 minutes) records `docker_container_info{host_name, container_id, container_name}` from the `{log_stream="docker"}` logs of the last hour.
+2. `vmalert-metrics` (group `gpu`, every minute) records `container:nvidia_smi_compute_app_used_memory_bytes`: the exporter series joined on `container_id` with the names seen in the last day. A process with no known name, or one outside any container (empty `container_id`), keeps its series without `container_name`.
+
+VRAM per container:
+
+```promql
+sum by (container_name) (container:nvidia_smi_compute_app_used_memory_bytes)
+```
+
+Limits:
+
+- A container that has written no log for the last day has no name: its series carries only `container_id`.
+- A process shows up only if it holds VRAM at a scrape. A job shorter than 30 seconds can fall between two scrapes.
+- The per-process GPU utilization is probably not available on a Pascal card: NVML reports only the memory for each process. The GPU totals (`nvidia_smi_utilization_gpu_ratio`, `nvidia_smi_memory_used_bytes`, temperature, power) are not affected.
+- A container renamed during the day shows under two names for the same `container_id` until the old name leaves the one-day window. The `gpu` rule then fails with a many-to-many match error for that container, and `vmalert` logs the error.
+
+After deployment, check the scrape and the per-process collection:
+
+```bash
+ssh <docker-host> "docker exec vmalert-logs wget -qO- 'http://victoriametrics:8428/api/v1/query?query=up%7Bjob%3D%22nvidia-gpu%22%7D'"
+ssh <docker-host> "docker exec vmalert-logs wget -qO- 'http://victoriametrics:8428/api/v1/query?query=nvidia_smi_compute_apps_last_collect_success'"
+ssh <docker-host> "docker exec vmalert-logs wget -qO- 'http://victoriametrics:8428/api/v1/query?query=container%3Anvidia_smi_compute_app_used_memory_bytes'"
+```
+
+`up` and `nvidia_smi_compute_apps_last_collect_success` must be `1`. If `up` is `0`, read the exporter log: NVML access as a non-root user is not yet checked on the host. The third query must return one series per process on the GPU, with a `container_name` label. Compare its `container_id` values with `docker ps --no-trunc` on the host to check that the exporter reports full 64-character IDs.
 
 ## 3. Vector (`vector`)
 
