@@ -1,0 +1,396 @@
+groups:
+  - name: proxmox_metrics
+    interval: 1m
+    rules:
+      # lag() is the age of the last sample in the 24 h window: one
+      # alert per node that sent metrics in the last 24 hours.
+      - alert: proxmox_metrics_silent
+        expr: lag(proxmox_node_uptime_seconds[24h]) > 600
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Plus de metrique Proxmox de {{ $labels.host_name }} depuis 10 minutes"
+          description: "Le serveur de metriques OpenTelemetry de Proxmox n'a plus rien envoye depuis 10 minutes"
+      - alert: proxmox_storage_usage_high
+        expr: proxmox_storage_used_bytes / proxmox_storage_total_bytes >= 0.85
+        keep_firing_for: 720m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stockage Proxmox {{ $labels.storage }} occupe a {{ $value | humanizePercentage }}"
+          description: "Un stockage Proxmox depasse 85% d'occupation"
+      # ZFS ARC is cache: the kernel gives it back under pressure.
+      - alert: proxmox_node_memory_high
+        expr: >-
+          (proxmox_node_memory_memused_bytes - proxmox_node_memory_arcsize_bytes)
+          / proxmox_node_memory_memtotal_bytes >= 0.9
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memoire Proxmox hors ARC a {{ $value | humanizePercentage }}"
+          description: "La memoire de l'hote Proxmox hors cache ZFS ARC depasse 90%"
+      - alert: proxmox_node_cpu_high
+        expr: avg_over_time(proxmox_node_cpustat_cpu_percent[15m]) > 0.9
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU Proxmox a {{ $value | humanizePercentage }} en moyenne sur 15 minutes"
+          description: "Le CPU de l'hote Proxmox est en moyenne au-dessus de 90% pendant 15 minutes"
+      # Stopped guests report an uptime of 0 and are ignored.
+      - alert: proxmox_guest_restarted
+        expr: (proxmox_vm_uptime_seconds > 0) < 600
+        keep_firing_for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Invite Proxmox {{ $labels.name }} ({{ $labels.vmid }}) redemarre il y a {{ $value }} s"
+          description: "Une VM ou un conteneur Proxmox a redemarre (uptime sous 10 minutes, les invites arretes sont ignores)"
+  # unpoller answers its scrape with up = 1 even when it cannot log in
+  # to UniFi: it then exports only its go_* metrics. absent() also fires
+  # when unpoller is down. for: 10m covers its first poll after a start.
+  - name: unifi_metrics
+    interval: 1m
+    rules:
+      - alert: unpoller_no_unifi_data
+        expr: absent(unpoller_device_info{job="unpoller"})
+        for: 10m
+        keep_firing_for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Aucune donnee UniFi collectee par unpoller depuis 10 minutes"
+          description: "unpoller ne remonte aucun equipement UniFi : URL, compte ou controleur injoignable, ou unpoller arrete"
+      # A device that unpoller listed in the last 24 hours and no
+      # longer reports: offline, or removed from the controller.
+      - alert: unifi_device_down
+        expr: lag(unpoller_device_uptime_seconds[24h]) > 600
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Equipement UniFi {{ $labels.name }} absent depuis 10 minutes"
+          description: "unpoller ne remonte plus cet equipement UniFi : hors ligne ou retire du controleur"
+  # Host metrics from the local OpenTelemetry collectors.
+  - name: host_metrics
+    interval: 1m
+    rules:
+      # Age of the newest CPU sample per host. The dashboards read this
+      # series instead of running lag() over 24 h at each refresh.
+      - record: host_name:metrics_age_seconds:max
+        expr: max by (host_name) (lag(system_cpu_time_seconds_total[24h]))
+      - alert: host_metrics_silent
+        expr: max by (host_name) (lag(system_cpu_time_seconds_total[24h])) > 600
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Plus de metrique systeme de {{ $labels.host_name }} depuis 10 minutes"
+          description: "Le collecteur OpenTelemetry de l'hote n'envoie plus rien depuis 10 minutes : hote ou collecteur arrete"
+      # Several hosts report the same NFS or ZFS dataset: one alert per
+      # device. vfat (EFI) and tmpfs are left out.
+      - alert: filesystem_usage_high
+        expr: >-
+          max by (device, type) (system_filesystem_utilization_ratio{type!~"vfat|tmpfs"}) >= 0.9
+          < 0.95
+        for: 15m
+        keep_firing_for: 720m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Systeme de fichiers {{ $labels.device }} occupe a {{ $value | humanizePercentage }}"
+          description: "Un systeme de fichiers depasse 90% d'occupation"
+      - alert: filesystem_usage_critical
+        expr: >-
+          max by (device, type) (system_filesystem_utilization_ratio{type!~"vfat|tmpfs"}) >= 0.95
+        for: 15m
+        keep_firing_for: 120m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Systeme de fichiers {{ $labels.device }} occupe a {{ $value | humanizePercentage }}"
+          description: "Un systeme de fichiers depasse 95% d'occupation"
+  - name: zfs
+    interval: 1m
+    rules:
+      # zfs_pool_health: 0 is ONLINE, anything else is degraded,
+      # faulted, offline, removed or unavailable.
+      - alert: zfs_pool_degraded
+        expr: zfs_pool_health != 0
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pool ZFS {{ $labels.pool }} pas ONLINE (etat {{ $value }})"
+          description: "Un pool ZFS est degrade ou en panne : verifier zpool status"
+      - alert: zfs_pool_capacity_high
+        expr: zfs_pool_capacity_ratio >= 0.85
+        for: 15m
+        keep_firing_for: 720m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pool ZFS {{ $labels.pool }} rempli a {{ $value | humanizePercentage }}"
+          description: "Un pool ZFS depasse 85% de remplissage, au-dela les performances chutent"
+      # Without fresh data the two rules above go quiet: a stopped
+      # zfs_exporter would hide a degraded pool. Same shape as
+      # smart_data_missing: a host seen within 24h, silent for 30m.
+      - alert: zfs_data_missing
+        expr: max by (host_name) (lag(zfs_pool_health[24h])) > 1800
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plus de donnee ZFS de {{ $labels.host_name }} depuis 30 minutes"
+          description: "zfs_exporter ou sa collecte est arrete : l'etat des pools n'est plus surveille"
+  # smartctl_exporter on the hosts (myansible role smartctl_exporter).
+  # Raw counts are gauges: the rise above their 24h minimum, not delta,
+  # which counts the first value of a new series (an old CRC error
+  # after a deployment) as a rise. A normalized value at or under its
+  # non-zero threshold is the drive's own failure flag.
+  - name: smart
+    interval: 1m
+    rules:
+      - alert: smart_status_failed
+        expr: smartctl_device_smart_status == 0
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disque {{ $labels.device }} de {{ $labels.host_name }} : bilan SMART en echec"
+          description: "Le disque annonce lui-meme une panne prochaine : sauvegarder et le remplacer"
+      - alert: smart_attribute_failing
+        expr: >-
+          max by (host_name, device, attribute_name) (smartctl_device_attribute{attribute_value_type="value"}
+          <= ignoring(attribute_value_type) (smartctl_device_attribute{attribute_value_type="thresh"} > 0))
+        keep_firing_for: 1440m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disque {{ $labels.device }} de {{ $labels.host_name }} : {{ $labels.attribute_name }} sous son seuil ({{ $value }})"
+          description: "Un attribut SMART normalise est descendu a son seuil de panne"
+      - alert: smart_sectors_growing
+        expr: >-
+          max by (host_name, device, attribute_name) (smartctl_device_attribute{attribute_value_type="raw",
+          attribute_name=~"Reallocated_Sector_Ct|Current_Pending_Sector|Current_Pending_ECC_Cnt|Offline_Uncorrectable|Reported_Uncorrect"}
+          - min_over_time(smartctl_device_attribute{attribute_value_type="raw",
+          attribute_name=~"Reallocated_Sector_Ct|Current_Pending_Sector|Current_Pending_ECC_Cnt|Offline_Uncorrectable|Reported_Uncorrect"}[24h])) > 0
+        keep_firing_for: 1440m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disque {{ $labels.device }} de {{ $labels.host_name }} : {{ $labels.attribute_name }} +{{ $value }} en 24h"
+          description: "Des secteurs realloues, en attente ou illisibles apparaissent : le disque se degrade"
+      - alert: smart_crc_errors_growing
+        expr: >-
+          max by (host_name, device) (smartctl_device_attribute{attribute_value_type="raw",
+          attribute_name=~"UDMA_CRC_Error_Count|CRC_Error_Count"}
+          - min_over_time(smartctl_device_attribute{attribute_value_type="raw",
+          attribute_name=~"UDMA_CRC_Error_Count|CRC_Error_Count"}[24h])) > 0
+        keep_firing_for: 1440m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disque {{ $labels.device }} de {{ $labels.host_name }} : +{{ $value }} erreurs CRC en 24h"
+          description: "Des erreurs de transfert apparaissent entre le disque et le controleur : cable ou connecteur"
+      - alert: smart_temperature_high
+        expr: max by (host_name, device) (smartctl_device_temperature{temperature_type="current"}) > 55
+        for: 10m
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disque {{ $labels.device }} de {{ $labels.host_name }} a {{ $value }} degres"
+          description: "Un disque d'hote depasse 55 degres depuis 10 minutes"
+      - alert: smart_data_missing
+        expr: max by (host_name) (lag(smartctl_device_smart_status[24h])) > 1800
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plus de donnee SMART de {{ $labels.host_name }} depuis 30 minutes"
+          description: "smartctl_exporter ou sa collecte par le collecteur OpenTelemetry est arrete"
+  # Synology status OIDs are 1 when normal. diskBadSector is -1 on
+  # cache devices, so only a positive count fires.
+  - name: synology_metrics
+    interval: 1m
+    rules:
+      - alert: synology_system_failed
+        expr: >-
+          {job="synology", __name__=~"systemStatus|powerStatus|systemFanStatus|cpuFanStatus"} != 1
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "NAS Synology : {{ $labels.__name__ }} en defaut"
+          description: "Le NAS signale une panne systeme, d'alimentation ou de ventilateur"
+      - alert: synology_raid_degraded
+        expr: raidStatus{job="synology"} != 1
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Volume Synology {{ $labels.raidName }} pas normal (etat {{ $value }})"
+          description: "Un volume RAID du NAS est degrade, en reconstruction ou en panne"
+      - alert: synology_disk_failed
+        expr: >-
+          {job="synology", __name__=~"diskStatus|diskHealthStatus"} != 1
+          or diskBadSector{job="synology"} > 0
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disque Synology {{ $labels.diskID }} : {{ $labels.__name__ }} = {{ $value }}"
+          description: "Un disque du NAS est en defaut ou a des secteurs defectueux"
+      - alert: synology_temperature_high
+        expr: >-
+          temperature{job="synology"} > 60 or diskTemperature{job="synology"} > 55
+        for: 10m
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Temperature du NAS Synology a {{ $value }} degres"
+          description: "Le NAS depasse 60 degres ou un disque depasse 55 degres"
+      - alert: synology_scrape_down
+        expr: up{job="synology"} == 0
+        for: 10m
+        keep_firing_for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Le NAS Synology ne repond plus en SNMP depuis 10 minutes"
+          description: "snmp_exporter n'interroge plus le NAS : NAS arrete, reseau ou identifiants SNMPv3"
+  # Freebox Delta in bridge mode (freebox-exporter). connection_state
+  # is 1 while the Internet connection of the box is up. The SMS of a
+  # connection loss leaves only once Internet is back: keep_firing_for
+  # keeps the alert firing until then for an outage under 60 minutes.
+  - name: freebox_metrics
+    interval: 1m
+    rules:
+      - alert: freebox_connection_down
+        expr: fbx_exporter_connection_state{job="freebox", state="up"} == 0
+        for: 2m
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Freebox : connexion Internet coupee"
+          description: "La Freebox signale sa connexion Internet (fibre) autre que up"
+      - alert: freebox_scrape_down
+        expr: up{job="freebox"} == 0
+        for: 10m
+        keep_firing_for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "L'exporter Freebox ne repond plus depuis 10 minutes"
+          description: "freebox-exporter arrete, sans token, token revoque ou API de la Freebox injoignable"
+      # pwr_rx is in hundredths of dBm. GPON receivers lose the link
+      # around -28 dBm: below -26 the fibre or a connector is degrading.
+      - alert: freebox_fiber_signal_low
+        expr: (fbx_exporter_connection_ftth_sfp_pwr_rx{job="freebox"} / 100 < -26) and on (job) (fbx_exporter_connection_ftth_sfp_has_signal{job="freebox"} == 1)
+        for: 30m
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Freebox : signal fibre faible ({{ $value | printf \"%.1f\" }} dBm)"
+          description: "Puissance optique recue sous -26 dBm depuis 30 minutes : fibre, connecteur ou SFP a verifier"
+      - alert: freebox_temperature_high
+        expr: max by (job) (fbx_exporter_system_temp_cpu{job="freebox"}) > 85
+        for: 15m
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Freebox : processeur a {{ $value }} degres"
+          description: "Temperature CPU de la Freebox au-dessus de 85 degres depuis 15 minutes : ventilation ou ventilateur a verifier"
+  # Health of the stack itself (job per component in
+  # victoriametrics_scrape).
+  - name: victoria_stack
+    interval: 1m
+    rules:
+      # Dead man's switch: always firing while the SMS path works.
+      # Alertmanager sends it every minute to an Uptime Kuma push
+      # monitor (receiver watchdog), outside Vector and the Free Mobile
+      # sink. Kuma alerts on its own when the pushes stop: host,
+      # victoriametrics, vmalert-metrics or alertmanager down (nothing
+      # evaluates or sends), or the expression below empty: vector,
+      # victorialogs or vmalert-logs down or never scraped, or the
+      # free_mobile sink failing. No keep_firing_for: the pushes must
+      # stop as soon as the SMS path breaks.
+      - alert: watchdog
+        expr: >-
+          vector(1) unless on() (
+            max(up{job=~"vector|victorialogs|vmalert-logs"} == 0)
+            or absent(up{job="vector"})
+            or absent(up{job="victorialogs"})
+            or absent(up{job="vmalert-logs"})
+            or sum(increase(vector_component_errors_total{component_id="free_mobile"}[30m])) > 0
+          )
+        labels:
+          severity: none
+        annotations:
+          summary: "Chaine d'alerte victoria operationnelle"
+          description: "Toujours active tant que la chaine SMS fonctionne ; Uptime Kuma alerte quand elle se tait"
+      - alert: victoria_component_down
+        expr: >-
+          up{job=~"victoriametrics|victorialogs|vmalert-logs|vmalert-metrics|alertmanager|vector"} == 0
+        for: 5m
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Composant victoria {{ $labels.job }} injoignable depuis 5 minutes"
+          description: "victoriametrics ne scrape plus ce composant de la stack : conteneur arrete ou en echec"
+      # A failing query (datasource down, LogsQL or MetricsQL error)
+      # leaves its rule silent: no alert, whatever happens. Two failed
+      # evaluations of the same rule in 2 hours: a restart of
+      # victorialogs or victoriametrics fails one evaluation per rule,
+      # and the 60m group (proxmox_backup) still fits twice.
+      - alert: vmalert_rule_errors
+        expr: >-
+          sum by (job, group, alertname) (
+            increase(vmalert_alerting_rules_errors_total[2h])
+          ) >= 2
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Regle {{ $labels.alertname }} ({{ $labels.job }}) en erreur a plusieurs evaluations"
+          description: "vmalert n'arrive plus a evaluer une regle d'alerte : la regle ne peut plus se declencher"
+      # The watchdog receiver failing (Uptime Kuma unreachable) comes
+      # by SMS; the sms receiver failing stops the watchdog instead.
+      # Failures in every 5 minute window for 10 minutes: the watchdog
+      # pushes every minute, so a restart of Uptime Kuma stays out.
+      - alert: alertmanager_notifications_failed
+        expr: >-
+          sum by (integration, receiver_name) (
+            increase(alertmanager_notifications_failed_total[5m])
+          ) > 0
+        for: 10m
+        keep_firing_for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alertmanager n'arrive plus a notifier {{ $labels.receiver_name }} ({{ $labels.integration }})"
+          description: "Des notifications d'Alertmanager echouent : webhook injoignable ou en erreur"
+      # vmalert failing to hand alerts to Alertmanager. Mostly for
+      # vmalert-logs: a send failure in vmalert-metrics also stops the
+      # watchdog. Errors in every 10 minute window for 15 minutes: a
+      # restart of Alertmanager, shorter than the for, stays out.
+      - alert: vmalert_send_failed
+        expr: >-
+          sum by (job) (
+            increase(vmalert_alerts_send_errors_total[10m])
+          ) > 0
+        for: 15m
+        keep_firing_for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} n'arrive plus a envoyer ses alertes a Alertmanager"
+          description: "Des alertes declenchees n'atteignent pas Alertmanager : aucun SMS ne part pour elles"

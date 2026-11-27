@@ -1,0 +1,247 @@
+groups:
+  - name: authentik
+    interval: 5m
+    rules:
+      - alert: authentik_login_failed_burst
+        expr: >-
+          _time:15m {log_stream="authentik"} ak_kind:=event
+          ak_action:in(login_failed, invalid_identifier)
+          | stats by (ak_user, ak_client_ip) count() as attempts
+          | total_stats sum(attempts) as failures | filter failures:>=5
+          | fields ak_user, ak_client_ip, failures
+        keep_firing_for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} echecs de connexion Authentik en 15 minutes{{ with $labels.ak_user }}, dont {{ . }}{{ end }}{{ with $labels.ak_client_ip }} depuis {{ . }}{{ end }}"
+          description: "Au moins 5 echecs de connexion Authentik en 15 minutes"
+      - alert: authentik_sensitive_event
+        expr: >-
+          _time:5m {log_stream="authentik"} ak_kind:=event
+          ak_action:in(suspicious_request, impersonation_started,
+          system_exception, policy_exception, configuration_error)
+          | stats by (ak_action, ak_user, ak_client_ip) count() as events | filter events:>=1
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Evenement Authentik sensible {{ $labels.ak_action }} ({{ $value }} en 5 minutes){{ with $labels.ak_user }} pour {{ . }}{{ end }}{{ with $labels.ak_client_ip }} depuis {{ . }}{{ end }}"
+          description: "Evenement Authentik sensible (requete suspecte, impersonation, exception systeme ou de politique, erreur de configuration)"
+      - alert: authentik_errors
+        expr: >-
+          _time:15m {log_stream="authentik"} ak_level:in(error, critical)
+          | stats by (ak_component) count() as component_errors
+          | total_stats sum(component_errors) as errors | filter errors:>=3
+          | fields ak_component, errors
+        keep_firing_for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} erreurs Authentik en 15 minutes, dont authentik {{ $labels.ak_component }}"
+          description: "Au moins 3 erreurs Authentik (server, worker ou postgresql) en 15 minutes"
+      # Armed only for a component seen in the last 24 hours.
+      - alert: authentik_logs_silent
+        expr: >-
+          _time:24h {log_stream="authentik"} ak_component:in(server, worker)
+          | stats by (ak_component) count() if (_time:10m) as recent
+          | filter recent:<1
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "authentik {{ $labels.ak_component }} n'envoie plus de log depuis 10 minutes"
+          description: "authentik_server ou authentik_worker n'a plus envoye de log depuis 10 minutes"
+  - name: proxmox_logs
+    interval: 5m
+    rules:
+      - alert: proxmox_backup_failed
+        expr: >-
+          _time:15m {log_stream="proxmox"} pve_backup_event:in(job_failed, vm_failed)
+          | stats by (pve_backup_event, pve_vmid) count() as failures | filter failures:>=1
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sauvegarde vzdump Proxmox en echec ({{ $labels.pve_backup_event }}{{ with $labels.pve_vmid }} VM {{ . }}{{ end }}, {{ $value }} en 15 minutes)"
+          description: "Une sauvegarde vzdump Proxmox echoue (job ou invite)"
+      # acmerenew included: the proxmox_tls role of myansible renews the
+      # certificate with step and deletes the ACME settings, so a failed
+      # acmerenew means ACME came back.
+      - alert: proxmox_task_failed
+        expr: >-
+          _time:15m {log_stream="proxmox"} pve_task_failed:=true
+          | stats by (pve_task_type, pve_vmid, pve_task_status) count() as failures
+          | filter failures:>=1
+        keep_firing_for: 1440m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tache Proxmox {{ $labels.pve_task_type }}{{ with $labels.pve_vmid }} VM {{ . }}{{ end }} en erreur ({{ $value }} en 15 minutes){{ with $labels.pve_task_status }} : {{ . }}{{ end }}"
+          description: "Une tache Proxmox se termine en erreur"
+      - alert: proxmox_auth_failed_burst
+        expr: >-
+          _time:15m {log_stream="proxmox"} pve_auth_result:=failure
+          | stats by (pve_user, pve_client_ip) count() as attempts
+          | total_stats sum(attempts) as failures | filter failures:>=5
+          | fields pve_user, pve_client_ip, failures
+        keep_firing_for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} echecs d'authentification Proxmox en 15 minutes{{ with $labels.pve_user }}, dont {{ . }}{{ end }}{{ with $labels.pve_client_ip }} depuis {{ . }}{{ end }}"
+          description: "Au moins 5 echecs d'authentification Proxmox en 15 minutes"
+  - name: proxmox_backup
+    interval: 60m
+    rules:
+      # No successful vzdump job in 26 hours. Armed only once the
+      # stream holds records older than 24 hours: a new install or a
+      # lost history stays quiet.
+      - alert: proxmox_backup_missing
+        expr: >-
+          _time:26h {log_stream="proxmox"}
+          | stats count() if (pve_backup_event:=job_ok) as ok,
+          count() if (_time:<now-24h) as armed
+          | filter ok:<1 armed:>0 | fields ok
+        keep_firing_for: 720m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Aucune sauvegarde vzdump Proxmox reussie depuis 26 heures"
+          description: "Aucune sauvegarde vzdump Proxmox terminee avec succes depuis 26 heures (ne s'arme qu'apres 24 heures de logs)"
+  # Hosts that send journald, file or Docker logs through their local
+  # collector. A host that logged in the last 24 hours and stopped for
+  # 30 minutes fires; one retired for more than 24 hours goes quiet.
+  - name: host_logs
+    interval: 5m
+    rules:
+      - alert: host_logs_silent
+        expr: >-
+          _time:24h log_stream:in(journald, files, docker)
+          | stats by (host_name) count() if (_time:30m) as recent
+          | filter recent:<1
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plus de log de {{ $labels.host_name }} depuis 30 minutes"
+          description: "Un hote qui envoyait des logs journald, fichiers ou Docker n'envoie plus rien depuis 30 minutes"
+      # Disk, filesystem and hardware errors, and hung tasks ("task
+      # <name>:<pid> blocked for more than <n> seconds"). The OOM killer
+      # has its own rule, oom_kill, which names the process.
+      - alert: kernel_critical
+        expr: >-
+          _time:15m {log_stream="journald"} body_syslog_identifier:=kernel
+          ("I/O error" OR "EXT4-fs error" OR "Hardware Error" OR "blocked for more than")
+          | stats by (host_name) count() as events | filter events:>=1
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} erreurs noyau critiques sur {{ $labels.host_name }} en 15 minutes"
+          description: "Le noyau signale une erreur d'E/S, une erreur EXT4, une erreur materielle ou une tache bloquee"
+      # The OOM killer, for the whole host ("Out of memory: Killed
+      # process") or for a cgroup such as a container with a memory
+      # limit ("Memory cgroup out of memory: Killed process").
+      - alert: oom_kill
+        expr: >-
+          _time:15m {log_stream="journald"} body_syslog_identifier:=kernel "Killed process"
+          | extract "Killed process <pid> (<process>)" from _msg
+          | stats by (host_name, process) count() as kills | filter kills:>=1
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Processus {{ $labels.process }} tue par manque de memoire sur {{ $labels.host_name }} ({{ $value }} en 15 minutes)"
+          description: "Le noyau a tue un processus faute de memoire (OOM killer), sur l'hote ou dans la limite memoire d'un conteneur"
+      # A unit that ends in the failed state ("<unit>: Failed with
+      # result '<result>'." from systemd), system or user manager. It
+      # covers the timers of the hosts too, such as proxmox-tls-renew.
+      # The message is in _msg: vector names body_message in _msg_field.
+      - alert: systemd_unit_failed
+        expr: >-
+          _time:15m {log_stream="journald"} body_syslog_identifier:=systemd
+          "Failed with result"
+          | extract "<systemd_unit>: Failed with result '<unit_result>'" from _msg
+          | stats by (host_name, systemd_unit, unit_result) count() as failures
+          | filter failures:>=1
+        keep_firing_for: 1440m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unit {{ $labels.systemd_unit }} en echec ({{ $labels.unit_result }}) sur {{ $labels.host_name }}"
+          description: "Une unit systemd se termine en etat failed"
+      # A container that restarts again and again. containerd logs
+      # "connecting to shim <container id>" at each start, and the id
+      # stays the same across the restarts of a restart policy. Docker
+      # waits at most a minute between two restarts, so a crash loop
+      # starts a container well over 5 times in 15 minutes; a stack
+      # redeploy or the Portainer polling that reruns victoria-init
+      # start one 3 times at most. The name comes from the container's
+      # own Docker logs, when it wrote some. The GitLab runner helper
+      # containers (runner-...-predefined) start once per job step, so
+      # they stay out. Only hosts whose containerd logs to journald.
+      - alert: container_restart_loop
+        expr: >-
+          _time:15m {log_stream="journald"} body_syslog_identifier:=containerd "connecting to shim"
+          | extract_regexp "connecting to shim (?P<container_id>[0-9a-f]{64})" from _msg
+          | join by (container_id) (_time:1h {log_stream="docker"} | stats by (container_id, container_name) count() as lines)
+          | filter -container_name:~"^runner-.*-predefined$"
+          | stats by (host_name, container_id, container_name) count() as starts
+          | filter starts:>=5
+        keep_firing_for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Conteneur {{ with $labels.container_name }}{{ . }}{{ else }}{{ slice $labels.container_id 0 12 }}{{ end }} redemarre en boucle sur {{ $labels.host_name }} ({{ $value }} demarrages en 15 minutes)"
+          description: "Un conteneur Docker redemarre sans cesse : il s'arrete peu apres chaque demarrage"
+  # AdGuard resolvers (querylog shipped as dns_queries). A resolver that
+  # logged in the last 24 hours and stopped for an hour fires; the hour
+  # covers the quiet nights of the secondary resolver.
+  - name: dns
+    interval: 5m
+    rules:
+      - alert: dns_resolver_silent
+        expr: >-
+          _time:24h {log_stream="dns_queries"}
+          | stats by (host_name) count() if (_time:1h) as recent
+          | filter recent:<1
+        keep_firing_for: 120m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plus de requete DNS journalisee par {{ $labels.host_name }} depuis 1 heure"
+          description: "Le resolveur AdGuard n'envoie plus son journal de requetes: service arrete ou collecte cassee"
+  # UniFi IPS/IDS events (CEF over syslog). Signature 203 is a plain
+  # firewall block and stays on the firewall dashboard.
+  - name: unifi_security
+    interval: 5m
+    rules:
+      - alert: unifi_ips_event
+        expr: >-
+          _time:15m {log_stream="syslog"} appname:CEF
+          ((cef_ext_unificategory:Security -cef_signature_id:203) or cef_name:~"(?i)threat|intrus|honeypot")
+          | stats by (cef_name, cef_ext_src) count() as events | filter events:>=1
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} evenements IPS UniFi ({{ $labels.cef_name }}){{ with $labels.cef_ext_src }} depuis {{ . }}{{ end }} en 15 minutes"
+          description: "La passerelle UniFi signale une menace detectee (IPS/IDS ou honeypot)"
+  # Traefik access logs. A service that answers 5xx in at least 3 of
+  # the last six 5-minute buckets, 5 or more in each: a redeploy gives
+  # 502s for a minute or two, a broken service goes on.
+  - name: traefik
+    interval: 5m
+    rules:
+      - alert: traefik_5xx_burst
+        expr: >-
+          _time:30m {log_stream="traefik"} app_downstreamstatus:>=500
+          | stats by (app_servicename, _time:5m) count() as errors | filter errors:>=5
+          | stats by (app_servicename) count() as buckets, sum(errors) as errors
+          | filter buckets:>=3 | fields app_servicename, errors
+        keep_firing_for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} erreurs 5xx de {{ $labels.app_servicename }} en 30 minutes"
+          description: "Un service derriere Traefik repond en erreur 5xx depuis au moins 15 minutes"

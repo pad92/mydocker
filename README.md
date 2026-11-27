@@ -208,7 +208,7 @@ To enable this automatic protection in your local repository, run the following 
 
 ```bash
 # 1. Make hook scripts executable
-chmod +x .githooks/pre-commit .githooks/post-commit .githooks/git-leak-shield.py
+chmod +x .githooks/pre-commit .githooks/post-commit .githooks/git-leak-shield.py .githooks/victoria-build-check.sh
 
 # 2. Configure Git to use the .githooks directory
 git config core.hooksPath .githooks
@@ -217,6 +217,7 @@ git config core.hooksPath .githooks
 ### How It Works
 
 - **`pre-commit`**: Automatically scans your staged changes before each commit. If a `.env` file, secret, API key, or sensitive data is detected, the commit is blocked immediately.
+- **`victoria-build-check.sh`** (called by `pre-commit`): When the commit touches `victoria/`, runs `victoria/build.py --check` on the staged files and blocks the commit if `victoria/docker-compose.yml` does not match its staged sources under `victoria/config/`. Run `python3 victoria/build.py` and stage the compose file.
 - **`post-commit`**: Displays a confirmation message after a commit is successfully and securely validated.
 
 ---

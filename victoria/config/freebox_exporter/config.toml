@@ -1,0 +1,25 @@
+[api]
+refresh = 30
+
+[metrics]
+connection = true
+lan = false
+lan_browser = false
+switch = false
+wifi = false
+dhcp = false
+system = true
+nas = false
+download = false
+prefix = "fbx_exporter"
+
+[policies]
+unresolved_station_hostnames = "ignore"
+
+[core]
+data_directory = "/data"
+port = 9102
+
+[log]
+level = "Info"
+retention = 1
