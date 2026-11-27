@@ -62,7 +62,10 @@ services:
       traefik.http.routers.traefik.entrypoints: "websecure"
       traefik.http.routers.traefik.tls: "true"
       traefik.http.routers.traefik.tls.certresolver: "stepca"
-      traefik.http.routers.traefik.middlewares: "traefik_strip"
+      # Dashboard and API behind Authentik forward auth (listed first so the
+      # login redirect keeps the original path). Only this router: the other
+      # apps on the same host are not affected.
+      traefik.http.routers.traefik.middlewares: "authentik@docker,traefik_strip"
       traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
       traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
       traefik.http.middlewares.traefik_strip.stripprefix.prefixes: "/traefik"
@@ -320,6 +323,8 @@ services:
       # Must equal TRAEFIK_FQDN of the ng stack (host of the *arr paths).
       BLUEPRINT_NG_HOST: ${NG_HOST_LOCAL:?Set NG_HOST_LOCAL in .env}
       BLUEPRINT_PORTAINER_HOST: ${PORTAINER_HOST_LOCAL:?Set PORTAINER_HOST_LOCAL in .env}
+      # Host of the Traefik dashboard router above.
+      BLUEPRINT_TRAEFIK_HOST: ${TRAEFIK_HOST_LOCAL:?Set TRAEFIK_HOST_LOCAL in .env}
       # Must equal VICTORIA_LOGS_DOMAIN / VICTORIA_METRICS_DOMAIN /
       # VICTORIA_GRAFANA_DOMAIN of the victoria stack.
       BLUEPRINT_VICTORIA_LOGS_HOST: ${VICTORIA_LOGS_HOST_LOCAL:?Set VICTORIA_LOGS_HOST_LOCAL in .env}
