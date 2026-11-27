@@ -55,7 +55,7 @@ openssl rand -base64 60 | tr -d '\n'
 
 ### First start
 
-The Compose file requires `AUTHENTIK_HOST_LOCAL`, `AUTHENTIK_PG_PASS`, `AUTHENTIK_SECRET_KEY`, `MANAGEMENT_AUTHENTIK_DATA_DIR`, `UPTIME_HOST_LOCAL`, `NG_HOST_LOCAL`, `PORTAINER_HOST_LOCAL`, `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL`, `TRAEFIK_HOST_LOCAL`, `FORGEJO_HOST_LOCAL`, `GRAMPSWEB_HOST_LOCAL`, `IMMICH_HOST_LOCAL`, `UNIFI_HOST_LOCAL`, `NAS_HOST_LOCAL`, and `SWITCH_HOST_LOCAL` for the whole project. On a host whose `.env` predates Authentik, add them before running any `docker compose` command in this stack: without them, even `docker compose up -d traefik` stops with a "Set ... in .env" error.
+The Compose file requires `AUTHENTIK_HOST_LOCAL`, `AUTHENTIK_PG_PASS`, `AUTHENTIK_SECRET_KEY`, `MANAGEMENT_AUTHENTIK_DATA_DIR`, `UPTIME_HOST_LOCAL`, `NG_HOST_LOCAL`, `PORTAINER_HOST_LOCAL`, `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL`, `TRAEFIK_HOST_LOCAL`, `FORGEJO_HOST_LOCAL`, `GRAMPSWEB_HOST_LOCAL`, `IMMICH_HOST_LOCAL`, `DONETICK_HOST_LOCAL`, `UNIFI_HOST_LOCAL`, `NAS_HOST_LOCAL`, and `SWITCH_HOST_LOCAL` for the whole project. On a host whose `.env` predates Authentik, add them before running any `docker compose` command in this stack: without them, even `docker compose up -d traefik` stops with a "Set ... in .env" error.
 
 The server and worker run as UID 1000. Create the directories with that owner before the first start. The shell does not read `.env`, so set the variable first; the `:?` makes the commands stop instead of running on `/data`, `/certs`, and `/custom-templates` when it is empty:
 
@@ -164,7 +164,7 @@ The logo, favicon, background, and application icons are SVG files in `authentik
 - **Background.** Authentik 2026.8 ignores the brand's default background on flow pages and shows its stock image. The blueprint therefore sets the background on each flow a user sees: login, MFA enrolment (static, TOTP, WebAuthn), and logout. A flow you add needs the same `background` field.
 - **Brand attributes.** The blueprint replaces the `attributes` of the default brand as a whole (they hold the dark theme). Add any other brand attribute to the file, not in the admin UI, or the next apply removes it.
 - **Adding a file.** Put it in `authentik/media/` and name it in a blueprint. `tests/test_media.sh` fails on a file that no blueprint names, on a name with no file, and on an SVG that is not inert: an SVG opened directly runs as a page of the Authentik host, so it must hold no script, event handler, embedded document, or external reference.
-- **Icon sources.** `logo.svg`, `favicon.svg`, `background.svg`, `icons/victorialogs.svg`, `icons/victoriametrics.svg`, `icons/victoria-grafana.svg`, `icons/h5ai.svg`, `icons/immich.svg`, and `icons/traefik.svg` are made for this repository. The other icons come from [homarr-labs/dashboard-icons](https://github.com/homarr-labs/dashboard-icons) (Apache-2.0), `icons/zyxel.svg` cropped to the logo mark; the logos themselves remain the trademarks of their projects.
+- **Icon sources.** `logo.svg`, `favicon.svg`, `background.svg`, `icons/victorialogs.svg`, `icons/victoriametrics.svg`, `icons/victoria-grafana.svg`, `icons/h5ai.svg`, `icons/immich.svg`, `icons/traefik.svg`, and `icons/donetick.svg` are made for this repository. The other icons come from [homarr-labs/dashboard-icons](https://github.com/homarr-labs/dashboard-icons) (Apache-2.0), `icons/zyxel.svg` cropped to the logo mark; the logos themselves remain the trademarks of their projects.
 
 ### Logs and alerts
 
@@ -176,7 +176,7 @@ The logs of the three containers reach VictoriaLogs with the other Docker logs. 
 
 ### Host names of other stacks
 
-`VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL`, `FORGEJO_HOST_LOCAL`, `GRAMPSWEB_HOST_LOCAL`, and `IMMICH_HOST_LOCAL` only feed the blueprints. They must equal `VICTORIA_LOGS_DOMAIN`, `VICTORIA_METRICS_DOMAIN`, `VICTORIA_GRAFANA_DOMAIN`, `FORGEJO_DOMAIN`, `GRAMPSWEB_DOMAIN`, and `TRAEFIK_HOST_LOCAL` in the `.env` of those stacks: a different value gives a provider that never matches (VictoriaLogs, VictoriaMetrics, or Grafana answers 404 through the middleware) or a redirect URI that Authentik rejects (Forgejo, Gramps Web, or Immich login fails with "redirect URI error").
+`VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL`, `FORGEJO_HOST_LOCAL`, `GRAMPSWEB_HOST_LOCAL`, `IMMICH_HOST_LOCAL`, and `DONETICK_HOST_LOCAL` only feed the blueprints. They must equal `VICTORIA_LOGS_DOMAIN`, `VICTORIA_METRICS_DOMAIN`, `VICTORIA_GRAFANA_DOMAIN`, `FORGEJO_DOMAIN`, `GRAMPSWEB_DOMAIN`, `TRAEFIK_HOST_LOCAL` (immich), and `TODO_DOMAIN` (todo) in the `.env` of those stacks: a different value gives a provider that never matches (VictoriaLogs, VictoriaMetrics, or Grafana answers 404 through the middleware) or a redirect URI that Authentik rejects (Forgejo, Gramps Web, Immich, or Donetick login fails with "redirect URI error").
 
 ## Portainer
 
