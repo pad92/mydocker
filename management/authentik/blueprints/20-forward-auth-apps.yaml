@@ -719,6 +719,73 @@ entries:
     attrs:
       order: 0
 
+  # --- Open WebUI (OpenID Connect) -----------------------------------------
+  # Not a forward-auth provider: not in the outpost list, since the Ollama
+  # API (Immich, Gramps Web...) and the Open WebUI API keys must keep working
+  # without a browser session. Open WebUI reads its OIDC settings from the
+  # ollama stack's environment: Authentik generates the client secret on
+  # first apply and keeps it, copy it into OPEN_WEBUI_OIDC_CLIENT_SECRET
+  # there. Open WebUI maps the "groups" claim to its roles: members of
+  # open-webui-admins become admins, members of open-webui-users users, and
+  # a login that carries neither is refused.
+  - model: authentik_core.group
+    id: open-webui-users-group
+    identifiers:
+      name: open-webui-users
+
+  - model: authentik_core.group
+    id: open-webui-admins-group
+    identifiers:
+      name: open-webui-admins
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: open-webui-provider
+    identifiers:
+      name: Open WebUI
+    attrs:
+      client_type: confidential
+      client_id: open-webui
+      # Empty by default on providers created by a blueprint (see Forgejo).
+      grant_types: [authorization_code, refresh_token]
+      redirect_uris:
+        # Set explicitly on the Open WebUI side (OPENID_REDIRECT_URI).
+        - matching_mode: strict
+          url: !Format ["https://%s/oauth/oidc/login/callback", !Env BLUEPRINT_OLLAMA_HOST]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+
+  - model: authentik_core.application
+    id: open-webui-app
+    identifiers:
+      slug: open-webui
+    attrs:
+      name: Open WebUI
+      group: AI
+      meta_icon: homelab/icons/open-webui.svg
+      meta_description: Local LLM chat
+      provider: !KeyOf open-webui-provider
+      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_OLLAMA_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf open-webui-app
+      group: !KeyOf open-webui-admins-group
+    attrs:
+      order: 0
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf open-webui-app
+      group: !KeyOf open-webui-users-group
+    attrs:
+      order: 1
+
   # --- Infrastructure ------------------------------------------------------
   # Network devices outside this stack (not routed by its Traefik): bookmarks
   # only, no provider, so each device keeps its own login and the bindings

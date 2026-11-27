@@ -16,9 +16,40 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       # Signs the session tokens: a known value lets anyone forge them.
       WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY:?Set WEBUI_SECRET_KEY}"
+      # Public URL, used in links and as the OAuth base.
+      WEBUI_URL: "https://${OLLAMA_DOMAIN:?Set OLLAMA_DOMAIN}"
+      # Sign-in through Authentik (OpenID Connect). The provider, its groups
+      # and the redirect URI below come from the management blueprint
+      # 20-forward-auth-apps.yaml. Open WebUI reads these OAuth variables at
+      # each start (they are not kept in its database).
+      OAUTH_PROVIDER_NAME: Authentik
+      OAUTH_CLIENT_ID: open-webui
+      OAUTH_CLIENT_SECRET: "${OPEN_WEBUI_OIDC_CLIENT_SECRET:?Set OPEN_WEBUI_OIDC_CLIENT_SECRET}"
+      OPENID_PROVIDER_URL: "https://${AUTHENTIK_DOMAIN:?Set AUTHENTIK_DOMAIN}/application/o/open-webui/.well-known/openid-configuration"
+      # Explicit: behind Traefik the computed default may use http, which
+      # Authentik rejects (strict redirect URI).
+      OPENID_REDIRECT_URI: "https://${OLLAMA_DOMAIN:?Set OLLAMA_DOMAIN}/oauth/oidc/login/callback"
+      # Create the account at the first Authentik sign-in, or attach it to the
+      # local account with the same e-mail address (Authentik is trusted to
+      # verify e-mail addresses).
+      ENABLE_OAUTH_SIGNUP: "true"
+      OAUTH_MERGE_ACCOUNTS_BY_EMAIL: "true"
+      # Role from the Authentik groups at each sign-in: open-webui-admins gives
+      # admin, open-webui-users gives user, anything else is refused (403).
+      ENABLE_OAUTH_ROLE_MANAGEMENT: "true"
+      OAUTH_ROLES_CLAIM: groups
+      OAUTH_ALLOWED_ROLES: open-webui-users
+      OAUTH_ADMIN_ROLES: open-webui-admins
+      # Authentik uses a certificate of the internal CA: trust the host bundle
+      # (httpx, aiohttp and requests each read their own variable).
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      AIOHTTP_CLIENT_SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
     volumes:
       # Database, uploads and settings: the only state Open WebUI keeps.
       - ${OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR:?Set OLLAMA_OPEN_WEBUI_BACKEND_DATA_DIR}:/app/backend/data
+      # Host CA bundle, which includes the internal CA (see above).
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
     depends_on:
       - ollama
     networks:

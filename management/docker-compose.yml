@@ -338,6 +338,8 @@ services:
       BLUEPRINT_IMMICH_HOST: ${IMMICH_HOST_LOCAL:?Set IMMICH_HOST_LOCAL in .env}
       # Must equal TODO_DOMAIN of the todo stack (OIDC redirect URI).
       BLUEPRINT_DONETICK_HOST: ${DONETICK_HOST_LOCAL:?Set DONETICK_HOST_LOCAL in .env}
+      # Must equal OLLAMA_DOMAIN of the ollama stack (OIDC redirect URI).
+      BLUEPRINT_OLLAMA_HOST: ${OLLAMA_HOST_LOCAL:?Set OLLAMA_HOST_LOCAL in .env}
       # Library bookmarks of the network devices (host name or IP address).
       BLUEPRINT_UNIFI_HOST: ${UNIFI_HOST_LOCAL:?Set UNIFI_HOST_LOCAL in .env}
       BLUEPRINT_NAS_HOST: ${NAS_HOST_LOCAL:?Set NAS_HOST_LOCAL in .env}
