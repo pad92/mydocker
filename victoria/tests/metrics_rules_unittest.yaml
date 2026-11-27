@@ -728,3 +728,161 @@ tests:
             value: 3000
           - labels: 'container:nvidia_smi_compute_app_used_memory_bytes{uuid="GPU-1", pid="400", process_name="audiomuse", container_id="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", container_name="audiomuse-ai-worker"}'
             value: 4000
+
+  # SNMP of the NAS: upsInfoStatus is 1 with the NUT status in its label.
+  # A status change starts a new series and stops the old one. The
+  # aggregation must drop job and upsInfoStatus and keep instance
+  # (inhibition key). NAS a goes OL -> "OB DISCHRG" (OB first); a transfer
+  # of one sample on NAS b is no outage; NAS c at "OL CHRG" stays quiet.
+  - name: ups_on_battery
+    interval: 1m
+    input_series:
+      - series: 'upsInfoStatus{job="synology", instance="a", upsInfoStatus="OL"}'
+        values: '1x3 stale _x9'
+      - series: 'upsInfoStatus{job="synology", instance="a", upsInfoStatus="OB DISCHRG"}'
+        values: '_x4 1x9'
+      - series: 'upsInfoStatus{job="synology", instance="b", upsInfoStatus="OL"}'
+        values: '1x3 stale 1x9'
+      - series: 'upsInfoStatus{job="synology", instance="b", upsInfoStatus="OB DISCHRG"}'
+        values: '_x4 1 stale _x8'
+      - series: 'upsInfoStatus{job="synology", instance="c", upsInfoStatus="OL CHRG"}'
+        values: '1x14'
+    alert_rule_test:
+      - eval_time: 4m
+        groupname: ups
+        alertname: ups_on_battery
+        exp_alerts: []
+      - eval_time: 6m
+        groupname: ups
+        alertname: ups_on_battery
+        exp_alerts:
+          - exp_labels: {instance: a, severity: critical}
+            exp_annotations:
+              summary: "Onduleur sur batterie (lu par a)"
+              description: "Coupure secteur : l'onduleur alimente les equipements sur sa batterie"
+
+  # Fires at once on LB in the middle of the status ("OB LB DISCHRG");
+  # NAS b on battery without LB stays quiet.
+  - name: ups_low_battery
+    interval: 1m
+    input_series:
+      - series: 'upsInfoStatus{job="synology", instance="a", upsInfoStatus="OB DISCHRG"}'
+        values: '1x3 _x5'
+      - series: 'upsInfoStatus{job="synology", instance="a", upsInfoStatus="OB LB DISCHRG"}'
+        values: '_x3 1x5'
+      - series: 'upsInfoStatus{job="synology", instance="b", upsInfoStatus="OB DISCHRG"}'
+        values: '1x8'
+    alert_rule_test:
+      - eval_time: 2m
+        groupname: ups
+        alertname: ups_low_battery
+        exp_alerts: []
+      - eval_time: 3m
+        groupname: ups
+        alertname: ups_low_battery
+        exp_alerts:
+          - exp_labels: {instance: a, severity: critical}
+            exp_annotations:
+              summary: "Onduleur batterie faible (lu par a)"
+              description: "La batterie de l'onduleur est presque vide : arret imminent des equipements"
+
+  # Under 600s for 5 minutes; NAS b at the current 1407s stays quiet.
+  - name: ups_runtime_low
+    interval: 1m
+    input_series:
+      - series: 'upsBatteryRuntimeValue{job="synology", instance="a"}'
+        values: '1407x2 300x12'
+      - series: 'upsBatteryRuntimeValue{job="synology", instance="b"}'
+        values: '1407x14'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: ups
+        alertname: ups_runtime_low
+        exp_alerts: []
+      - eval_time: 9m
+        groupname: ups
+        alertname: ups_runtime_low
+        exp_alerts:
+          - exp_labels: {instance: a, severity: warning}
+            exp_annotations:
+              summary: "Autonomie de l'onduleur a 5m 0s (lu par a)"
+              description: "L'autonomie estimee sur batterie est sous 10 minutes"
+
+  # 80% included (NAS c), 79% not (NAS b); 10 minutes before firing.
+  - name: ups_overload
+    interval: 1m
+    input_series:
+      - series: 'upsInfoLoadValue{job="synology", instance="a"}'
+        values: '20x2 85x15'
+      - series: 'upsInfoLoadValue{job="synology", instance="b"}'
+        values: '79x17'
+      - series: 'upsInfoLoadValue{job="synology", instance="c"}'
+        values: '80x17'
+    alert_rule_test:
+      - eval_time: 11m
+        groupname: ups
+        alertname: ups_overload
+        exp_alerts:
+          - exp_labels: {instance: c, severity: warning}
+            exp_annotations:
+              summary: "Onduleur charge a 80% (lu par c)"
+              description: "La charge de l'onduleur depasse 80% depuis 10 minutes"
+      - eval_time: 13m
+        groupname: ups
+        alertname: ups_overload
+        exp_alerts:
+          - exp_labels: {instance: a, severity: warning}
+            exp_annotations:
+              summary: "Onduleur charge a 85% (lu par a)"
+              description: "La charge de l'onduleur depasse 80% depuis 10 minutes"
+          - exp_labels: {instance: c, severity: warning}
+            exp_annotations:
+              summary: "Onduleur charge a 80% (lu par c)"
+              description: "La charge de l'onduleur depasse 80% depuis 10 minutes"
+
+  # RB at the end of the status ("OL CHRG RB") fires; NAS b in "OL CHRG"
+  # stays quiet.
+  - name: ups_replace_battery
+    interval: 1m
+    input_series:
+      - series: 'upsInfoStatus{job="synology", instance="a", upsInfoStatus="OL CHRG"}'
+        values: '1x2 _x5'
+      - series: 'upsInfoStatus{job="synology", instance="a", upsInfoStatus="OL CHRG RB"}'
+        values: '_x2 1x5'
+      - series: 'upsInfoStatus{job="synology", instance="b", upsInfoStatus="OL CHRG"}'
+        values: '1x7'
+    alert_rule_test:
+      - eval_time: 1m
+        groupname: ups
+        alertname: ups_replace_battery
+        exp_alerts: []
+      - eval_time: 2m
+        groupname: ups
+        alertname: ups_replace_battery
+        exp_alerts:
+          - exp_labels: {instance: a, severity: warning}
+            exp_annotations:
+              summary: "Batterie de l'onduleur a remplacer (lu par a)"
+              description: "Le test de l'onduleur signale une batterie usee"
+
+  # NAS a stops at 10m: quiet at 38m (28m old), fires at 45m (35m old).
+  - name: ups_data_missing
+    interval: 1m
+    input_series:
+      - series: 'upsBatteryChargeValue{job="synology", instance="a"}'
+        values: '100x10'
+      - series: 'upsBatteryChargeValue{job="synology", instance="b"}'
+        values: '100x60'
+    alert_rule_test:
+      - eval_time: 38m
+        groupname: ups
+        alertname: ups_data_missing
+        exp_alerts: []
+      - eval_time: 45m
+        groupname: ups
+        alertname: ups_data_missing
+        exp_alerts:
+          - exp_labels: {instance: a, severity: warning}
+            exp_annotations:
+              summary: "Plus de donnee de l'onduleur via a depuis 30 minutes"
+              description: "Le NAS ne voit plus l'onduleur en USB, ou sa collecte SNMP est arretee"

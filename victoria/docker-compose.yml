@@ -421,7 +421,7 @@ services:
       - source: vmalert_metrics_rules
         target: /etc/vmalert/rules.yml
     labels:
-      mydocker.config-hash: "ecc2ded0702861ee6ea202932758f52256398ed5616089e1eccb2c51481d926a"
+      mydocker.config-hash: "3cb44224f7779937c30c00c3cd6e5e02a5ad74b712118afb1e04c585e15e2bde"
     networks:
       - victoria
     mem_limit: 128m
@@ -478,7 +478,7 @@ services:
       - source: alertmanager_config
         target: /etc/alertmanager/alertmanager.yml
     labels:
-      mydocker.config-hash: "ee3648452f84070a8ea36defebde58df43c56b54f58259b15c1a41430877aa28"
+      mydocker.config-hash: "9767ea8e90d928038eed13446c79260563f053f220b3fd068cf281bbb0ac74ae"
     volumes:
       - ${ALERTMANAGER_DATA_DIR:?Set ALERTMANAGER_DATA_DIR}:/alertmanager
       - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
@@ -567,6 +567,8 @@ services:
         target: /etc/grafana/dashboards/network.json
       - source: grafana_dashboard_wifi
         target: /etc/grafana/dashboards/Équipements réseau/wifi.json
+      - source: grafana_dashboard_ups
+        target: /etc/grafana/dashboards/Infrastructure/ups.json
     volumes:
       - ${GRAFANA_DATA_DIR:?Set GRAFANA_DATA_DIR}:/var/lib/grafana
     # traefik_gateway for Traefik and to download the plugin; victoria for
@@ -577,7 +579,7 @@ services:
     security_opt:
       - no-new-privileges:true
     labels:
-      mydocker.config-hash: "8885d9acf81f225038cfeb91d54c14a807f6ed7d6dbc9c6b2175efb902f0081b"
+      mydocker.config-hash: "9cefc59a0b2c50475e39e19d6e5942461c600a23f7d71fb666265f18d53db683"
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.victoria_grafana.loadbalancer.server.port: "3000"
@@ -1314,6 +1316,75 @@ configs:
               annotations:
                 summary: "Plus de donnee SMART de {{ $$labels.host_name }} depuis 30 minutes"
                 description: "smartctl_exporter ou sa collecte par le collecteur OpenTelemetry est arrete"
+        # The UPS is on USB on the Synology NAS, whose NUT server reads it; the
+        # job synology reads it in the SYNOLOGY-UPS-MIB. instance is the NAS,
+        # not the UPS. upsInfoStatus is 1, with the NUT status in its label of
+        # the same name: several flags in one string ("OB DISCHRG", "OL CHRG
+        # RB"), so the regexes match one flag as a whole word.
+        - name: ups
+          interval: 1m
+          rules:
+            # 1m: a transfer of a few seconds is no outage.
+            - alert: ups_on_battery
+              expr: max by (instance) (upsInfoStatus{upsInfoStatus=~"(.* )?OB( .*)?"}) == 1
+              for: 1m
+              keep_firing_for: 10m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Onduleur sur batterie (lu par {{ $$labels.instance }})"
+                description: "Coupure secteur : l'onduleur alimente les equipements sur sa batterie"
+            # The UPS's own low battery flag: the NAS starts its shutdown.
+            - alert: ups_low_battery
+              expr: max by (instance) (upsInfoStatus{upsInfoStatus=~"(.* )?LB( .*)?"}) == 1
+              keep_firing_for: 10m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Onduleur batterie faible (lu par {{ $$labels.instance }})"
+                description: "La batterie de l'onduleur est presque vide : arret imminent des equipements"
+            # On line power too: a load that leaves less than 10 minutes.
+            - alert: ups_runtime_low
+              expr: min by (instance) (upsBatteryRuntimeValue) < 600
+              for: 5m
+              # No longer than ups_on_battery and ups_low_battery, which inhibit
+              # it: a longer tail would send its SMS once the outage is over.
+              keep_firing_for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Autonomie de l'onduleur a {{ $$value | humanizeDuration }} (lu par {{ $$labels.instance }})"
+                description: "L'autonomie estimee sur batterie est sous 10 minutes"
+            - alert: ups_overload
+              expr: max by (instance) (upsInfoLoadValue) >= 80
+              for: 10m
+              keep_firing_for: 30m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Onduleur charge a {{ $$value }}% (lu par {{ $$labels.instance }})"
+                description: "La charge de l'onduleur depasse 80% depuis 10 minutes"
+            # Set by the UPS self-test: the battery no longer holds its charge.
+            - alert: ups_replace_battery
+              expr: max by (instance) (upsInfoStatus{upsInfoStatus=~"(.* )?RB( .*)?"}) == 1
+              keep_firing_for: 1440m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Batterie de l'onduleur a remplacer (lu par {{ $$labels.instance }})"
+                description: "Le test de l'onduleur signale une batterie usee"
+            # Without fresh data the rules above go quiet: the UPS unplugged
+            # from the NAS or the NAS unreachable would hide a power outage.
+            # Its keep_firing_for stays under the 60m of synology_scrape_down,
+            # which inhibits it: a NAS back up must not send this SMS late.
+            - alert: ups_data_missing
+              expr: max by (instance) (lag(upsBatteryChargeValue[24h])) > 1800
+              keep_firing_for: 30m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Plus de donnee de l'onduleur via {{ $$labels.instance }} depuis 30 minutes"
+                description: "Le NAS ne voit plus l'onduleur en USB, ou sa collecte SNMP est arretee"
         # Synology status OIDs are 1 when normal. diskBadSector is -1 on
         # cache devices, so only a positive count fires.
         - name: synology_metrics
@@ -1692,6 +1763,18 @@ configs:
             repeat_interval: 125m
           - matchers: [alertname="zfs_data_missing"]
             repeat_interval: 125m
+          - matchers: [alertname="ups_on_battery"]
+            repeat_interval: 15m
+          - matchers: [alertname="ups_low_battery"]
+            repeat_interval: 15m
+          - matchers: [alertname="ups_runtime_low"]
+            repeat_interval: 15m
+          - matchers: [alertname="ups_overload"]
+            repeat_interval: 35m
+          - matchers: [alertname="ups_replace_battery"]
+            repeat_interval: 1445m
+          - matchers: [alertname="ups_data_missing"]
+            repeat_interval: 35m
           - matchers: [alertname="synology_system_failed"]
             repeat_interval: 65m
           - matchers: [alertname="synology_raid_degraded"]
@@ -1786,6 +1869,20 @@ configs:
           target_matchers:
             - alertname=~"smart_attribute_failing|smart_sectors_growing|smart_crc_errors_growing"
           equal: [host_name, device]
+        # The UPS low on battery says it all: it runs on battery with little
+        # runtime left.
+        - source_matchers: [alertname="ups_low_battery"]
+          target_matchers:
+            - alertname=~"ups_on_battery|ups_runtime_low"
+          equal: [instance]
+        # On battery the runtime falls by design: ups_low_battery follows.
+        - source_matchers: [alertname="ups_on_battery"]
+          target_matchers: [alertname="ups_runtime_low"]
+          equal: [instance]
+        # The NAS not answering SNMP at all: the UPS data stops with it.
+        - source_matchers: [alertname="synology_scrape_down"]
+          target_matchers: [alertname="ups_data_missing"]
+          equal: [instance]
 
   # Vector pipeline. Compose interpolates the ${VAR} listed in build.py.
   vector_config:
@@ -27187,6 +27284,1306 @@ configs:
               "y": 105,
               "w": 24,
               "h": 12
+            }
+          }
+        ]
+      }
+  grafana_dashboard_ups:
+    content: |
+      {
+        "uid": "victoria-ups",
+        "title": "Onduleur",
+        "tags": [
+          "onduleur",
+          "victoriametrics",
+          "victoria"
+        ],
+        "editable": false,
+        "timezone": "browser",
+        "schemaVersion": 41,
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "refresh": "1m",
+        "graphTooltip": 1,
+        "links": [
+          {
+            "type": "dashboards",
+            "tags": [
+              "victoria"
+            ],
+            "asDropdown": true,
+            "title": "Dashboards",
+            "includeVars": false,
+            "keepTime": true
+          },
+          {
+            "type": "link",
+            "title": "Services rendus",
+            "tooltip": "Vue globale",
+            "icon": "dashboard",
+            "url": "/d/victoria-services/services-rendus",
+            "keepTime": true,
+            "targetBlank": false
+          }
+        ],
+        "templating": {
+          "list": [
+            {
+              "name": "instance",
+              "label": "NAS lecteur",
+              "type": "query",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "victoriametrics"
+              },
+              "definition": "label_values(upsBatteryChargeValue, instance)",
+              "query": {
+                "qryType": 1,
+                "query": "label_values(upsBatteryChargeValue, instance)",
+                "refId": "instance"
+              },
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".*",
+              "refresh": 2,
+              "sort": 1,
+              "current": {
+                "text": [
+                  "All"
+                ],
+                "value": [
+                  "$$__all"
+                ]
+              }
+            }
+          ]
+        },
+        "annotations": {
+          "list": []
+        },
+        "panels": [
+          {
+            "type": "row",
+            "title": "État",
+            "collapsed": false,
+            "panels": [],
+            "id": 1,
+            "gridPos": {
+              "x": 0,
+              "y": 0,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Alimentation",
+            "description": "Source d'alimentation de l'onduleur, d'après les drapeaux NUT de upsInfoStatus : secteur (OL), sur batterie (OB), batterie faible (LB). Sur batterie, la panne de courant est en cours ; batterie faible, le NAS va déclencher l'arrêt des machines.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "clamp_max(1 + ((max(upsInfoStatus{instance=~\"$$instance\", upsInfoStatus=~\"(.* )?OB( .*)?\"}) or vector(0)) and on () max(upsInfoStatus{instance=~\"$$instance\"})) + 2 * ((max(upsInfoStatus{instance=~\"$$instance\", upsInfoStatus=~\"(.* )?LB( .*)?\"}) or vector(0)) and on () max(upsInfoStatus{instance=~\"$$instance\"})), 3)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "none",
+                "noValue": "Aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 2
+                    },
+                    {
+                      "color": "red",
+                      "value": 3
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                },
+                "mappings": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "Secteur",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "2": {
+                        "text": "Sur batterie",
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "3": {
+                        "text": "Batterie faible",
+                        "color": "red",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 2,
+            "gridPos": {
+              "x": 0,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Charge de la batterie",
+            "description": "Charge de la batterie rapportée par l'onduleur.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "min(upsBatteryChargeValue{instance=~\"$$instance\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "noValue": "Aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 20
+                    },
+                    {
+                      "color": "green",
+                      "value": 50
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 3,
+            "gridPos": {
+              "x": 4,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Autonomie estimée",
+            "description": "Durée que l'onduleur estime tenir sur batterie à la charge actuelle. L'alerte ups_runtime_low se déclenche sous 10 minutes.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "min(upsBatteryRuntimeValue{instance=~\"$$instance\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s",
+                "noValue": "Aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 600
+                    },
+                    {
+                      "color": "green",
+                      "value": 1200
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 4,
+            "gridPos": {
+              "x": 8,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Charge de l'onduleur",
+            "description": "Puissance consommée en pourcentage de la puissance nominale. L'alerte ups_overload se déclenche à 80 % pendant 10 minutes.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(upsInfoLoadValue{instance=~\"$$instance\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "noValue": "Aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 60
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 5,
+            "gridPos": {
+              "x": 12,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Puissance estimée",
+            "description": "Charge multipliée par la puissance active nominale de l'onduleur (upsInfoRealPowerNominal). Estimation : l'onduleur ne mesure pas les watts.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max(upsInfoLoadValue{instance=~\"$$instance\"} * on (instance) upsInfoRealPowerNominal{instance=~\"$$instance\"} / 100)",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "watt",
+                "noValue": "Aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                },
+                "decimals": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 6,
+            "gridPos": {
+              "x": 16,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Tension d'entrée",
+            "description": "Tension du secteur vue par l'onduleur. Rouge hors de la plage 230 V ± 10 % (207 à 253 V). Avec plusieurs NAS, la plus basse.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "min(upsInputVoltageValue{instance=~\"$$instance\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "volt",
+                "noValue": "Aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 207
+                    },
+                    {
+                      "color": "red",
+                      "value": 253
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 7,
+            "gridPos": {
+              "x": 20,
+              "y": 1,
+              "w": 4,
+              "h": 4
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Batterie à remplacer",
+            "description": "Drapeau RB de upsInfoStatus : l'onduleur demande le remplacement de la batterie (alerte ups_replace_battery).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "(max(upsInfoStatus{instance=~\"$$instance\", upsInfoStatus=~\"(.* )?RB( .*)?\"}) or vector(0)) and on () max(upsInfoStatus{instance=~\"$$instance\"})",
+                "legendFormat": "__auto",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "none",
+                "noValue": "Aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                },
+                "mappings": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "Non",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "Oui",
+                        "color": "red",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "value"
+            },
+            "id": 8,
+            "gridPos": {
+              "x": 0,
+              "y": 5,
+              "w": 4,
+              "h": 3
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Modèle",
+            "description": "Modèle de l'onduleur, lu par le NUT du NAS. Le label instance est le NAS qui lit l'onduleur en USB, pas l'onduleur.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (upsDeviceModel) (upsDeviceModel{instance=~\"$$instance\"})",
+                "legendFormat": "{{upsDeviceModel}}",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "none",
+                "noValue": "Aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "name"
+            },
+            "id": 9,
+            "gridPos": {
+              "x": 4,
+              "y": 5,
+              "w": 8,
+              "h": 3
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Batterie fabriquée le",
+            "description": "Date de fabrication de la batterie (upsBatteryMfrDate). Une batterie plomb d'onduleur dure trois à cinq ans.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (upsBatteryMfrDate) (upsBatteryMfrDate{instance=~\"$$instance\"})",
+                "legendFormat": "{{upsBatteryMfrDate}}",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "none",
+                "noValue": "Aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "name"
+            },
+            "id": 10,
+            "gridPos": {
+              "x": 12,
+              "y": 5,
+              "w": 6,
+              "h": 3
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Dernier autotest",
+            "description": "Résultat du dernier autotest de la batterie (upsInfoTestResult).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (upsInfoTestResult) (upsInfoTestResult{instance=~\"$$instance\"})",
+                "legendFormat": "{{upsInfoTestResult}}",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "none",
+                "noValue": "Aucune donnée",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    }
+                  ]
+                },
+                "color": {
+                  "mode": "thresholds"
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "name"
+            },
+            "id": 11,
+            "gridPos": {
+              "x": 18,
+              "y": 5,
+              "w": 6,
+              "h": 3
+            }
+          },
+          {
+            "type": "row",
+            "title": "Historique",
+            "collapsed": false,
+            "panels": [],
+            "id": 12,
+            "gridPos": {
+              "x": 0,
+              "y": 8,
+              "w": 24,
+              "h": 1
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Évolution de la charge de la batterie",
+            "description": "Charge de la batterie. Elle baisse pendant une coupure, puis remonte sur secteur.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "upsBatteryChargeValue{instance=~\"$$instance\"}",
+                "legendFormat": "{{instance}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    }
+                  ]
+                },
+                "min": 0,
+                "max": 100
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 13,
+            "gridPos": {
+              "x": 0,
+              "y": 9,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Évolution de l'autonomie",
+            "description": "Autonomie estimée sur batterie. Ligne rouge : seuil de l'alerte ups_runtime_low (10 minutes).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "upsBatteryRuntimeValue{instance=~\"$$instance\"}",
+                "legendFormat": "{{instance}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "transparent",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 600
+                    }
+                  ]
+                },
+                "min": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 14,
+            "gridPos": {
+              "x": 12,
+              "y": 9,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Évolution de la charge de l'onduleur",
+            "description": "Charge en pourcentage de la puissance nominale. Ligne rouge : seuil de l'alerte ups_overload (80 %).",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "upsInfoLoadValue{instance=~\"$$instance\"}",
+                "legendFormat": "{{instance}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "transparent",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "min": 0,
+                "max": 100
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 15,
+            "gridPos": {
+              "x": 0,
+              "y": 17,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Évolution de la puissance estimée",
+            "description": "Charge multipliée par la puissance active nominale de l'onduleur.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "upsInfoLoadValue{instance=~\"$$instance\"} * on (instance) upsInfoRealPowerNominal{instance=~\"$$instance\"} / 100",
+                "legendFormat": "{{instance}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "watt",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    }
+                  ]
+                },
+                "min": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 16,
+            "gridPos": {
+              "x": 12,
+              "y": 17,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Évolution de la tension d'entrée",
+            "description": "Tension du secteur. Lignes rouges : 207 et 253 V (230 V ± 10 %). Une coupure apparaît comme une chute vers 0 V.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "upsInputVoltageValue{instance=~\"$$instance\"}",
+                "legendFormat": "{{instance}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "volt",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "transparent",
+                      "value": 207
+                    },
+                    {
+                      "color": "red",
+                      "value": 253
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 17,
+            "gridPos": {
+              "x": 0,
+              "y": 25,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Évolution de la tension de la batterie",
+            "description": "Tension de la batterie. Une tension qui baisse sur secteur, batterie chargée, signale une batterie qui vieillit.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "upsBatteryVoltageValue{instance=~\"$$instance\"}",
+                "legendFormat": "{{instance}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "volt",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 18,
+            "gridPos": {
+              "x": 12,
+              "y": 25,
+              "w": 12,
+              "h": 8
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Événements",
+            "description": "Statut de l'onduleur dans le temps (1 = actif), hors du statut normal OL (secteur) : OB sur batterie, LB batterie faible, RB batterie à remplacer, OVER surcharge, CHRG en charge.",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "victoriametrics"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "victoriametrics"
+                },
+                "editorMode": "code",
+                "expr": "max by (upsInfoStatus) (upsInfoStatus{instance=~\"$$instance\", upsInfoStatus!=\"OL\"})",
+                "legendFormat": "{{upsInfoStatus}}",
+                "range": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "none",
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 30,
+                  "lineWidth": 1,
+                  "showPoints": "never",
+                  "stacking": {
+                    "mode": "none",
+                    "group": "A"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  },
+                  "lineInterpolation": "stepAfter"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    }
+                  ]
+                },
+                "min": 0,
+                "max": 1,
+                "decimals": 0
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            },
+            "id": 19,
+            "gridPos": {
+              "x": 0,
+              "y": 33,
+              "w": 24,
+              "h": 6
             }
           }
         ]

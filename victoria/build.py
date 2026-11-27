@@ -59,6 +59,7 @@ DASHBOARDS = (
     "freebox",
     "network",
     "wifi",
+    "ups",
 )
 
 # Compose config name -> source file, relative to config/.
