@@ -813,16 +813,20 @@ configs:
             # acmerenew included: the proxmox_tls role of myansible renews the
             # certificate with step and deletes the ACME settings, so a failed
             # acmerenew means ACME came back.
+            # The 24 hour window, not keep_firing_for, keeps the alert firing
+            # for a day: vmalert restores the for state after a restart, not
+            # keep_firing_for, so a restart within that day would send the SMS
+            # of the same failure again.
             - alert: proxmox_task_failed
               expr: >-
-                _time:15m {log_stream="proxmox"} pve_task_failed:=true
+                _time:24h {log_stream="proxmox"} pve_task_failed:=true
                 | stats by (pve_task_type, pve_vmid, pve_task_status) count() as failures
                 | filter failures:>=1
-              keep_firing_for: 1440m
+              keep_firing_for: 5m
               labels:
                 severity: warning
               annotations:
-                summary: "Tache Proxmox {{ $$labels.pve_task_type }}{{ with $$labels.pve_vmid }} VM {{ . }}{{ end }} en erreur ({{ $$value }} en 15 minutes){{ with $$labels.pve_task_status }} : {{ . }}{{ end }}"
+                summary: "Tache Proxmox {{ $$labels.pve_task_type }}{{ with $$labels.pve_vmid }} VM {{ . }}{{ end }} en erreur ({{ $$value }} en 24 heures){{ with $$labels.pve_task_status }} : {{ . }}{{ end }}"
                 description: "Une tache Proxmox se termine en erreur"
             - alert: proxmox_auth_failed_burst
               expr: >-
@@ -903,14 +907,15 @@ configs:
             # result '<result>'." from systemd), system or user manager. It
             # covers the timers of the hosts too, such as proxmox-tls-renew.
             # The message is in _msg: vector names body_message in _msg_field.
+            # A 24 hour window, as proxmox_task_failed, survives a restart.
             - alert: systemd_unit_failed
               expr: >-
-                _time:15m {log_stream="journald"} body_syslog_identifier:=systemd
+                _time:24h {log_stream="journald"} body_syslog_identifier:=systemd
                 "Failed with result"
                 | extract "<systemd_unit>: Failed with result '<unit_result>'" from _msg
                 | stats by (host_name, systemd_unit, unit_result) count() as failures
                 | filter failures:>=1
-              keep_firing_for: 1440m
+              keep_firing_for: 5m
               labels:
                 severity: warning
               annotations:
@@ -1394,6 +1399,60 @@ configs:
               annotations:
                 summary: "{{ $$labels.job }} n'arrive plus a envoyer ses alertes a Alertmanager"
                 description: "Des alertes declenchees n'atteignent pas Alertmanager : aucun SMS ne part pour elles"
+            # /data full within 4 days at the pace of the last 24 hours.
+            # victoriametrics and victorialogs share /data on the host, so
+            # both usually fire together, in one SMS (group_by alertname).
+            # The 24 hour range smooths the merges of both, which take space
+            # for minutes then give it back; the for of 1h covers a range
+            # still short after a restart. The fill level itself is
+            # filesystem_usage_high and filesystem_usage_critical.
+            - alert: victoria_disk_fill_predicted
+              expr: >-
+                predict_linear(vm_free_disk_space_bytes[24h], 4 * 86400) < 0
+                or predict_linear(vl_free_disk_space_bytes[24h], 4 * 86400) < 0
+              for: 1h
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Disque {{ $$labels.path }} de {{ $$labels.job }} plein dans moins de 4 jours au rythme actuel"
+                description: "L'espace libre baisse assez vite pour etre epuise en 4 jours : ingestion en hausse ou retention trop longue"
+            # VictoriaLogs up but writing no row for 5 minutes: Vector sends
+            # nothing (sinks blocked, sources stalled). At least 269 rows per
+            # 5 minutes over 30 days. The 5 minute range fires before the
+            # silences of the logs rules (10 minutes or more), which it
+            # inhibits. up == 1: a stopped victorialogs is
+            # victoria_component_down. for: 2m because a restart of
+            # victorialogs resets the counter: the first evaluations see a
+            # single sample, whose increase is 0. It still fires at about
+            # 7 minutes, before the silences. No match for VictoriaMetrics: it
+            # scrapes itself, so its ingestion never drops to zero.
+            - alert: victorialogs_ingestion_stopped
+              expr: >-
+                sum(increase(vl_rows_ingested_total[5m])) == 0
+                and on() max(up{job="victorialogs"}) == 1
+              for: 2m
+              keep_firing_for: 60m
+              labels:
+                severity: critical
+              annotations:
+                summary: "VictoriaLogs ne recoit plus aucun log depuis plus de 5 minutes"
+                description: "VictoriaLogs repond mais n'ecrit plus de ligne : Vector n'envoie plus rien, les alertes sur les logs sont aveugles"
+            # Errors of a Vector component other than free_mobile (the
+            # watchdog covers it): a source that cannot parse or read, a sink
+            # that cannot write. At most 2 per 30 minutes over 30 days, from
+            # the vmalert_*_rules sources when vmalert restarts.
+            - alert: vector_component_errors
+              expr: >-
+                sum by (component_id) (
+                  increase(vector_component_errors_total{component_id!="free_mobile"}[30m])
+                ) >= 5
+              keep_firing_for: 60m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Vector : {{ $$value }} erreurs du composant {{ $$labels.component_id }} en 30 minutes"
+                description: "Un composant de Vector echoue : des logs ou des metriques sont perdus ou retardes"
 
   # One route per alert. Its repeat_interval is at least the event window
   # of the rule, plus its keep_firing_for, plus its group interval: the
@@ -1517,6 +1576,12 @@ configs:
             repeat_interval: 70m
           - matchers: [alertname="vmalert_send_failed"]
             repeat_interval: 75m
+          - matchers: [alertname="victoria_disk_fill_predicted"]
+            repeat_interval: 1505m
+          - matchers: [alertname="victorialogs_ingestion_stopped"]
+            repeat_interval: 70m
+          - matchers: [alertname="vector_component_errors"]
+            repeat_interval: 95m
       receivers:
         - name: sms
           webhook_configs:
@@ -1547,6 +1612,15 @@ configs:
           target_matchers:
             - alertname=~"host_logs_silent|smart_data_missing|zfs_data_missing|dns_resolver_silent"
           equal: [host_name]
+        # VictoriaLogs receiving nothing: every logs source looks silent.
+        # No equal: the source has no host_name.
+        - source_matchers: [alertname="victorialogs_ingestion_stopped"]
+          target_matchers:
+            - alertname=~"host_logs_silent|dns_resolver_silent|authentik_logs_silent"
+        # A component of the stack down: ingestion and Vector errors follow.
+        - source_matchers: [alertname="victoria_component_down"]
+          target_matchers:
+            - alertname=~"victorialogs_ingestion_stopped|vector_component_errors"
         # No data from the UniFi controller at all: every device would look
         # down.
         - source_matchers: [alertname="unpoller_no_unifi_data"]

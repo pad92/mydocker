@@ -394,3 +394,57 @@ groups:
         annotations:
           summary: "{{ $labels.job }} n'arrive plus a envoyer ses alertes a Alertmanager"
           description: "Des alertes declenchees n'atteignent pas Alertmanager : aucun SMS ne part pour elles"
+      # /data full within 4 days at the pace of the last 24 hours.
+      # victoriametrics and victorialogs share /data on the host, so
+      # both usually fire together, in one SMS (group_by alertname).
+      # The 24 hour range smooths the merges of both, which take space
+      # for minutes then give it back; the for of 1h covers a range
+      # still short after a restart. The fill level itself is
+      # filesystem_usage_high and filesystem_usage_critical.
+      - alert: victoria_disk_fill_predicted
+        expr: >-
+          predict_linear(vm_free_disk_space_bytes[24h], 4 * 86400) < 0
+          or predict_linear(vl_free_disk_space_bytes[24h], 4 * 86400) < 0
+        for: 1h
+        keep_firing_for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disque {{ $labels.path }} de {{ $labels.job }} plein dans moins de 4 jours au rythme actuel"
+          description: "L'espace libre baisse assez vite pour etre epuise en 4 jours : ingestion en hausse ou retention trop longue"
+      # VictoriaLogs up but writing no row for 5 minutes: Vector sends
+      # nothing (sinks blocked, sources stalled). At least 269 rows per
+      # 5 minutes over 30 days. The 5 minute range fires before the
+      # silences of the logs rules (10 minutes or more), which it
+      # inhibits. up == 1: a stopped victorialogs is
+      # victoria_component_down. for: 2m because a restart of
+      # victorialogs resets the counter: the first evaluations see a
+      # single sample, whose increase is 0. It still fires at about
+      # 7 minutes, before the silences. No match for VictoriaMetrics: it
+      # scrapes itself, so its ingestion never drops to zero.
+      - alert: victorialogs_ingestion_stopped
+        expr: >-
+          sum(increase(vl_rows_ingested_total[5m])) == 0
+          and on() max(up{job="victorialogs"}) == 1
+        for: 2m
+        keep_firing_for: 60m
+        labels:
+          severity: critical
+        annotations:
+          summary: "VictoriaLogs ne recoit plus aucun log depuis plus de 5 minutes"
+          description: "VictoriaLogs repond mais n'ecrit plus de ligne : Vector n'envoie plus rien, les alertes sur les logs sont aveugles"
+      # Errors of a Vector component other than free_mobile (the
+      # watchdog covers it): a source that cannot parse or read, a sink
+      # that cannot write. At most 2 per 30 minutes over 30 days, from
+      # the vmalert_*_rules sources when vmalert restarts.
+      - alert: vector_component_errors
+        expr: >-
+          sum by (component_id) (
+            increase(vector_component_errors_total{component_id!="free_mobile"}[30m])
+          ) >= 5
+        keep_firing_for: 60m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Vector : {{ $value }} erreurs du composant {{ $labels.component_id }} en 30 minutes"
+          description: "Un composant de Vector echoue : des logs ou des metriques sont perdus ou retardes"

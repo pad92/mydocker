@@ -67,16 +67,20 @@ groups:
       # acmerenew included: the proxmox_tls role of myansible renews the
       # certificate with step and deletes the ACME settings, so a failed
       # acmerenew means ACME came back.
+      # The 24 hour window, not keep_firing_for, keeps the alert firing
+      # for a day: vmalert restores the for state after a restart, not
+      # keep_firing_for, so a restart within that day would send the SMS
+      # of the same failure again.
       - alert: proxmox_task_failed
         expr: >-
-          _time:15m {log_stream="proxmox"} pve_task_failed:=true
+          _time:24h {log_stream="proxmox"} pve_task_failed:=true
           | stats by (pve_task_type, pve_vmid, pve_task_status) count() as failures
           | filter failures:>=1
-        keep_firing_for: 1440m
+        keep_firing_for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Tache Proxmox {{ $labels.pve_task_type }}{{ with $labels.pve_vmid }} VM {{ . }}{{ end }} en erreur ({{ $value }} en 15 minutes){{ with $labels.pve_task_status }} : {{ . }}{{ end }}"
+          summary: "Tache Proxmox {{ $labels.pve_task_type }}{{ with $labels.pve_vmid }} VM {{ . }}{{ end }} en erreur ({{ $value }} en 24 heures){{ with $labels.pve_task_status }} : {{ . }}{{ end }}"
           description: "Une tache Proxmox se termine en erreur"
       - alert: proxmox_auth_failed_burst
         expr: >-
@@ -157,14 +161,15 @@ groups:
       # result '<result>'." from systemd), system or user manager. It
       # covers the timers of the hosts too, such as proxmox-tls-renew.
       # The message is in _msg: vector names body_message in _msg_field.
+      # A 24 hour window, as proxmox_task_failed, survives a restart.
       - alert: systemd_unit_failed
         expr: >-
-          _time:15m {log_stream="journald"} body_syslog_identifier:=systemd
+          _time:24h {log_stream="journald"} body_syslog_identifier:=systemd
           "Failed with result"
           | extract "<systemd_unit>: Failed with result '<unit_result>'" from _msg
           | stats by (host_name, systemd_unit, unit_result) count() as failures
           | filter failures:>=1
-        keep_firing_for: 1440m
+        keep_firing_for: 5m
         labels:
           severity: warning
         annotations:
