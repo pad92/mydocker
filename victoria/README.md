@@ -25,7 +25,7 @@ This stack replaces OpenObserve. It deploys the following services:
 | `GRAFANA_VERSION` | Grafana image tag. | `13.2.7` |
 | `UNPOLLER_VERSION` | unpoller image tag (`ghcr.io/unpoller/unpoller`). | `v5.9.6` |
 | `SNMP_EXPORTER_VERSION` | snmp_exporter image tag (`prom/snmp-exporter`, the compose file adds the `-distroless` suffix). | `v0.31.0` |
-| `FREEBOX_EXPORTER_VERSION` | freebox-exporter-rs image tag (`ghcr.io/shackerd/freebox-exporter-rs`). Keep a release tag: the `v0.0.27` and later tags are betas. | `v0.0.26` |
+| `FREEBOX_EXPORTER_VERSION` | freebox-exporter-rs image reference (`ghcr.io/shackerd/freebox-exporter-rs`), tag and digest. `v0.0.29-beta2` is a beta built from `main` with no git tag or release: the digest pins the image, since the tag can be pushed again. | `v0.0.29-beta2@sha256:7da4b43d…` |
 | `GRAFANA_LOGS_PLUGIN_VERSION` | Version of the `victoriametrics-logs-datasource` Grafana plugin. | `0.34.0` |
 | `GRAFANA_MCP_VERSION` | mcp-grafana image tag (`grafana/mcp-grafana`, no `v` prefix). | `2.4.0` |
 | `VICTORIA_LOGS_DOMAIN` | Host name of the logs UI and of the OTLP logs endpoint. Must equal `VICTORIA_LOGS_HOST_LOCAL` in `management/.env`. | `logs.example.com` |
@@ -219,7 +219,7 @@ ssh chataigne.home.lan "docker exec vmalert-logs wget -qO- 'http://victoriametri
 The *Synology NAS* dashboard (uid `victoria-synology`) shows the scrape state, the count of failed components (system, power, fans, thermal), failed disks (`diskStatus` or `diskHealthStatus` not `1`) and degraded pools or volumes, the system temperature and the uptime (`sysUpTime` is in hundredths of a second). It then plots CPU and memory use, volume occupancy, disk temperatures, the traffic of the physical interfaces (`eth*` and `bond*`; the loopback and Docker interfaces are left out) and their errors and discards (`ifInErrors`, `ifOutErrors`, `ifInDiscards`, `ifOutDiscards`), the disk I/O per device (`storageIONReadX`, `storageIONWrittenX`) and the UPS battery charge and load. The occupancy panel keeps the volumes only: a storage pool is fully allocated to its volume, so its own free space is always close to zero. These metric names and labels were checked against the NAS in production.
 
 ### Freebox Metrics (`freebox-exporter`)
-The Freebox Delta runs in bridge mode: UniFi routes, the box only carries the fiber link. [freebox-exporter-rs](https://github.com/shackerd/freebox-exporter-rs) (`v0.0.26`, the last release; later tags are betas) reads the Freebox API every 30 seconds and exposes the result on port 9102. The `freebox` job of `victoriametrics_scrape` scrapes `freebox-exporter:9102` every 60 seconds. The exporter config (`freebox_exporter_config`) enables the `connection` and `system` modules only.
+The Freebox Delta runs in bridge mode: UniFi routes, the box only carries the fiber link. [freebox-exporter-rs](https://github.com/shackerd/freebox-exporter-rs) (`v0.0.29-beta2`, a beta pinned by digest; the last release is `v0.0.26`) reads the Freebox API every 30 seconds and exposes the result on port 9102. The `freebox` job of `victoriametrics_scrape` scrapes `freebox-exporter:9102` every 60 seconds. The exporter config (`freebox_exporter_config`) enables the `connection` and `system` modules only; it turns off `vm`, `raid`, `vpn` and `ddns` by name, which a missing key also leaves off.
 
 freebox-exporter runs as `65534:65534` with no published port and no Traefik route. It is on the internal `victoria` network, where VictoriaMetrics reaches it, and on the `freebox` network, its only route out to the box (`https://mafreebox.freebox.fr`, 443/tcp). TLS stays verified: the exporter pins the Freebox certificate authorities.
 
@@ -232,7 +232,7 @@ Setup (once, with physical access to the box):
    ```bash
    mkdir -m 700 fbx
    docker run --rm -it --hostname freebox-exporter -v "$PWD/fbx":/data -w /data \
-     ghcr.io/shackerd/freebox-exporter-rs:v0.0.26 \
+     ghcr.io/shackerd/freebox-exporter-rs:v0.0.29-beta2@sha256:7da4b43dc9d1c6c87d4e561d4db274ab7e8766d62a390638b70368b324dbee0a \
      /usr/bin/freebox-exporter-rs -c /etc/freebox-exporter-rs/config.toml register
    ```
 

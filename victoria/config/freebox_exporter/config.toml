@@ -11,6 +11,10 @@ dhcp = false
 system = true
 nas = false
 download = false
+vm = false
+raid = false
+vpn = false
+ddns = false
 prefix = "fbx_exporter"
 
 [policies]
