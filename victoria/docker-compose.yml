@@ -421,7 +421,7 @@ services:
       - source: vmalert_metrics_rules
         target: /etc/vmalert/rules.yml
     labels:
-      mydocker.config-hash: "445bd509afe59714b9bbb5cc7f4e78ea3802c1a9f5738335dd8f33a52b6d60c6"
+      mydocker.config-hash: "3cb44224f7779937c30c00c3cd6e5e02a5ad74b712118afb1e04c585e15e2bde"
     networks:
       - victoria
     mem_limit: 128m
@@ -478,7 +478,7 @@ services:
       - source: alertmanager_config
         target: /etc/alertmanager/alertmanager.yml
     labels:
-      mydocker.config-hash: "803aaf2e7cbf8920242017ab314778c5f67a4ae9010860bfa8df439346535c8a"
+      mydocker.config-hash: "9767ea8e90d928038eed13446c79260563f053f220b3fd068cf281bbb0ac74ae"
     volumes:
       - ${ALERTMANAGER_DATA_DIR:?Set ALERTMANAGER_DATA_DIR}:/alertmanager
       - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
@@ -579,7 +579,7 @@ services:
     security_opt:
       - no-new-privileges:true
     labels:
-      mydocker.config-hash: "4c9fa2200ea551222d091317ff39da1ec5971766a81608fac6709cf2755ae3f3"
+      mydocker.config-hash: "9cefc59a0b2c50475e39e19d6e5942461c600a23f7d71fb666265f18d53db683"
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.victoria_grafana.loadbalancer.server.port: "3000"
@@ -1347,7 +1347,9 @@ configs:
             - alert: ups_runtime_low
               expr: min by (instance) (upsBatteryRuntimeValue) < 600
               for: 5m
-              keep_firing_for: 30m
+              # No longer than ups_on_battery and ups_low_battery, which inhibit
+              # it: a longer tail would send its SMS once the outage is over.
+              keep_firing_for: 10m
               labels:
                 severity: warning
               annotations:
@@ -1373,9 +1375,11 @@ configs:
                 description: "Le test de l'onduleur signale une batterie usee"
             # Without fresh data the rules above go quiet: the UPS unplugged
             # from the NAS or the NAS unreachable would hide a power outage.
+            # Its keep_firing_for stays under the 60m of synology_scrape_down,
+            # which inhibits it: a NAS back up must not send this SMS late.
             - alert: ups_data_missing
               expr: max by (instance) (lag(upsBatteryChargeValue[24h])) > 1800
-              keep_firing_for: 120m
+              keep_firing_for: 30m
               labels:
                 severity: warning
               annotations:
@@ -1764,13 +1768,13 @@ configs:
           - matchers: [alertname="ups_low_battery"]
             repeat_interval: 15m
           - matchers: [alertname="ups_runtime_low"]
-            repeat_interval: 35m
+            repeat_interval: 15m
           - matchers: [alertname="ups_overload"]
             repeat_interval: 35m
           - matchers: [alertname="ups_replace_battery"]
             repeat_interval: 1445m
           - matchers: [alertname="ups_data_missing"]
-            repeat_interval: 125m
+            repeat_interval: 35m
           - matchers: [alertname="synology_system_failed"]
             repeat_interval: 65m
           - matchers: [alertname="synology_raid_degraded"]
@@ -27736,7 +27740,7 @@ configs:
           {
             "type": "stat",
             "title": "Tension d'entrée",
-            "description": "Tension du secteur vue par l'onduleur. Rouge hors de la plage 230 V ± 10 % (207 à 253 V).",
+            "description": "Tension du secteur vue par l'onduleur. Rouge hors de la plage 230 V ± 10 % (207 à 253 V). Avec plusieurs NAS, la plus basse.",
             "datasource": {
               "type": "prometheus",
               "uid": "victoriametrics"
@@ -27749,7 +27753,7 @@ configs:
                   "uid": "victoriametrics"
                 },
                 "editorMode": "code",
-                "expr": "max(upsInputVoltageValue{instance=~\"$$instance\"})",
+                "expr": "min(upsInputVoltageValue{instance=~\"$$instance\"})",
                 "legendFormat": "__auto",
                 "instant": true,
                 "range": false

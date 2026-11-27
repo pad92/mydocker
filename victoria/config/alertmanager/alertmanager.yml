@@ -89,13 +89,13 @@ route:
     - matchers: [alertname="ups_low_battery"]
       repeat_interval: 15m
     - matchers: [alertname="ups_runtime_low"]
-      repeat_interval: 35m
+      repeat_interval: 15m
     - matchers: [alertname="ups_overload"]
       repeat_interval: 35m
     - matchers: [alertname="ups_replace_battery"]
       repeat_interval: 1445m
     - matchers: [alertname="ups_data_missing"]
-      repeat_interval: 125m
+      repeat_interval: 35m
     - matchers: [alertname="synology_system_failed"]
       repeat_interval: 65m
     - matchers: [alertname="synology_raid_degraded"]

@@ -276,7 +276,9 @@ groups:
       - alert: ups_runtime_low
         expr: min by (instance) (upsBatteryRuntimeValue) < 600
         for: 5m
-        keep_firing_for: 30m
+        # No longer than ups_on_battery and ups_low_battery, which inhibit
+        # it: a longer tail would send its SMS once the outage is over.
+        keep_firing_for: 10m
         labels:
           severity: warning
         annotations:
@@ -302,9 +304,11 @@ groups:
           description: "Le test de l'onduleur signale une batterie usee"
       # Without fresh data the rules above go quiet: the UPS unplugged
       # from the NAS or the NAS unreachable would hide a power outage.
+      # Its keep_firing_for stays under the 60m of synology_scrape_down,
+      # which inhibits it: a NAS back up must not send this SMS late.
       - alert: ups_data_missing
         expr: max by (instance) (lag(upsBatteryChargeValue[24h])) > 1800
-        keep_firing_for: 120m
+        keep_firing_for: 30m
         labels:
           severity: warning
         annotations:

@@ -800,7 +800,7 @@ expected_values = {("victoria-hosts", "Hôtes silencieux (> 10 min)", "all"): 1,
                                                ("Autonomie estimée", 1500, 500),
                                                ("Charge de l'onduleur", 23, 50),
                                                ("Puissance estimée", 165.6, 360),
-                                               ("Tension d'entrée", 230, 230),
+                                               ("Tension d'entrée", 230, 0),
                                                ("Batterie à remplacer", 0, 0))
                       for variant, value in (("value", one), ("all", both))}}
 # No number returned by the HTTP dashboard may come from a stream: the

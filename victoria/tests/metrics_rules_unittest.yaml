@@ -777,7 +777,7 @@ tests:
         groupname: ups
         alertname: ups_low_battery
         exp_alerts: []
-      - eval_time: 5m
+      - eval_time: 3m
         groupname: ups
         alertname: ups_low_battery
         exp_alerts:
@@ -856,7 +856,7 @@ tests:
         groupname: ups
         alertname: ups_replace_battery
         exp_alerts: []
-      - eval_time: 4m
+      - eval_time: 2m
         groupname: ups
         alertname: ups_replace_battery
         exp_alerts:

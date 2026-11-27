@@ -448,7 +448,7 @@
     {
       "type": "stat",
       "title": "Tension d'entrée",
-      "description": "Tension du secteur vue par l'onduleur. Rouge hors de la plage 230 V ± 10 % (207 à 253 V).",
+      "description": "Tension du secteur vue par l'onduleur. Rouge hors de la plage 230 V ± 10 % (207 à 253 V). Avec plusieurs NAS, la plus basse.",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -461,7 +461,7 @@
             "uid": "victoriametrics"
           },
           "editorMode": "code",
-          "expr": "max(upsInputVoltageValue{instance=~\"$instance\"})",
+          "expr": "min(upsInputVoltageValue{instance=~\"$instance\"})",
           "legendFormat": "__auto",
           "instant": true,
           "range": false
