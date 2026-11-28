@@ -1,7 +1,7 @@
 x-localtime-volume: &localtime-volume "/etc/localtime:/etc/localtime:ro"
 services:
   traefik:
-    image: traefik:v3.7.17
+    image: traefik:v3.8
     container_name: traefik
     restart: unless-stopped
     # Static configuration lives only in these flags. Traefik reads a single
