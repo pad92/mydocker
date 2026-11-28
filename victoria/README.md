@@ -14,6 +14,116 @@ This stack replaces OpenObserve. It deploys the following services:
 - `nvidia-gpu-exporter`: reads the GPU of the Docker host through NVML (totals and the VRAM of each process) and exposes the metrics to VictoriaMetrics, which scrapes them.
 - `victoria-init`: one-shot container that fixes the ownership of the data directories.
 
+## Architecture
+
+### Collection and Monitoring
+
+Logs reach VictoriaLogs only through Vector. Metrics are pushed to VictoriaMetrics in OTLP or scraped by it. Grafana reads both databases and Alertmanager.
+
+```mermaid
+flowchart LR
+    subgraph sources["Sources"]
+        otel["Host OTel collectors<br/>(myansible: journald, files, docker)"]
+        pve["Proxmox metric server<br/>(OTLP JSON)"]
+        netdev["UniFi, Synology<br/>(UDP syslog)"]
+        unifi["UniFi gateway"]
+        nas["Synology NAS"]
+        freebox["Freebox API"]
+        gpu["GPU (NVML)"]
+    end
+
+    subgraph ingress["Traefik (Basic auth victoria-ingest-auth)"]
+        r_logs["vector_ingest<br/>POST /v1/logs on logs.domain"]
+        r_metrics["victoriametrics_ingest<br/>POST /opentelemetry/v1/metrics"]
+    end
+
+    subgraph stack["Victoria stack"]
+        vector["vector<br/>:4318 OTLP, :5514 syslog"]
+        vlogs[("victorialogs :9428")]
+        vm[("victoriametrics :8428")]
+        unpoller["unpoller :9130"]
+        snmp["snmp-exporter"]
+        fbx["freebox-exporter :9102"]
+        nvgpu["nvidia-gpu-exporter :9835"]
+        grafana["grafana"]
+        am["alertmanager :9093"]
+    end
+
+    otel -->|"OTLP/HTTP logs"| r_logs --> vector
+    netdev -->|"syslog to VECTOR_SYSLOG_PORT"| vector
+    vector -->|"/insert/jsonline"| vlogs
+
+    otel -->|"OTLP protobuf metrics"| r_metrics --> vm
+    pve -->|"127.0.0.1:4318"| otel
+
+    vm -.->|"scrape"| unpoller -->|"API"| unifi
+    vm -.->|"scrape"| snmp -->|"SNMPv3"| nas
+    vm -.->|"scrape"| fbx -->|"API"| freebox
+    vm -.->|"scrape"| nvgpu --> gpu
+    vm -.->|"scrape"| selfmetrics["stack metrics:<br/>victorialogs, vmalert-*,<br/>alertmanager, vector :9598"]
+
+    grafana --> vlogs
+    grafana --> vm
+    grafana -->|"alerts, silences"| am
+
+    user(["User"]) -->|"Authentik forward auth"| grafana
+    mcp(["MCP client"]) -->|"/mcp, bearer token"| grafana
+    kuma(["Uptime Kuma"]) -.->|"/health"| vlogs
+    kuma -.->|"/health"| vm
+```
+
+Dashed arrows are pulls (scrape, health check); solid arrows are pushes or reads.
+
+### Alert Flow
+
+See [Alerting](#alerting) for the rules and the routing. Dashed arrows are polls.
+
+```mermaid
+flowchart LR
+    vlogs[("victorialogs")]
+    vm[("victoriametrics")]
+
+    subgraph eval["Rule evaluation"]
+        vmal["vmalert-logs<br/>(LogsQL)"]
+        vmam["vmalert-metrics<br/>(MetricsQL)"]
+    end
+
+    am["alertmanager :9093"]
+
+    subgraph sms["SMS bridge (vector)"]
+        hook["alertmanager_webhook source<br/>:8080 /alertmanager, Basic auth"]
+        tr["sms_message transform"]
+        sink["free_mobile sink"]
+        poll["vmalert_*_rules sources<br/>(GET /api/v1/rules every minute)"]
+        rules["alert_rules transform"]
+    end
+
+    freeapi["smsapi.free-mobile.fr"]
+    phone(["Phone"])
+    kuma(["Uptime Kuma push monitor"])
+    grafana["grafana"]
+
+    vlogs -->|"query"| vmal
+    vm -->|"query"| vmam
+    vmal -->|"alerts"| am
+    vmam -->|"alerts"| am
+    vmal -->|"ALERTS state, docker_container_info"| vm
+    vmam -->|"ALERTS state, recording rules"| vm
+
+    am -->|"webhook"| hook --> tr --> sink -->|"HTTPS sendmsg"| freeapi --> phone
+    am -->|"watchdog every minute<br/>ALERTMANAGER_WATCHDOG_URL"| kuma
+    kuma -->|"own notification when pushes stop"| phone
+
+    poll -.->|"poll"| vmal
+    poll -.->|"poll"| vmam
+    poll --> rules -->|"alerts stream"| vlogs
+
+    grafana -->|"Alertes dashboard"| vlogs
+    grafana -->|"alerts, silences"| am
+```
+
+The `watchdog` alert fires while the whole SMS path works and goes to Uptime Kuma without Vector. When the pushes stop (a service of the chain down or the `free_mobile` sink failing), Kuma notifies through its own channel. The other `victoria_stack` rules report the failures that still leave the SMS path up.
+
 ## Service-Specific Configuration Variables
 
 | Variable Name | Description | Placeholder / Default |
