@@ -18,3 +18,17 @@ datasources:
       # Longest scrape interval (unpoller, synology, freebox): keeps
       # $__rate_interval at 4m or more, so a rate always sees 2 samples.
       timeInterval: 60s
+  # The alerts of vmalert as Alertmanager holds them: the Grafana Alerting
+  # pages list them and their silences, and an Editor or Admin creates or
+  # expires a silence there, over HTTPS behind Authentik. Alertmanager itself
+  # keeps no route. The rules stay in vmalert: Grafana neither sends its own
+  # alerts here nor evaluates any rule.
+  - name: Alertmanager
+    uid: alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    editable: false
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false

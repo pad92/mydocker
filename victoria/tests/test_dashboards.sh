@@ -2,8 +2,9 @@
 # Grafana test, on the configs and environment as Compose renders them with
 # .env.example.
 #
-# On a throwaway internal network: VictoriaLogs, VictoriaMetrics and Grafana
-# with the rendered environment, provisioning files and dashboards. Checks:
+# On a throwaway internal network: VictoriaLogs, VictoriaMetrics, Alertmanager
+# and Grafana with the rendered environment, provisioning files, dashboards and
+# Alertmanager config. Checks:
 # - without the X-authentik-username header the API answers 401 (no anonymous
 #   access), Basic auth and POST /login with the default admin/admin are
 #   refused;
@@ -23,6 +24,12 @@
 #   value, so its targets are instant: a range query over the time range
 #   fetches points it drops, and lastNotNull would show a value hours old for
 #   a series that stopped;
+# - silences through the Alertmanager datasource: the viewer's POST is refused
+#   with 403, through the Grafana Alertmanager API and through the generic
+#   datasource proxy, the admin (GF_SECURITY_ADMIN_USER, sent in the Authentik
+#   header) creates one, Alertmanager holds it active with the exact matchers,
+#   the viewer lists exactly that one, and the Alertmanager alert list is
+#   empty (no vmalert here);
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
 # - every VictoriaLogs target of the dashboards, sent as the viewer to
@@ -85,6 +92,7 @@ version() { sed -n "s/^$1=//p" "$env_file"; }
 logs_image="victoriametrics/victoria-logs:$(version VICTORIA_LOGS_VERSION)"
 metrics_image="victoriametrics/victoria-metrics:$(version VICTORIA_METRICS_VERSION)"
 grafana_image="grafana/grafana:$(version GRAFANA_VERSION)"
+alertmanager_image="prom/alertmanager:$(version ALERTMANAGER_VERSION)"
 client_image="${CLIENT_IMAGE:-busybox:1.37}"
 plugin_id="victoriametrics-logs-datasource"
 viewer="test-viewer"
@@ -97,10 +105,11 @@ network="victoria-dashboards-test-$suffix"
 logs_name="victorialogs-test-$suffix"
 metrics_name="victoriametrics-test-$suffix"
 grafana_name="grafana-test-$suffix"
+alertmanager_name="alertmanager-test-$suffix"
 work_dir="$(mktemp -d)"
 
 cleanup() {
-  docker rm -f "$grafana_name" "$metrics_name" "$logs_name" >/dev/null 2>&1 || true
+  docker rm -f "$grafana_name" "$alertmanager_name" "$metrics_name" "$logs_name" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   rm -rf "$work_dir"
 }
@@ -124,6 +133,20 @@ jq -r '.services.grafana.environment | to_entries[] | "\(.key)=\(.value)"' \
   "$work_dir/compose.json" > "$work_dir/grafana.env"
 echo "GF_PLUGINS_PREINSTALL_DISABLED=true" >> "$work_dir/grafana.env"
 grafana_user="$(jq -r '.services.grafana.user // empty' "$work_dir/compose.json")"
+grafana_admin="$(jq -r '.services.grafana.environment.GF_SECURITY_ADMIN_USER' "$work_dir/compose.json")"
+[[ -n "$grafana_admin" && "$grafana_admin" != "$viewer" ]] || fail "GF_SECURITY_ADMIN_USER is '$grafana_admin'"
+# The Alertmanager behind the Alertmanager datasource, with its rendered
+# config: its receivers cannot reach Vector or Uptime Kuma here, and no alert
+# is sent to it anyway.
+jq -er '.configs.alertmanager_config.content | gsub("\\$\\$"; "$")' \
+  "$work_dir/compose.json" > "$work_dir/alertmanager.yml"
+# A silence created through Grafana, for an alert that fires nowhere.
+silence_start="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+silence_end="$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)"
+jq -n --arg s "$silence_start" --arg e "$silence_end" '{
+  matchers: [{name: "alertname", value: "dashboards_test_silence", isRegex: false, isEqual: true}],
+  startsAt: $s, endsAt: $e, createdBy: "test_dashboards", comment: "silence from Grafana"}' \
+  > "$work_dir/silence.json"
 
 mounts=()
 mkdir -p "$work_dir/configs"
@@ -631,6 +654,10 @@ docker run -d --name "$grafana_name" --network "$network" --network-alias grafan
   ${grafana_user:+--user "$grafana_user"} --env-file "$work_dir/grafana.env" \
   --tmpfs /var/lib/grafana:mode=1777 \
   -v "$plugin_dir:/var/lib/grafana/plugins:ro" "${mounts[@]}" "$grafana_image" >/dev/null
+docker run -d --name "$alertmanager_name" --network "$network" --network-alias alertmanager \
+  --tmpfs /alertmanager:mode=1777 -v "$work_dir/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
+  "$alertmanager_image" --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager \
+  --cluster.listen-address= --web.listen-address=:9093 >/dev/null
 
 client() {
   docker run --rm --network "$network" --user "$(id -u):$(id -g)" \
@@ -641,13 +668,14 @@ ready=""
 for _ in $(seq 1 90); do
   if client wget -q -O /dev/null http://victorialogs:9428/health 2>/dev/null \
     && client wget -q -O /dev/null http://victoriametrics:8428/health 2>/dev/null \
-    && client wget -q -O /dev/null http://grafana:3000/api/health 2>/dev/null; then
+    && client wget -q -O /dev/null http://grafana:3000/api/health 2>/dev/null \
+    && client wget -q -O /dev/null http://alertmanager:9093/-/healthy 2>/dev/null; then
     ready=1
     break
   fi
   sleep 1
 done
-[[ -n "$ready" ]] || fail "victorialogs, victoriametrics or grafana did not start"
+[[ -n "$ready" ]] || fail "victorialogs, victoriametrics, grafana or alertmanager did not start"
 
 # The Alertes dashboard reads the last 3 minutes: date the rule states now,
 # whatever the time Grafana took to start.
@@ -701,13 +729,28 @@ wget -q -O /w/out/user.json --header "$h" "$g/api/user"
 wget -q -O /w/out/orgs.json --header "$h" "$g/api/user/orgs"
 wget -q -O /w/out/search.json --header "$h" "$g/api/search?type=dash-db"
 wget -q -O /w/out/plugin.json --header "$h" "$g/api/plugins/$2/settings"
+# Silences through the Alertmanager datasource: the viewer is refused, the
+# admin creates one, which Alertmanager then holds and the viewer lists.
+am="$g/api/alertmanager/alertmanager/api/v2"
+wget -S -O /w/out/silence_viewer.json --header "$h" --header 'Content-Type: application/json' \
+  --post-file /w/silence.json "$am/silences" > /w/out/silence_viewer.txt 2>&1
+wget -q -O /w/out/silence_admin.json --header "X-authentik-username: $3" \
+  --header 'Content-Type: application/json' --post-file /w/silence.json "$am/silences" \
+  2> /w/out/silence_admin.err
+# The generic datasource proxy must not let the viewer around that refusal.
+wget -S -O /w/out/silence_viewer_proxy.json --header "$h" --header 'Content-Type: application/json' \
+  --post-file /w/silence.json "$g/api/datasources/proxy/uid/alertmanager/api/v2/silences" \
+  > /w/out/silence_viewer_proxy.txt 2>&1
+wget -q -O /w/out/silences_viewer.json --header "$h" "$am/silences" 2> /w/out/silences_viewer.err
+wget -q -O /w/out/am_alerts_viewer.json --header "$h" "$am/alerts" 2> /w/out/am_alerts_viewer.err
+wget -q -O /w/out/silences_direct.json http://alertmanager:9093/api/v2/silences 2> /w/out/silences_direct.err
 for body in /w/bodies/q*.json; do
   name="$(basename "$body" .json)"
   wget -q -O "/w/out/$name.json" --header "$h" --header 'Content-Type: application/json' \
     --post-file "$body" "$g/api/ds/query" 2> "/w/out/$name.err" || true
 done
 SH
-client sh /w/requests.sh "$viewer" "$plugin_id" || true
+client sh /w/requests.sh "$viewer" "$plugin_id" "$grafana_admin" || true
 
 python3 -I - "$work_dir" "$viewer" "$plugin_id" "$pinned_version" <<'PY' || fail "see above"
 import json, math, re, sys
@@ -740,6 +783,29 @@ if user is not None and user.get("login") != viewer:
 orgs = load("orgs.json")
 if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
     errors.append(f"new user roles {orgs}, expected one org with Viewer")
+
+# Silences through the Alertmanager datasource.
+viewer_post = open(f"{out}/silence_viewer.txt").read()
+if " 403 " not in viewer_post:
+    errors.append(f"silence by the viewer not refused with 403: {viewer_post.strip()[:200]}")
+proxy_post = open(f"{out}/silence_viewer_proxy.txt").read()
+if not re.search(r"HTTP/1\.[01] 4\d\d ", proxy_post):
+    errors.append(f"silence by the viewer through the datasource proxy not refused: {proxy_post.strip()[:200]}")
+created = load("silence_admin.json")
+silence_id = (created or {}).get("silenceID")
+if not silence_id:
+    errors.append(f"silence by the admin not created: {created}")
+direct = load("silences_direct.json") or []
+held = [s for s in direct if s.get("id") == silence_id]
+if silence_id and (len(direct) != 1 or not held or held[0].get("status", {}).get("state") != "active"
+                   or held[0].get("matchers") != [{"name": "alertname", "value": "dashboards_test_silence",
+                                                   "isRegex": False, "isEqual": True}]):
+    errors.append(f"Alertmanager does not hold the silence {silence_id} as created: {direct}")
+listed = load("silences_viewer.json") or []
+if silence_id and [s.get("id") for s in listed] != [silence_id]:
+    errors.append(f"the viewer lists silences {[s.get('id') for s in listed]}, expected [{silence_id}]")
+if load("am_alerts_viewer.json") != []:
+    errors.append("the viewer cannot list the Alertmanager alerts, or some are firing")
 
 expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-disks", "victoria-dns", "victoria-docker",
                  "victoria-firewall", "victoria-freebox",
@@ -1016,4 +1082,4 @@ if errors:
 print(f"{len(index)} queries sent: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
 PY
 
-echo "OK: Grafana refuses requests without the Authentik header, signs users up as Viewer, loads the pinned plugin and answers every dashboard target"
+echo "OK: Grafana refuses requests without the Authentik header, signs users up as Viewer, lets only an Editor or Admin silence through Alertmanager, loads the pinned plugin and answers every dashboard target"
