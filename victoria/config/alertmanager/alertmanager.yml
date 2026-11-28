@@ -12,126 +12,109 @@ route:
       group_wait: 0s
       group_interval: 1m
       repeat_interval: 1m
-    - matchers: [alertname="authentik_login_failed_burst"]
-      repeat_interval: 80m
-    - matchers: [alertname="authentik_sensitive_event"]
-      repeat_interval: 70m
-    - matchers: [alertname="authentik_errors"]
-      repeat_interval: 80m
-    - matchers: [alertname="authentik_logs_silent"]
-      repeat_interval: 65m
-    - matchers: [alertname="proxmox_metrics_silent"]
-      repeat_interval: 65m
-    - matchers: [alertname="proxmox_storage_usage_high"]
-      repeat_interval: 725m
-    - matchers: [alertname="proxmox_node_memory_high"]
-      repeat_interval: 125m
-    - matchers: [alertname="proxmox_node_cpu_high"]
-      repeat_interval: 140m
-    - matchers: [alertname="proxmox_guest_restarted"]
-      repeat_interval: 45m
-    - matchers: [alertname="proxmox_backup_failed"]
-      repeat_interval: 80m
-    - matchers: [alertname="proxmox_backup_missing"]
-      repeat_interval: 780m
-    - matchers: [alertname="proxmox_task_failed"]
-      repeat_interval: 1460m
-    - matchers: [alertname="proxmox_auth_failed_burst"]
-      repeat_interval: 80m
-    - matchers: [alertname="unpoller_no_unifi_data"]
-      repeat_interval: 65m
-    - matchers: [alertname="unpoller_unifi_data_stale"]
-      repeat_interval: 50m
-    - matchers: [alertname="host_logs_silent"]
-      repeat_interval: 125m
-    - matchers: [alertname="kernel_critical"]
-      repeat_interval: 80m
-    - matchers: [alertname="systemd_unit_failed"]
-      repeat_interval: 1460m
-    - matchers: [alertname="oom_kill"]
-      repeat_interval: 80m
-    - matchers: [alertname="container_restart_loop"]
-      repeat_interval: 80m
-    - matchers: [alertname="dns_resolver_silent"]
-      repeat_interval: 125m
-    - matchers: [alertname="unifi_ips_event"]
-      repeat_interval: 80m
-    - matchers: [alertname="traefik_5xx_burst"]
-      repeat_interval: 65m
-    - matchers: [alertname="unifi_device_down"]
-      repeat_interval: 65m
-    - matchers: [alertname="host_metrics_silent"]
-      repeat_interval: 130m
-    - matchers: [alertname="filesystem_usage_high"]
-      repeat_interval: 725m
-    - matchers: [alertname="filesystem_usage_critical"]
-      repeat_interval: 125m
-    - matchers: [alertname="zfs_pool_degraded"]
-      repeat_interval: 65m
-    - matchers: [alertname="zfs_pool_capacity_high"]
-      repeat_interval: 725m
-    - matchers: [alertname="smart_status_failed"]
-      repeat_interval: 2885m
-    - matchers: [alertname="smart_attribute_failing"]
-      repeat_interval: 1445m
-    - matchers: [alertname="smart_sectors_growing"]
-      repeat_interval: 2885m
-    - matchers: [alertname="smart_crc_errors_growing"]
-      repeat_interval: 2885m
-    - matchers: [alertname="smart_temperature_high"]
-      repeat_interval: 125m
-    - matchers: [alertname="smart_data_missing"]
-      repeat_interval: 125m
-    - matchers: [alertname="zfs_data_missing"]
-      repeat_interval: 125m
-    - matchers: [alertname="ups_on_battery"]
-      repeat_interval: 15m
-    - matchers: [alertname="ups_low_battery"]
-      repeat_interval: 15m
-    - matchers: [alertname="ups_runtime_low"]
-      repeat_interval: 15m
-    - matchers: [alertname="ups_overload"]
-      repeat_interval: 35m
-    - matchers: [alertname="ups_replace_battery"]
-      repeat_interval: 1445m
-    - matchers: [alertname="ups_data_missing"]
-      repeat_interval: 35m
-    - matchers: [alertname="synology_system_failed"]
-      repeat_interval: 65m
-    - matchers: [alertname="synology_raid_degraded"]
-      repeat_interval: 65m
-    - matchers: [alertname="synology_disk_failed"]
-      repeat_interval: 65m
-    - matchers: [alertname="synology_temperature_high"]
-      repeat_interval: 125m
-    - matchers: [alertname="synology_scrape_down"]
-      repeat_interval: 65m
-    - matchers: [alertname="freebox_connection_down"]
-      repeat_interval: 65m
-    - matchers: [alertname="freebox_scrape_down"]
-      repeat_interval: 65m
-    - matchers: [alertname="freebox_fiber_signal_low"]
-      repeat_interval: 125m
-    - matchers: [alertname="freebox_temperature_high"]
-      repeat_interval: 125m
-    - matchers: [alertname="freebox_auth_failed"]
-      repeat_interval: 65m
-    - matchers: [alertname="freebox_collector_failed"]
-      repeat_interval: 65m
-    - matchers: [alertname="victoria_component_down"]
-      repeat_interval: 130m
-    - matchers: [alertname="vmalert_rule_errors"]
-      repeat_interval: 245m
-    - matchers: [alertname="alertmanager_notifications_failed"]
-      repeat_interval: 70m
-    - matchers: [alertname="vmalert_send_failed"]
-      repeat_interval: 75m
-    - matchers: [alertname="victoria_disk_fill_predicted"]
-      repeat_interval: 1505m
-    - matchers: [alertname="victorialogs_ingestion_stopped"]
-      repeat_interval: 130m
-    - matchers: [alertname="vector_component_errors"]
-      repeat_interval: 95m
+    # SMS routes: one per repeat_interval, ascending, each naming its
+    # alerts. A repeat_interval is at least the lifetime of one event
+    # (event window + keep_firing_for + group interval, rounded up to 5
+    # minutes): see the Alerting section of the README. A new alert joins
+    # the route of its lifetime, or a new route keeps the order.
+    - repeat_interval: 15m
+      matchers:
+        - "alertname=~\"ups_low_battery|\
+          ups_on_battery|\
+          ups_runtime_low\""
+    - repeat_interval: 35m
+      matchers:
+        - "alertname=~\"ups_data_missing|\
+          ups_overload\""
+    - repeat_interval: 45m
+      matchers:
+        - alertname=~"proxmox_guest_restarted"
+    - repeat_interval: 50m
+      matchers:
+        - alertname=~"unpoller_unifi_data_stale"
+    - repeat_interval: 65m
+      matchers:
+        - "alertname=~\"authentik_logs_silent|\
+          freebox_auth_failed|\
+          freebox_collector_failed|\
+          freebox_connection_down|\
+          freebox_scrape_down|\
+          proxmox_metrics_silent|\
+          synology_disk_failed|\
+          synology_raid_degraded|\
+          synology_scrape_down|\
+          synology_system_failed|\
+          traefik_5xx_burst|\
+          unifi_device_down|\
+          unpoller_no_unifi_data|\
+          zfs_pool_degraded\""
+    - repeat_interval: 70m
+      matchers:
+        - "alertname=~\"alertmanager_notifications_failed|\
+          authentik_sensitive_event\""
+    - repeat_interval: 75m
+      matchers:
+        - alertname=~"vmalert_send_failed"
+    - repeat_interval: 80m
+      matchers:
+        - "alertname=~\"authentik_errors|\
+          authentik_login_failed_burst|\
+          container_restart_loop|\
+          kernel_critical|\
+          oom_kill|\
+          proxmox_auth_failed_burst|\
+          proxmox_backup_failed|\
+          unifi_ips_event\""
+    - repeat_interval: 95m
+      matchers:
+        - alertname=~"vector_component_errors"
+    - repeat_interval: 125m
+      matchers:
+        - "alertname=~\"dns_resolver_silent|\
+          filesystem_usage_critical|\
+          freebox_fiber_signal_low|\
+          freebox_temperature_high|\
+          host_logs_silent|\
+          proxmox_node_memory_high|\
+          smart_data_missing|\
+          smart_temperature_high|\
+          synology_temperature_high|\
+          zfs_data_missing\""
+    - repeat_interval: 130m
+      matchers:
+        - "alertname=~\"host_metrics_silent|\
+          victoria_component_down|\
+          victorialogs_ingestion_stopped\""
+    - repeat_interval: 140m
+      matchers:
+        - alertname=~"proxmox_node_cpu_high"
+    - repeat_interval: 245m
+      matchers:
+        - alertname=~"vmalert_rule_errors"
+    - repeat_interval: 725m
+      matchers:
+        - "alertname=~\"filesystem_usage_high|\
+          proxmox_storage_usage_high|\
+          zfs_pool_capacity_high\""
+    - repeat_interval: 780m
+      matchers:
+        - alertname=~"proxmox_backup_missing"
+    - repeat_interval: 1445m
+      matchers:
+        - "alertname=~\"smart_attribute_failing|\
+          ups_replace_battery\""
+    - repeat_interval: 1460m
+      matchers:
+        - "alertname=~\"proxmox_task_failed|\
+          systemd_unit_failed\""
+    - repeat_interval: 1505m
+      matchers:
+        - alertname=~"victoria_disk_fill_predicted"
+    - repeat_interval: 2885m
+      matchers:
+        - "alertname=~\"smart_crc_errors_growing|\
+          smart_sectors_growing|\
+          smart_status_failed\""
 receivers:
   - name: sms
     webhook_configs:
