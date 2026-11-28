@@ -1,27 +1,8 @@
 # Beszel Stack
 
-This stack deploys the following services:
+The hub runs on ns01: see [beszel-hub](../beszel-hub/README.md). This stack keeps the agent of chataigne. `HUB_URL` can stay `http://beszel.home.lan`: Traefik on chataigne forwards that name to ns01.
 
-## 1. Beszel Hub (`beszel`)
-
-### Role
-Lightweight server performance dashboard and alerting dashboard gateway.
-
-### External Links
-- **Official Project**: [https://github.com/henrygd/beszel](https://github.com/henrygd/beszel)
-- **Docker Image Maintainer**: [henrygd](https://hub.docker.com/r/henrygd/beszel)
-
-### Service-Specific Configuration Variables
-Define these environment variables which are unique to this service:
-
-| Variable Name | Description | Placeholder / Default |
-| :--- | :--- | :--- |
-| `BESZEL_DATA_DIR` | Persistent host directory path for volume mount: BESZEL_DATA_DIR. | *None (empty)* |
-| `BESZEL_DOMAIN` | Traefik Host rule domain routing address (e.g., service.example.lan). | *None (empty)* |
-
----
-
-## 2. Beszel-agent (`beszel-agent`)
+## Beszel-agent (`beszel-agent`)
 
 ### Role
 Service container running henrygd/beszel-agent-nvidia.

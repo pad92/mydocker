@@ -37,6 +37,11 @@ services:
       - LEGO_CA_CERTIFICATES=/etc/ssl/certs/${CA_CERT_NAME}
       - PROXMOX_HOST_LOCAL=${PROXMOX_HOST_LOCAL:?Set PROXMOX_HOST_LOCAL in .env}
       - PROXMOX_UPSTREAM_URL=${PROXMOX_UPSTREAM_URL:?Set PROXMOX_UPSTREAM_URL in .env}
+      # Routes of traefik_dynamic.toml towards the monitoring stacks on ns01.
+      - UPTIME_HOST_LOCAL=${UPTIME_HOST_LOCAL:?Set UPTIME_HOST_LOCAL in .env}
+      - UPTIME_UPSTREAM_URL=${UPTIME_UPSTREAM_URL:?Set UPTIME_UPSTREAM_URL in .env}
+      - BESZEL_HOST_LOCAL=${BESZEL_HOST_LOCAL:?Set BESZEL_HOST_LOCAL in .env}
+      - BESZEL_UPSTREAM_URL=${BESZEL_UPSTREAM_URL:?Set BESZEL_UPSTREAM_URL in .env}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - *localtime-volume
@@ -161,44 +166,42 @@ services:
 #      traefik.http.services.homepage.loadbalancer.server.port: "3000"
 #      traefik.http.routers.homepage.rule: "Host(`${HOMEPAGE_HOST_LOCAL}`)"
 
-  uptime-kuma:
-    image: louislam/uptime-kuma:2
-    container_name: uptime-kuma
+  # --- Docker socket proxy (read-only) ------------------------------------
+  # Uptime Kuma runs on ns01 (uptime-kuma/ stack) so that monitoring survives
+  # an outage of this host. Its "docker" monitors read the state of the
+  # containers of this host through this proxy: Docker API in read-only mode,
+  # containers endpoints only, served by Traefik in HTTPS and limited to the
+  # IP of ns01. The inspect endpoint returns the environment of each
+  # container, so never widen DOCKER_PROXY_ALLOWED_IPS beyond trusted hosts.
+  docker-socket-proxy:
+    image: lscr.io/linuxserver/socket-proxy:3.2.4
+    container_name: docker-socket-proxy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /run
     volumes:
-      - ${MANAGEMENT_UPTIME_KUMA_DATA_DIR}:/app/data
-      - ${MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR}:/app/data/docker-tls:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      CONTAINERS: 1
+      PING: 1
+      VERSION: 1
+      INFO: 0
+      POST: 0
     networks:
       - traefik_gateway
-    environment:
-      NODE_EXTRA_CA_CERTS: /app/data/docker-tls/${CA_CERT_NAME}
-    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     labels:
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
-      traefik.http.services.uptime.loadbalancer.server.port: "3001"
-      traefik.http.routers.uptime_http.rule: "Host(`${UPTIME_HOST_LOCAL}`)"
-      traefik.http.routers.uptime_http.entrypoints: web
-      traefik.http.routers.uptime_http.middlewares: redirect-https
-
-      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
-      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
-
-      traefik.http.routers.uptime.rule: "Host(`${UPTIME_HOST_LOCAL}`)"
-      traefik.http.routers.uptime.entrypoints: "websecure"
-      traefik.http.routers.uptime.tls: "true"
-      traefik.http.routers.uptime.tls.certresolver: "stepca"
-      # Login through Authentik (provider and access group: see
-      # authentik/blueprints/20-forward-auth-apps.yaml).
-      traefik.http.routers.uptime.middlewares: "authentik@docker"
-
-      # Push monitors call /api/push/<token> from scripts that cannot log in.
-      # They stay outside forward auth; the token in the URL is their secret.
-      traefik.http.routers.uptime_push.rule: "Host(`${UPTIME_HOST_LOCAL}`) && PathPrefix(`/api/push/`)"
-      traefik.http.routers.uptime_push.entrypoints: "websecure"
-      traefik.http.routers.uptime_push.tls: "true"
-      traefik.http.routers.uptime_push.tls.certresolver: "stepca"
-      traefik.http.routers.uptime_push.service: "uptime"
+      traefik.http.services.docker_proxy.loadbalancer.server.port: "2375"
+      traefik.http.routers.docker_proxy.rule: "Host(`${DOCKER_PROXY_HOST_LOCAL:?Set DOCKER_PROXY_HOST_LOCAL in .env}`)"
+      traefik.http.routers.docker_proxy.entrypoints: "websecure"
+      traefik.http.routers.docker_proxy.tls: "true"
+      traefik.http.routers.docker_proxy.tls.certresolver: "stepca"
+      traefik.http.routers.docker_proxy.middlewares: "docker_proxy_allow"
+      traefik.http.middlewares.docker_proxy_allow.ipallowlist.sourcerange: "${DOCKER_PROXY_ALLOWED_IPS:?Set DOCKER_PROXY_ALLOWED_IPS in .env}"
 
   # --- Authentik (SSO / identity provider) -------------------------------
   # Based on the official compose file (https://goauthentik.io/compose.yml).

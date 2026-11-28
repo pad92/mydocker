@@ -1,0 +1,22 @@
+# Beszel hub, deployed on ns01 (Portainer endpoint ns01) so that host
+# metrics and their alerts survive an outage of chataigne. The hub opens SSH
+# connections to the agents on port 45876. Traefik on chataigne routes
+# BESZEL_HOST_LOCAL to this port (file provider, see
+# management/traefik_dynamic.toml.example). The hub has its own login.
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+services:
+  beszel:
+    image: henrygd/beszel:latest
+    container_name: beszel
+    restart: unless-stopped
+    ports:
+      - "${BESZEL_BIND_ADDRESS:?Set BESZEL_BIND_ADDRESS in .env}:8090:8090"
+    volumes:
+      - ${BESZEL_DATA_DIR:?Set BESZEL_DATA_DIR in .env}:/beszel_data
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging

@@ -6,6 +6,44 @@
       service = "proxmox-svc"
       [http.routers.proxmox.tls]
         certResolver = "stepca"
+
+    # Monitoring stacks on ns01 (uptime-kuma/ and beszel-hub/): they run
+    # outside chataigne so that an outage of this host is still detected.
+    # HTTP to HTTPS: redirect-https@docker is defined by labels of this stack.
+    [http.routers.uptime_http]
+      rule = 'Host(`{{ env "UPTIME_HOST_LOCAL" }}`)'
+      entryPoints = ["web"]
+      middlewares = ["redirect-https@docker"]
+      service = "uptime-svc"
+    # Login through Authentik (provider and access group: see
+    # authentik/blueprints/20-forward-auth-apps.yaml).
+    [http.routers.uptime]
+      rule = 'Host(`{{ env "UPTIME_HOST_LOCAL" }}`)'
+      entryPoints = ["websecure"]
+      middlewares = ["authentik@docker"]
+      service = "uptime-svc"
+      [http.routers.uptime.tls]
+        certResolver = "stepca"
+    # Push monitors call /api/push/<token> from scripts that cannot log in.
+    # They stay outside forward auth; the token in the URL is their secret.
+    [http.routers.uptime_push]
+      rule = 'Host(`{{ env "UPTIME_HOST_LOCAL" }}`) && PathPrefix(`/api/push/`)'
+      entryPoints = ["websecure"]
+      service = "uptime-svc"
+      [http.routers.uptime_push.tls]
+        certResolver = "stepca"
+
+    [http.routers.beszel_http]
+      rule = 'Host(`{{ env "BESZEL_HOST_LOCAL" }}`)'
+      entryPoints = ["web"]
+      middlewares = ["redirect-https@docker"]
+      service = "beszel-svc"
+    [http.routers.beszel]
+      rule = 'Host(`{{ env "BESZEL_HOST_LOCAL" }}`)'
+      entryPoints = ["websecure"]
+      service = "beszel-svc"
+      [http.routers.beszel.tls]
+        certResolver = "stepca"
   
   [http.services]
     [http.services.proxmox-svc.loadBalancer]
@@ -13,6 +51,12 @@
       serversTransport = "pveTransport"
       [[http.services.proxmox-svc.loadBalancer.servers]]
         url = '{{ env "PROXMOX_UPSTREAM_URL" }}'
+    [http.services.uptime-svc.loadBalancer]
+      [[http.services.uptime-svc.loadBalancer.servers]]
+        url = '{{ env "UPTIME_UPSTREAM_URL" }}'
+    [http.services.beszel-svc.loadBalancer]
+      [[http.services.beszel-svc.loadBalancer.servers]]
+        url = '{{ env "BESZEL_UPSTREAM_URL" }}'
   
   # pveproxy sert un certificat émis par la CA maison (rôle Ansible
   # proxmox_tls) : on le vérifie. L'URL amont est une IP, donc le nom attendu
