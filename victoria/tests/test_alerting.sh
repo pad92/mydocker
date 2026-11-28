@@ -183,6 +183,7 @@ for expr, logs, want in [
 
 errors = []
 alerts = {}
+severities = {}
 lifetimes = {}
 tails = {}
 groups = {}
@@ -218,6 +219,9 @@ for rules in ("logs_rules.yml", "metrics_rules.yml"):
                 errors.append(f"alert {name} lacks an impact or summary annotation")
             if rule.get("labels", {}).get("resolved_sms", "false") != "false":
                 errors.append(f"alert {name}: resolved_sms must be \"false\" or absent")
+            severities[name] = rule.get("labels", {}).get("severity")
+            if severities[name] not in ("warning", "critical"):
+                errors.append(f"alert {name}: severity {severities[name]!r}, expected warning or critical")
             if "keep_firing_for" not in rule:
                 errors.append(f"alert {name} has no keep_firing_for")
                 continue
@@ -237,6 +241,15 @@ am = load("alertmanager.yml")
 # of names, so that each alert resolves to exactly one route.
 routes = {}
 previous = 0
+# Night: every SMS route ends with one child route that mutes its
+# warnings in the night interval, except the UPS and alert chain ones,
+# which must still wake someone. Criticals are never muted.
+night_awake = ["alertmanager_notifications_failed", "ups_data_missing", "ups_overload",
+               "ups_runtime_low", "vmalert_rule_errors", "vmalert_send_failed"]
+night_child = {
+    "matchers": ['severity="warning"', f'alertname!~"{"|".join(night_awake)}"'],
+    "mute_time_intervals": ["night"],
+}
 for i, route in enumerate(am["route"].get("routes", [])):
     matchers = route.get("matchers", [])
     if i == 0:
@@ -251,6 +264,10 @@ for i, route in enumerate(am["route"].get("routes", [])):
         errors.append(f"route with matchers {matchers}: expected one alertname=~ list of names")
         continue
     names = m.group(1).split("|")
+    if route.get("routes") != [night_child]:
+        errors.append(f"route {names}: child routes {route.get('routes')}, expected only {night_child}")
+    if route.get("mute_time_intervals") or route.get("active_time_intervals"):
+        errors.append(f"route {names}: time intervals on the route itself would mute its critical alerts")
     if route.get("continue"):
         errors.append(f"route {names}: continue")
     if route.get("receiver", "sms") != "sms":
@@ -276,6 +293,34 @@ for name in sorted(set(routes) - set(alerts)):
 for name in sorted(set(lifetimes) & set(routes)):
     if routes[name] < lifetimes[name]:
         errors.append(f"{name}: repeat_interval {routes[name]}s under the {lifetimes[name]}s one event keeps it firing")
+for name in night_awake:
+    if severities.get(name) != "warning":
+        errors.append(f"night exception {name}: not a warning alert")
+if am["route"].get("mute_time_intervals") or am["route"].get("active_time_intervals"):
+    errors.append("time intervals on the root route")
+
+# The night interval: 23:00 to 07:00, Paris time, every day.
+intervals = {t["name"]: t["time_intervals"] for t in am.get("time_intervals", [])}
+if list(intervals) != ["night"]:
+    errors.append(f"time intervals {list(intervals)}: expected night only")
+else:
+    def in_night(hour, minute):
+        for spec in intervals["night"]:
+            if set(spec) != {"times", "location"} or spec["location"] != "Europe/Paris":
+                return None
+            for t in spec["times"]:
+                start = [int(x) for x in t["start_time"].split(":")]
+                end = [int(x) for x in t["end_time"].split(":")]
+                if start <= [hour, minute] < end:
+                    return True
+        return False
+    for (hour, minute), want in [((22, 59), False), ((23, 0), True), ((0, 0), True), ((3, 0), True),
+                                 ((6, 59), True), ((7, 0), False), ((12, 0), False)]:
+        got = in_night(hour, minute)
+        if got is not want:
+            errors.append(f"night at {hour:02}:{minute:02} Paris: {got}, expected {want}")
+            break
+
 for name in sorted(set(implicit_windows) - set(lifetimes)):
     errors.append(f"implicit window for {name}, which is not an alert")
 
@@ -397,6 +442,12 @@ hooks[0]["url"] = "http://victorialogs:9428/insert/jsonline?_msg_field=status&_s
 if am["route"].get("group_interval") != "5m":
     sys.exit(f"route group_interval is {am['route'].get('group_interval')}")
 am["route"]["group_interval"] = "5s"
+# The night interval in the past, so the warnings below are sent at any
+# hour, through the same muting child routes as in production.
+night = [t for t in am["time_intervals"] if t["name"] == "night"]
+if len(night) != 1 or night[0]["time_intervals"][0].get("location") != "Europe/Paris":
+    sys.exit(f"time intervals are {am['time_intervals']}")
+night[0]["time_intervals"] = [{"years": ["2000"]}]
 dump("alertmanager.yml", am)
 
 path = f"{work}/vector.yaml"
@@ -417,6 +468,7 @@ for rules in logs_rules.yml metrics_rules.yml; do
     || fail "group intervals not patched in $rules"
 done
 grep -q '/api/push/' "$work_dir/alertmanager.yml" && fail "the watchdog still points to Uptime Kuma"
+grep -q 'Europe/Paris' "$work_dir/alertmanager.yml" && fail "the night interval is still the production one"
 chmod -R a+rX "$work_dir"
 
 # --- End to end.
