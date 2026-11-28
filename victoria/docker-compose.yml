@@ -478,7 +478,7 @@ services:
       - source: alertmanager_config
         target: /etc/alertmanager/alertmanager.yml
     labels:
-      mydocker.config-hash: "2747d117ac05d80204cd5eef9edeeee95f5750e646cfa7ecaa1fdf4972699e3b"
+      mydocker.config-hash: "7999f8830ab3b560d80ec91edeebf49a19ad091abf0dd86dbcdf2394bdb5f043"
     volumes:
       - ${ALERTMANAGER_DATA_DIR:?Set ALERTMANAGER_DATA_DIR}:/alertmanager
       - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
@@ -1756,6 +1756,17 @@ configs:
   # send_resolved false: an SMS only when something goes wrong.
   alertmanager_config:
     content: |
+      # Night window of the warnings: 23:00 to 07:00, Paris time. A range
+      # cannot cross midnight, hence two.
+      time_intervals:
+        - name: night
+          time_intervals:
+            - times:
+                - start_time: "23:00"
+                  end_time: "24:00"
+                - start_time: "00:00"
+                  end_time: "07:00"
+              location: Europe/Paris
       route:
         receiver: sms
         group_by: [alertname]
@@ -1780,16 +1791,34 @@ configs:
               - "alertname=~\"ups_low_battery|\
                 ups_on_battery|\
                 ups_runtime_low\""
+            # Night: a warning waits for 07:00 and is sent then if it still
+            # fires. The UPS and alert chain warnings stay on at night, as do
+            # the critical alerts. Every SMS route ends with this child route,
+            # which keeps the repeat_interval of its parent.
+            routes:
+              - &night_warnings
+                matchers:
+                  - severity="warning"
+                  - "alertname!~\"alertmanager_notifications_failed|\
+                    ups_data_missing|\
+                    ups_overload|\
+                    ups_runtime_low|\
+                    vmalert_rule_errors|\
+                    vmalert_send_failed\""
+                mute_time_intervals: [night]
           - repeat_interval: 35m
             matchers:
               - "alertname=~\"ups_data_missing|\
                 ups_overload\""
+            routes: [*night_warnings]
           - repeat_interval: 45m
             matchers:
               - alertname=~"proxmox_guest_restarted"
+            routes: [*night_warnings]
           - repeat_interval: 50m
             matchers:
               - alertname=~"unpoller_unifi_data_stale"
+            routes: [*night_warnings]
           - repeat_interval: 65m
             matchers:
               - "alertname=~\"authentik_logs_silent|\
@@ -1806,13 +1835,16 @@ configs:
                 unifi_device_down|\
                 unpoller_no_unifi_data|\
                 zfs_pool_degraded\""
+            routes: [*night_warnings]
           - repeat_interval: 70m
             matchers:
               - "alertname=~\"alertmanager_notifications_failed|\
                 authentik_sensitive_event\""
+            routes: [*night_warnings]
           - repeat_interval: 75m
             matchers:
               - alertname=~"vmalert_send_failed"
+            routes: [*night_warnings]
           - repeat_interval: 80m
             matchers:
               - "alertname=~\"authentik_errors|\
@@ -1823,9 +1855,11 @@ configs:
                 proxmox_auth_failed_burst|\
                 proxmox_backup_failed|\
                 unifi_ips_event\""
+            routes: [*night_warnings]
           - repeat_interval: 95m
             matchers:
               - alertname=~"vector_component_errors"
+            routes: [*night_warnings]
           - repeat_interval: 125m
             matchers:
               - "alertname=~\"dns_resolver_silent|\
@@ -1838,41 +1872,51 @@ configs:
                 smart_temperature_high|\
                 synology_temperature_high|\
                 zfs_data_missing\""
+            routes: [*night_warnings]
           - repeat_interval: 130m
             matchers:
               - "alertname=~\"host_metrics_silent|\
                 victoria_component_down|\
                 victorialogs_ingestion_stopped\""
+            routes: [*night_warnings]
           - repeat_interval: 140m
             matchers:
               - alertname=~"proxmox_node_cpu_high"
+            routes: [*night_warnings]
           - repeat_interval: 245m
             matchers:
               - alertname=~"vmalert_rule_errors"
+            routes: [*night_warnings]
           - repeat_interval: 725m
             matchers:
               - "alertname=~\"filesystem_usage_high|\
                 proxmox_storage_usage_high|\
                 zfs_pool_capacity_high\""
+            routes: [*night_warnings]
           - repeat_interval: 780m
             matchers:
               - alertname=~"proxmox_backup_missing"
+            routes: [*night_warnings]
           - repeat_interval: 1445m
             matchers:
               - "alertname=~\"smart_attribute_failing|\
                 ups_replace_battery\""
+            routes: [*night_warnings]
           - repeat_interval: 1460m
             matchers:
               - "alertname=~\"proxmox_task_failed|\
                 systemd_unit_failed\""
+            routes: [*night_warnings]
           - repeat_interval: 1505m
             matchers:
               - alertname=~"victoria_disk_fill_predicted"
+            routes: [*night_warnings]
           - repeat_interval: 2885m
             matchers:
               - "alertname=~\"smart_crc_errors_growing|\
                 smart_sectors_growing|\
                 smart_status_failed\""
+            routes: [*night_warnings]
       receivers:
         - name: sms
           webhook_configs:
