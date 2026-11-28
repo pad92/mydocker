@@ -582,7 +582,7 @@ services:
     security_opt:
       - no-new-privileges:true
     labels:
-      mydocker.config-hash: "43f14149d2881addf4f4d03443a9354ba91a02772c69a238609e3701c534dfa7"
+      mydocker.config-hash: "e86017fb8136a4f7a2d4a9ecdbeee6b827dad34c9599c230839cd61f1a8f775c"
       traefik.enable: "true"
       traefik.docker.network: "traefik_gateway"
       traefik.http.services.victoria_grafana.loadbalancer.server.port: "3000"
@@ -2915,6 +2915,13 @@ configs:
   grafana_datasources:
     content: |
       apiVersion: 1
+      # Grafana keeps a datasource that leaves this file, so the former one for the
+      # rules of vmalert-logs is deleted here. Its Alert rules page called
+      # /api/v1/status/buildinfo, which vmalert answers with 400, and Grafana shows
+      # any answer other than 200 or 404 as an error.
+      deleteDatasources:
+        - name: VictoriaLogs rules
+          orgId: 1
       datasources:
         - name: VictoriaLogs
           uid: victorialogs
@@ -2934,19 +2941,6 @@ configs:
             # Longest scrape interval (unpoller, synology, freebox): keeps
             # $$__rate_interval at 4m or more, so a rate always sees 2 samples.
             timeInterval: 60s
-        # Rules of vmalert-logs, for Alerting > Alert rules only (no query). Grafana
-        # reads the rules of an outside ruler only through a prometheus or loki
-        # datasource, and VictoriaLogs serves them under /select/vmalert/ instead of
-        # /api/v1/rules: this datasource reads them from vmalert-logs itself.
-        - name: VictoriaLogs rules
-          uid: victorialogs-rules
-          type: prometheus
-          access: proxy
-          url: http://vmalert-logs:8880
-          editable: false
-          jsonData:
-            prometheusType: Prometheus
-            manageAlerts: true
         # The alerts of vmalert as Alertmanager holds them: the Grafana Alerting
         # pages list them and their silences, and an Editor or Admin creates or
         # expires a silence there, over HTTPS behind Authentik. Alertmanager itself
