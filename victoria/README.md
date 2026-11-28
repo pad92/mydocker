@@ -6,7 +6,7 @@ This stack replaces OpenObserve. It deploys the following services:
 - `victoriametrics`: metric database, UI on `metrics.<domain>`.
 - `vector`: the only writer of `victorialogs`. It receives OTLP logs from the collectors and UDP syslog from network devices, parses them and sends them on.
 - `vmalert-logs` and `vmalert-metrics`: alert rules on the logs (LogsQL) and on the metrics (MetricsQL).
-- `alertmanager`: groups the alerts and sends them as SMS through Vector and the Free Mobile API. It also pushes a heartbeat to an Uptime Kuma push monitor (see [Watchdog](#watchdog)). UI on `alertmanager.<domain>`.
+- `alertmanager`: groups the alerts and sends them as SMS through Vector and the Free Mobile API. It also pushes a heartbeat to an Uptime Kuma push monitor (see [Watchdog](#watchdog)).
 - `grafana` (container `victoria-grafana`): dashboards for hosts, logs, Docker services, DNS, firewall, Authentik, Proxmox, UniFi, Synology, disks, UPS, alerts and the stack itself, UI on `grafana.<domain>`.
 - `unpoller`: polls the UniFi gateway and exposes its metrics to VictoriaMetrics, which scrapes them.
 - `snmp-exporter`: polls the Synology NAS over SNMPv3 when VictoriaMetrics scrapes it.
@@ -34,7 +34,6 @@ This stack replaces OpenObserve. It deploys the following services:
 | `VICTORIA_METRICS_DOMAIN` | Host name of the metrics UI and of the OTLP metrics endpoint. Must equal `VICTORIA_METRICS_HOST_LOCAL` in `management/.env`. | `metrics.example.com` |
 | `VICTORIA_LOGS_DATA_DIR` | Host directory of the VictoriaLogs data. | `/srv/victoria/logs` |
 | `VICTORIA_GRAFANA_DOMAIN` | Host name of the Grafana UI. Must equal `VICTORIA_GRAFANA_HOST_LOCAL` in `management/.env`. | `grafana.example.com` |
-| `ALERTMANAGER_DOMAIN` | Host name of the Alertmanager UI, also its external URL (links of the UI and of the notifications). Must equal `ALERTMANAGER_HOST_LOCAL` in `management/.env`. | `alertmanager.example.com` |
 | `VICTORIA_METRICS_DATA_DIR` | Host directory of the VictoriaMetrics data. | `/srv/victoria/metrics` |
 | `ALERTMANAGER_DATA_DIR` | Host directory of the Alertmanager notification log and silences. | `/srv/victoria/alertmanager` |
 | `GRAFANA_DATA_DIR` | Host directory of the Grafana database (users, preferences) and plugins. | `/srv/victoria/grafana` |
@@ -67,7 +66,7 @@ This stack replaces OpenObserve. It deploys the following services:
 
 1. Fill the environment of the stack from `.env.example`, including `PUID` and `PGID`. Portainer deploys the stack, so the values go into the environment of the Portainer stack (or into `.env` for a manual `docker compose` run).
 2. Generate the ingestion password hash with `htpasswd -nB collector` and replace `REPLACE_WITH_HTPASSWD_BCRYPT_HASH` in the `victoria-ingest-auth` middleware of `management/traefik_dynamic.toml`. Store the same password in the myansible vault. Until the hash is replaced, the middleware refuses every ingestion request.
-3. Set `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL` and `ALERTMANAGER_HOST_LOCAL` in `management/.env` and redeploy the management stack, so that the Authentik blueprint creates the four forward-auth applications.
+3. Set `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL` and `VICTORIA_GRAFANA_HOST_LOCAL` in `management/.env` and redeploy the management stack, so that the Authentik blueprint creates the three forward-auth applications.
 4. In the Free Mobile customer area, turn on *Mon compte > Mes options > Notifications par SMS*. Put the account ID in `FREE_MOBILE_USER` and the API key shown there in `FREE_MOBILE_PASS`, in the environment of the stack only. Without them the alerts still fire, but no SMS leaves. Set `VECTOR_WEBHOOK_PASSWORD` to the output of `openssl rand -hex 32`: Compose refuses to render the stack without it.
 5. In Uptime Kuma, add a monitor of type *Push* with a heartbeat interval of 300 seconds and attach a notification that does not go through this stack (the Free Mobile notification of Kuma, for example). Put its push URL, followed by `?status=up&msg=OK`, in `ALERTMANAGER_WATCHDOG_URL`. Until Alertmanager pushes to it, the monitor stays down.
 6. Start the stack, check both databases, then open `https://<VICTORIA_GRAFANA_DOMAIN>/` and log in through Authentik:
@@ -764,7 +763,7 @@ The server checks the `Host` header against `VICTORIA_GRAFANA_DOMAIN` (`403` oth
 
 ## 4. Access Control
 
-The four UI routers (`victorialogs`, `victoriametrics`, `victoria_grafana`, `alertmanager`) go through the `authentik@docker` forward-auth middleware of the management stack, placed first so that the UIs fail closed while `authentik_server` is down. A browser must log in to Authentik as a member of `victorialogs-users`, `victoriametrics-users`, `victoria-grafana-users` or `alertmanager-users`. Alertmanager has its own group because its UI creates and expires silences, which Grafana keeps to Editors. The providers, applications and groups are created by the `20-forward-auth-apps.yaml` blueprint of the management stack, which reads the host names from `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL` and `ALERTMANAGER_HOST_LOCAL` in `management/.env`. VictoriaLogs, VictoriaMetrics and Alertmanager have no login of their own: Authentik is the only access control on the UIs and the APIs. Grafana relies on the user name that Authentik passes in `X-authentik-username`.
+The three UI routers (`victorialogs`, `victoriametrics`, `victoria_grafana`) go through the `authentik@docker` forward-auth middleware of the management stack, placed first so that the UIs fail closed while `authentik_server` is down. A browser must log in to Authentik as a member of `victorialogs-users`, `victoriametrics-users` or `victoria-grafana-users`. The providers, applications and groups are created by the `20-forward-auth-apps.yaml` blueprint of the management stack, which reads the host names from `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL` and `VICTORIA_GRAFANA_HOST_LOCAL` in `management/.env`. VictoriaLogs and VictoriaMetrics have no login of their own: Authentik is the only access control on the UIs and the query APIs. Grafana relies on the user name that Authentik passes in `X-authentik-username`.
 
 Collectors cannot follow a browser login, so two routers skip Authentik for ingestion only:
 
@@ -783,8 +782,7 @@ Limits:
 
 - Ports `9428`, `8428` and `4318` have no authentication of their own. Every container on the `traefik_gateway` network can query and write the databases and send logs to Vector. Only the UDP syslog port is published on the host.
 - Grafana port `3000` is not published, but a container on `traefik_gateway` that reaches it directly can send its own `X-authentik-username` header and log in as any user, the admin included. Through Traefik, the forward auth replaces that header.
-- vmalert-logs and vmalert-metrics have no route and no published port, and sit only on the internal `victoria` network: their UIs are reachable only from the containers of this stack.
-- Alertmanager port `9093` is not published and has no authentication of its own. Alertmanager joins `traefik_gateway` for its UI, so every container on that network can read its API and create or expire silences, which stops the SMS of the matching alerts. It also sits alone on the `alertmanager` network, which is not internal, to reach Uptime Kuma; no other container is on it. Grafana reaches the same API through its datasource proxy, so any Grafana Editor or Admin can create and expire silences too.
+- vmalert-logs, vmalert-metrics and Alertmanager have no route and no published port. The vmalert instances sit only on the internal `victoria` network. Alertmanager also sits alone on the `alertmanager` network, which is not internal, to reach Uptime Kuma; no other container is on it. Their UIs are reachable only from the containers of this stack. Grafana reaches the Alertmanager API through its datasource proxy, so any Grafana Editor or Admin can create and expire silences.
 - The Vector metrics port `9598` has no authentication and no route. Any container on `traefik_gateway` can read it.
 - Anyone holding `GRAFANA_MCP_SERVER_TOKEN` reads, through `/mcp`, everything the `mcp` service account sees: every dashboard, log and metric. There is no per-user identity, rate limit or expiry; rotating the token means changing it in the stack and in every client. The service account token has no expiry either unless one is set in Grafana. On `traefik_gateway`, port `8000` asks for the same token.
 - While Authentik is down, the UIs are unreachable. Ingestion and `/mcp` keep working.

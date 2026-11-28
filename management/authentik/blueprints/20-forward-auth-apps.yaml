@@ -438,44 +438,24 @@ entries:
     attrs:
       order: 0
 
-  # --- Alertmanager -------------------------------------------------------
-  # Its own group, not victoria-grafana-users: the UI creates and expires
-  # silences, which Grafana keeps to Editors.
-  - model: authentik_core.group
-    id: alertmanager-group
-    identifiers:
-      name: alertmanager-users
-
-  - model: authentik_providers_proxy.proxyprovider
-    id: alertmanager-provider
-    identifiers:
-      name: Alertmanager
-    attrs:
-      mode: forward_single
-      external_host: !Format ["https://%s", !Env BLUEPRINT_ALERTMANAGER_HOST]
-      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
-      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
-      access_token_validity: hours=12
-
+  # --- Alertmanager (removed) ----------------------------------------------
+  # Its UI is no longer exposed: silences go through Grafana. Removing the
+  # entries would leave the objects in Authentik, so they are deleted here
+  # (the binding goes with the application). Drop these entries once applied.
   - model: authentik_core.application
-    id: alertmanager-app
+    state: absent
     identifiers:
       slug: alertmanager
-    attrs:
-      name: Alertmanager
-      group: Administration
-      meta_icon: homelab/icons/alertmanager.svg
-      meta_description: Alerts and silences
-      provider: !KeyOf alertmanager-provider
-      meta_launch_url: !Format ["https://%s", !Env BLUEPRINT_ALERTMANAGER_HOST]
-      policy_engine_mode: any
 
-  - model: authentik_policies.policybinding
+  - model: authentik_providers_proxy.proxyprovider
+    state: absent
     identifiers:
-      target: !KeyOf alertmanager-app
-      group: !KeyOf alertmanager-group
-    attrs:
-      order: 0
+      name: Alertmanager
+
+  - model: authentik_core.group
+    state: absent
+    identifiers:
+      name: alertmanager-users
 
   # --- Traefik dashboard -------------------------------------------------
   # Only the dashboard router (/traefik and /api on this host) carries the
@@ -906,7 +886,6 @@ entries:
         - !KeyOf victorialogs-provider
         - !KeyOf victoriametrics-provider
         - !KeyOf victoria-grafana-provider
-        - !KeyOf alertmanager-provider
         - !KeyOf traefik-provider
       config:
         authentik_host: !Format ["https://%s", !Env BLUEPRINT_AUTHENTIK_HOST]
