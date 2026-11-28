@@ -7,8 +7,9 @@
 # - amtool check-config on the Alertmanager config;
 # - vmalert-tool unittest of tests/metrics_rules_unittest.yaml on the rendered
 #   metrics rules: firing and quiet cases, exact labels and annotations;
-# - consistency: one Alertmanager route per alert, its repeat_interval at
-#   least the lifetime of a firing alert (query window + keep_firing_for +
+# - consistency: every alert in exactly one Alertmanager route (one route
+#   per repeat_interval, ascending, naming its alerts), its repeat_interval
+#   at least the lifetime of a firing alert (query window + keep_firing_for +
 #   group interval: no second SMS while the same event is still firing), no
 #   route without an alert, inhibit_rules naming existing alerts only, and
 #   the receiver URL matches the alertmanager_webhook source of Vector, with
@@ -231,29 +232,42 @@ for rules in ("logs_rules.yml", "metrics_rules.yml"):
             groups[name] = (rules, group["name"])
 
 am = load("alertmanager.yml")
+# The watchdog route first, then one SMS route per repeat_interval, in
+# ascending order, each with one alertname=~"a|b|c" matcher: a plain list
+# of names, so that each alert resolves to exactly one route.
 routes = {}
+previous = 0
 for i, route in enumerate(am["route"].get("routes", [])):
     matchers = route.get("matchers", [])
-    m = re.fullmatch(r'alertname="([a-z0-9_]+)"', matchers[0]) if len(matchers) == 1 else None
+    if i == 0:
+        if matchers != ['alertname="watchdog"'] or route.get("receiver") != "watchdog":
+            errors.append(f"first route {matchers}: expected the watchdog on the watchdog receiver")
+        elif seconds(route.get("repeat_interval", am["route"]["repeat_interval"])) > 300:
+            errors.append("watchdog repeat_interval over the 5m Kuma heartbeat")
+        routes["watchdog"] = None
+        continue
+    m = re.fullmatch(r'alertname=~"([a-z0-9_]+(?:\|[a-z0-9_]+)*)"', matchers[0]) if len(matchers) == 1 else None
     if m is None:
-        errors.append(f"route with matchers {matchers}: expected one alertname matcher")
+        errors.append(f"route with matchers {matchers}: expected one alertname=~ list of names")
         continue
-    name = m.group(1)
-    if name in routes:
-        errors.append(f"two routes for {name}")
+    names = m.group(1).split("|")
     if route.get("continue"):
-        errors.append(f"route {name}: continue")
-    repeat = seconds(route.get("repeat_interval", am["route"]["repeat_interval"]))
-    if name == "watchdog":
-        if i != 0 or route.get("receiver") != "watchdog":
-            errors.append("watchdog route: not first or not on the watchdog receiver")
-        if repeat > 300:
-            errors.append(f"watchdog repeat_interval {repeat}s: over the 5m Kuma heartbeat")
-        routes[name] = None
-        continue
+        errors.append(f"route {names}: continue")
     if route.get("receiver", "sms") != "sms":
-        errors.append(f"route {name}: receiver other than sms")
-    routes[name] = repeat
+        errors.append(f"route {names}: receiver other than sms")
+    if "repeat_interval" not in route:
+        errors.append(f"route {names}: no repeat_interval of its own")
+        continue
+    repeat = seconds(route["repeat_interval"])
+    if repeat <= previous:
+        errors.append(f"route {names}: repeat_interval {repeat}s not above the previous route ({previous}s)")
+    previous = repeat
+    if names != sorted(names):
+        errors.append(f"route {repeat}s: names not sorted")
+    for name in names:
+        if name in routes:
+            errors.append(f"two routes for {name}")
+        routes[name] = repeat
 
 for name in sorted(set(alerts) - set(routes)):
     errors.append(f"alert {name} has no route")
