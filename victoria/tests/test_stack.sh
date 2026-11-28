@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Static checks on the exposure of the victoria stack, as Compose renders it
 # with .env.example (nothing is started):
-# - the UI routers of the logs, metrics and Grafana hosts are behind
-#   Authentik forward auth (first middleware, so they fail closed);
+# - the UI routers of the logs, metrics, Grafana and Alertmanager hosts are
+#   behind Authentik forward auth (first middleware, so they fail closed);
 # - the two ingestion bypass routers match only POST on their one OTLP path,
 #   carry the victoria-ingest-auth@file Basic auth and nothing else, and
 #   target the right service (logs to vector, metrics to victoriametrics);
@@ -14,16 +14,18 @@
 #   no browser origin, reaches Grafana on the internal network, has no port,
 #   joins traefik_gateway and victoria only, refuses to start with an empty
 #   or short token, and its two tokens are empty in .env.example;
-# - every other router on the three hosts, in any service, carries the forward
+# - every other router on the four hosts, in any service, carries the forward
 #   auth middleware, except the HTTP to HTTPS redirects;
 # - Grafana trusts only the X-authentik-username header (auth proxy) and has
 #   no other way in: login form, basic auth and anonymous access are off;
-# - vmalert-logs, vmalert-metrics and alertmanager have no Traefik label and
-#   no port; the two vmalert join only the victoria network, which is
-#   internal; alertmanager joins victoria and the alertmanager network (its
-#   route out to the Uptime Kuma push URL, which only it joins) and gets the
-#   host CA bundle read-only; the watchdog URL has no value in .env.example
-#   beyond the CHANGE_ME placeholder;
+# - vmalert-logs and vmalert-metrics have no Traefik label and no port and
+#   join only the victoria network, which is internal; alertmanager has no
+#   port, its only Traefik routers are the HTTP redirect and the UI router
+#   on its host (forward auth, port 9093), its external URL is that host with
+#   no path, it joins victoria, traefik_gateway and the alertmanager network
+#   (its route out to the Uptime Kuma push URL, which only it joins) and gets
+#   the host CA bundle read-only; the watchdog URL has no value in
+#   .env.example beyond the CHANGE_ME placeholder;
 # - unpoller has no Traefik label and no port, runs as 65534, verifies TLS
 #   with the host CA bundle, has InfluxDB and DPI off and no password in
 #   .env.example; it alone joins the unpoller network (the route out);
@@ -68,7 +70,8 @@ env_value() { sed -n "s/^$1=//p" "$stack_dir/.env.example"; }
 logs_host="$(env_value VICTORIA_LOGS_DOMAIN)"
 metrics_host="$(env_value VICTORIA_METRICS_DOMAIN)"
 grafana_host="$(env_value VICTORIA_GRAFANA_DOMAIN)"
-[ -n "$logs_host" ] && [ -n "$metrics_host" ] && [ -n "$grafana_host" ] \
+am_host="$(env_value ALERTMANAGER_DOMAIN)"
+[ -n "$logs_host" ] && [ -n "$metrics_host" ] && [ -n "$grafana_host" ] && [ -n "$am_host" ] \
   || { echo "FAIL: domains missing in .env.example" >&2; exit 1; }
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -84,7 +87,7 @@ label() { awk -F'\t' -v k="$1" '$2 == k { print $3 }' <<<"$all_labels"; }
 # Service that carries a label.
 owner() { awk -F'\t' -v k="$1" '$2 == k { print $1 }' <<<"$all_labels"; }
 
-for ui in victorialogs victoriametrics victoria_grafana; do
+for ui in victorialogs victoriametrics victoria_grafana alertmanager; do
   label "traefik.http.routers.$ui.middlewares" | grep -q '^authentik@docker' \
     || fail "$ui UI router is not behind forward auth (first middleware)"
 done
@@ -154,15 +157,15 @@ done
 [ "$(label traefik.http.routers.victoria_grafana.entrypoints)" = websecure ] \
   || fail "victoria_grafana is not on the HTTPS entry point"
 
-# Every router on the three hosts, whatever the service, other than the HTTP
+# Every router on the four hosts, whatever the service, other than the HTTP
 # redirects and the bypasses checked above, must carry forward auth.
-routers="$(awk -F'\t' -v l="$logs_host" -v m="$metrics_host" -v g="$grafana_host" '
-  $2 ~ /^traefik\.http\.routers\.[^.]+\.rule$/ && (index($3, l) || index($3, m) || index($3, g)) {
+routers="$(awk -F'\t' -v l="$logs_host" -v m="$metrics_host" -v g="$grafana_host" -v a="$am_host" '
+  $2 ~ /^traefik\.http\.routers\.[^.]+\.rule$/ && (index($3, l) || index($3, m) || index($3, g) || index($3, a)) {
     split($2, p, "."); print p[4] }' <<<"$all_labels")"
-[ "$(wc -w <<<"$routers")" -ge 10 ] || fail "fewer routers than expected on the three hosts: $routers"
+[ "$(wc -w <<<"$routers")" -ge 12 ] || fail "fewer routers than expected on the four hosts: $routers"
 for router in $routers; do
   case "$router" in
-    victorialogs_http|victoriametrics_http|victoria_grafana_http)
+    victorialogs_http|victoriametrics_http|victoria_grafana_http|alertmanager_http)
       [ "$(label "traefik.http.routers.$router.entrypoints")" = web ] \
         || fail "$router is not limited to the HTTP entry point"
       [ "$(label "traefik.http.routers.$router.middlewares")" = redirect-https ] \
@@ -204,12 +207,34 @@ for s in vmalert-logs vmalert-metrics; do
 done
 jq -e '.networks.victoria.internal == true' <<<"$config" >/dev/null \
   || fail "the victoria network is not internal"
-# alertmanager: same, plus the alertmanager network, which only it joins, as
-# the route out to the Uptime Kuma push URL (watchdog receiver).
-jq -e '.services.alertmanager | ((.labels // {}) | del(.["mydocker.config-hash"]) | length) == 0
-  and ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
-  and (.networks | keys) == ["alertmanager", "victoria"]' <<<"$config" >/dev/null \
-  || fail "alertmanager has labels, ports or unexpected networks"
+# alertmanager: no port; traefik_gateway for its UI, and the alertmanager
+# network, which only it joins, as the route out to the Uptime Kuma push URL
+# (watchdog receiver).
+jq -e '.services.alertmanager | ((.ports // []) | length) == 0 and ((.expose // []) | length) == 0
+  and (.networks | keys) == ["alertmanager", "traefik_gateway", "victoria"]' <<<"$config" >/dev/null \
+  || fail "alertmanager has ports or unexpected networks"
+# Its only routers: the HTTP redirect and the UI router on its own host,
+# behind forward auth, to port 9093.
+am_routers="$(awk -F'\t' '$1 == "alertmanager" && $2 ~ /^traefik\.http\.routers\.[^.]+\.rule$/ {
+  split($2, p, "."); print p[4] }' <<<"$all_labels" | sort | tr '\n' ' ')"
+[ "$am_routers" = "alertmanager alertmanager_http " ] \
+  || fail "alertmanager routers are '$am_routers', expected the UI router and its redirect"
+[ "$(label traefik.http.routers.alertmanager.rule)" = "Host(\`$am_host\`)" ] \
+  || fail "alertmanager rule is other than its host"
+[ "$(label traefik.http.routers.alertmanager.entrypoints)" = websecure ] \
+  || fail "alertmanager is not on the HTTPS entry point"
+[ "$(label traefik.http.routers.alertmanager.middlewares)" = authentik@docker ] \
+  || fail "alertmanager middlewares are '$(label traefik.http.routers.alertmanager.middlewares)'"
+[ "$(label traefik.http.routers.alertmanager.service)" = alertmanager ] \
+  || fail "the alertmanager router does not target the alertmanager service"
+[ "$(label traefik.http.services.alertmanager.loadbalancer.server.port)" = 9093 ] \
+  || fail "the alertmanager service does not target port 9093"
+[ "$(label traefik.docker.network | sort -u)" = traefik_gateway ] \
+  || fail "a service routes through a network other than traefik_gateway"
+# External URL: its host, no path, so the API stays at / for vmalert.
+jq -e --arg u "--web.external-url=https://$am_host" \
+  '.services.alertmanager.command | any(. == $u)' <<<"$config" >/dev/null \
+  || fail "alertmanager external URL is not https://$am_host"
 on_am_net="$(jq -c '[.services | to_entries[]
   | select((.value.networks // {}) | has("alertmanager")) | .key]' <<<"$config")"
 [ "$on_am_net" = '["alertmanager"]' ] || fail "services on the alertmanager network: $on_am_net"

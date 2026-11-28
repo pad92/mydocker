@@ -444,10 +444,12 @@ services:
   # watchdog to Uptime Kuma. The notification log and the silences persist in
   # ALERTMANAGER_DATA_DIR, so a restart does not send the SMS of a firing
   # alert again. Single instance: clustering (gossip) is off. The victoria
-  # network, and the alertmanager network (which only it joins) as its route
-  # out to Uptime Kuma; it is not on traefik_gateway, where any container
-  # could reach its API on 9093. The host CA bundle verifies the step-ca
-  # certificate of Uptime Kuma.
+  # network, the alertmanager network (which only it joins) as its route out
+  # to Uptime Kuma, and traefik_gateway for its UI on ALERTMANAGER_DOMAIN,
+  # behind Authentik (group alertmanager-users). On traefik_gateway the other
+  # containers reach its API on 9093 without authentication, as for
+  # victorialogs and victoriametrics (see the README). The host CA bundle
+  # verifies the step-ca certificate of Uptime Kuma.
   alertmanager:
     image: prom/alertmanager:${ALERTMANAGER_VERSION:-v0.35.1}
     container_name: alertmanager
@@ -461,6 +463,9 @@ services:
       - --storage.path=/alertmanager
       - --cluster.listen-address=
       - --web.listen-address=:9093
+      # Links of the UI and of the notifications. No path: the routes stay
+      # at /, where vmalert and the tests reach the API.
+      - --web.external-url=https://${ALERTMANAGER_DOMAIN:?Set ALERTMANAGER_DOMAIN}
       # receiver_name on alertmanager_notifications_failed_total, read by
       # the alertmanager_notifications_failed rule.
       - --enable-feature=receiver-name-in-metrics
@@ -479,11 +484,28 @@ services:
         target: /etc/alertmanager/alertmanager.yml
     labels:
       mydocker.config-hash: "7999f8830ab3b560d80ec91edeebf49a19ad091abf0dd86dbcdf2394bdb5f043"
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_gateway"
+      traefik.http.services.alertmanager.loadbalancer.server.port: "9093"
+
+      traefik.http.routers.alertmanager_http.rule: "Host(`${ALERTMANAGER_DOMAIN:?Set ALERTMANAGER_DOMAIN}`)"
+      traefik.http.routers.alertmanager_http.entrypoints: web
+      traefik.http.routers.alertmanager_http.middlewares: redirect-https
+
+      traefik.http.routers.alertmanager.rule: "Host(`${ALERTMANAGER_DOMAIN:?Set ALERTMANAGER_DOMAIN}`)"
+      traefik.http.routers.alertmanager.entrypoints: "websecure"
+      traefik.http.routers.alertmanager.tls: "true"
+      traefik.http.routers.alertmanager.tls.certresolver: "stepca"
+      # authentik@docker first: it fails closed. The UI creates and expires
+      # silences, so no path bypasses it.
+      traefik.http.routers.alertmanager.middlewares: "authentik@docker"
+      traefik.http.routers.alertmanager.service: "alertmanager"
     volumes:
       - ${ALERTMANAGER_DATA_DIR:?Set ALERTMANAGER_DATA_DIR}:/alertmanager
       - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
     networks:
       - alertmanager
+      - traefik_gateway
       - victoria
     security_opt:
       - no-new-privileges:true
@@ -656,9 +678,10 @@ networks:
   traefik_gateway:
     external: true
   # Alerting and datasource traffic. Internal: no route out, and the
-  # containers of other stacks on traefik_gateway cannot reach vmalert or
-  # alertmanager. Vector is on both networks, so its SMS webhook (8080) is
-  # reachable from traefik_gateway too (see the README).
+  # containers of other stacks on traefik_gateway cannot reach vmalert.
+  # Vector and alertmanager are on both networks, so the SMS webhook of
+  # Vector (8080) and the API of Alertmanager (9093) are reachable from
+  # traefik_gateway too (see the README).
   victoria:
     internal: true
   # Route out for unpoller only, to reach the UniFi gateway.
