@@ -25,7 +25,8 @@
 #   fetches points it drops, and lastNotNull would show a value hours old for
 #   a series that stopped;
 # - silences through the Alertmanager datasource: the viewer's POST is refused
-#   with 403, the admin (GF_SECURITY_ADMIN_USER, sent in the Authentik
+#   with 403, through the Grafana Alertmanager API and through the generic
+#   datasource proxy, the admin (GF_SECURITY_ADMIN_USER, sent in the Authentik
 #   header) creates one, Alertmanager holds it active with the exact matchers,
 #   the viewer lists exactly that one, and the Alertmanager alert list is
 #   empty (no vmalert here);
@@ -736,6 +737,10 @@ wget -S -O /w/out/silence_viewer.json --header "$h" --header 'Content-Type: appl
 wget -q -O /w/out/silence_admin.json --header "X-authentik-username: $3" \
   --header 'Content-Type: application/json' --post-file /w/silence.json "$am/silences" \
   2> /w/out/silence_admin.err
+# The generic datasource proxy must not let the viewer around that refusal.
+wget -S -O /w/out/silence_viewer_proxy.json --header "$h" --header 'Content-Type: application/json' \
+  --post-file /w/silence.json "$g/api/datasources/proxy/uid/alertmanager/api/v2/silences" \
+  > /w/out/silence_viewer_proxy.txt 2>&1
 wget -q -O /w/out/silences_viewer.json --header "$h" "$am/silences" 2> /w/out/silences_viewer.err
 wget -q -O /w/out/am_alerts_viewer.json --header "$h" "$am/alerts" 2> /w/out/am_alerts_viewer.err
 wget -q -O /w/out/silences_direct.json http://alertmanager:9093/api/v2/silences 2> /w/out/silences_direct.err
@@ -783,6 +788,9 @@ if orgs is not None and [o.get("role") for o in orgs] != ["Viewer"]:
 viewer_post = open(f"{out}/silence_viewer.txt").read()
 if " 403 " not in viewer_post:
     errors.append(f"silence by the viewer not refused with 403: {viewer_post.strip()[:200]}")
+proxy_post = open(f"{out}/silence_viewer_proxy.txt").read()
+if not re.search(r"HTTP/1\.[01] 4\d\d ", proxy_post):
+    errors.append(f"silence by the viewer through the datasource proxy not refused: {proxy_post.strip()[:200]}")
 created = load("silence_admin.json")
 silence_id = (created or {}).get("silenceID")
 if not silence_id:
