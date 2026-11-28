@@ -3,34 +3,9 @@ x-default-logging: &default-logging
   options:
     max-size: 10m
     max-file: '3'
+# Beszel agent of chataigne (NVIDIA image, all disks). The hub runs on ns01:
+# see the beszel-hub stack.
 services:
-  beszel:
-    image: henrygd/beszel:latest
-    container_name: beszel
-    restart: unless-stopped
-    volumes:
-      - ${BESZEL_DATA_DIR}:/beszel_data
-    networks:
-      - traefik_gateway
-    labels:
-      traefik.enable: "true"
-      traefik.docker.network: "traefik_gateway"
-      traefik.http.services.beszel.loadbalancer.server.port: "8090"
-
-      traefik.http.routers.beszel_http.rule: "Host(`${BESZEL_DOMAIN}`)"
-      traefik.http.routers.beszel_http.entrypoints: web
-      traefik.http.routers.beszel_http.middlewares: redirect-https
-
-      traefik.http.middlewares.redirect-https.redirectscheme.scheme: https
-      traefik.http.middlewares.redirect-https.redirectscheme.permanent: true
-
-      traefik.http.routers.beszel.rule: "Host(`${BESZEL_DOMAIN}`)"
-      traefik.http.routers.beszel.entrypoints: "websecure"
-      traefik.http.routers.beszel.tls: "true"
-      traefik.http.routers.beszel.tls.certresolver: "stepca"
-
-
-    logging: *default-logging
   beszel-agent:
     # image: henrygd/beszel-agent-nvidia:0.17
     image: henrygd/beszel-agent-nvidia:latest
@@ -67,6 +42,3 @@ services:
       TOKEN: "${TOKEN}"
       HUB_URL: "${HUB_URL}"
     logging: *default-logging
-networks:
-  traefik_gateway:
-    external: true

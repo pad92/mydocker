@@ -1,12 +1,12 @@
 # Management Stack
 
-This stack runs Traefik, Authentik, Portainer, and Uptime Kuma.
+This stack runs Traefik, Authentik, Portainer, and a read-only Docker socket proxy. Uptime Kuma and the Beszel hub run on ns01 (stacks `uptime-kuma` and `beszel-hub`); Traefik still serves them under their usual host names.
 
 ## Shared settings
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `CA_CERT_NAME` | CA certificate filename mounted into Traefik and Uptime Kuma | `example-root-ca.crt` |
+| `CA_CERT_NAME` | CA certificate filename mounted into Traefik | `example-root-ca.crt` |
 | `MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR` | Host directory containing the CA certificate | `/usr/local/share/ca-certificates` |
 
 ## Traefik
@@ -55,7 +55,7 @@ openssl rand -base64 60 | tr -d '\n'
 
 ### First start
 
-The Compose file requires `AUTHENTIK_HOST_LOCAL`, `AUTHENTIK_PG_PASS`, `AUTHENTIK_SECRET_KEY`, `MANAGEMENT_AUTHENTIK_DATA_DIR`, `UPTIME_HOST_LOCAL`, `NG_HOST_LOCAL`, `PORTAINER_HOST_LOCAL`, `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL`, `TRAEFIK_HOST_LOCAL`, `FORGEJO_HOST_LOCAL`, `GRAMPSWEB_HOST_LOCAL`, `IMMICH_HOST_LOCAL`, `DONETICK_HOST_LOCAL`, `OLLAMA_HOST_LOCAL`, `UNIFI_HOST_LOCAL`, `NAS_HOST_LOCAL`, and `SWITCH_HOST_LOCAL` for the whole project. On a host whose `.env` predates Authentik, add them before running any `docker compose` command in this stack: without them, even `docker compose up -d traefik` stops with a "Set ... in .env" error.
+The Compose file requires `AUTHENTIK_HOST_LOCAL`, `AUTHENTIK_PG_PASS`, `AUTHENTIK_SECRET_KEY`, `MANAGEMENT_AUTHENTIK_DATA_DIR`, `UPTIME_HOST_LOCAL`, `NG_HOST_LOCAL`, `PORTAINER_HOST_LOCAL`, `VICTORIA_LOGS_HOST_LOCAL`, `VICTORIA_METRICS_HOST_LOCAL`, `VICTORIA_GRAFANA_HOST_LOCAL`, `TRAEFIK_HOST_LOCAL`, `FORGEJO_HOST_LOCAL`, `GRAMPSWEB_HOST_LOCAL`, `IMMICH_HOST_LOCAL`, `DONETICK_HOST_LOCAL`, `OLLAMA_HOST_LOCAL`, `UNIFI_HOST_LOCAL`, `NAS_HOST_LOCAL`, `SWITCH_HOST_LOCAL`, `UPTIME_UPSTREAM_URL`, `BESZEL_HOST_LOCAL`, `BESZEL_UPSTREAM_URL`, `DOCKER_PROXY_HOST_LOCAL`, and `DOCKER_PROXY_ALLOWED_IPS` for the whole project. On a host whose `.env` predates Authentik, add them before running any `docker compose` command in this stack: without them, even `docker compose up -d traefik` stops with a "Set ... in .env" error.
 
 The server and worker run as UID 1000. Create the directories with that owner before the first start. The shell does not read `.env`, so set the variable first; the `:?` makes the commands stop instead of running on `/data`, `/certs`, and `/custom-templates` when it is empty:
 
@@ -125,7 +125,7 @@ The **Forward auth (domain level)** mode protects many hosts with a single provi
 
 - **Fail closed.** If `authentik_server` is stopped, the `authentik@docker` middleware disappears and Traefik disables the routers that reference it: the protected services answer 404 instead of being served without authentication. Portainer is protected, so it is unreachable while Authentik is down: repair Authentik over SSH with `docker compose` in this directory, not through Portainer. The Traefik dashboard goes down with it; read Traefik's state with `docker compose logs traefik` instead.
 - **Monitoring.** Uptime Kuma probes a protected service through Traefik and gets the login redirect. Check the service on its internal address, or accept the 302 status as healthy.
-- **Uptime Kuma push monitors.** Uptime Kuma itself is protected, except `/api/push/`: the `uptime_push` router serves that path without the middleware, so scripts and cron jobs can still report heartbeats. Push URLs carry their own token.
+- **Uptime Kuma push monitors.** Uptime Kuma itself is protected, except `/api/push/`: the `uptime_push` router of `traefik_dynamic.toml` serves that path without the middleware, so scripts and cron jobs can still report heartbeats. Push URLs carry their own token.
 - **APIs and mobile apps.** Clients that cannot follow a browser login (API tokens, mobile apps, WebDAV) break behind forward auth. For those services, use the native OIDC/SAML support of the application with Authentik as provider, or leave the API path outside the protected router. Forgejo takes the first route (Git over HTTPS, API, runner): see [its README](../forgejo/README.md#login-with-authentik-oidc) for the source to add in Forgejo with the client secret. The victoria stack takes the second: routers without the forward-auth middleware serve only `POST` on the two OTLP ingestion paths, behind HTTP Basic auth, see [its README](../victoria/README.md#4-access-control).
 - **Trusted headers.** The service must trust the `X-authentik-*` headers only because they come from Traefik. Do not publish a protected service on a host port, or a client could reach it directly and forge those headers.
 - **Backups.** Back up `MANAGEMENT_AUTHENTIK_DATA_DIR` and `AUTHENTIK_SECRET_KEY` together. For the database, prefer a `pg_dump` over a copy of the files of a running server.
@@ -208,9 +208,19 @@ Then, in Portainer, go to **Settings > Authentication**, pick **OAuth**, then **
 
 Turn on **Automatic user provisioning** if new Authentik users should get a Portainer account on first login (with no access until an administrator grants it). An existing Portainer administrator keeps the rights only if the Authentik username is the same as the Portainer username. Test the OAuth login in a private window before turning on **Hide internal authentication prompt**: if Authentik is down or misconfigured, the internal login is the only way back in.
 
-## Uptime Kuma
+## Services on ns01
 
-Uptime Kuma monitors hosts and services. Set `MANAGEMENT_UPTIME_KUMA_DATA_DIR` to its existing data directory and `UPTIME_HOST_LOCAL` to its host name.
+Uptime Kuma and the Beszel hub moved to ns01, so monitoring keeps working when chataigne is down. Their stacks are `uptime-kuma/` and `beszel-hub/`. Traefik on chataigne keeps their host names: `traefik_dynamic.toml` (copy the routers and services from `traefik_dynamic.toml.example`) sends `UPTIME_HOST_LOCAL` to `UPTIME_UPSTREAM_URL` and `BESZEL_HOST_LOCAL` to `BESZEL_UPSTREAM_URL`. Uptime Kuma stays behind Authentik, except `/api/push/`.
+
+While chataigne is down, those host names do not answer. Use `http://<ns01>:3001` and `http://<ns01>:8090` instead. This is why Uptime Kuma on ns01 keeps its own login enabled: its port is reachable on the LAN without Authentik.
+
+## Docker socket proxy
+
+Uptime Kuma checks the containers of chataigne through `docker-socket-proxy` (linuxserver/socket-proxy), not through the Docker socket. The proxy only allows read requests on the containers, ping, and version endpoints (`POST=0`), and mounts the socket read-only. It publishes no port: Traefik serves it in HTTPS on `DOCKER_PROXY_HOST_LOCAL`, and the `docker_proxy_allow` middleware drops every client outside `DOCKER_PROXY_ALLOWED_IPS` (ns01 by default).
+
+Keep that list short. A container inspect returns its environment, passwords included, so anyone allowed through can read them.
+
+In Uptime Kuma, the Docker host is of type *TCP / HTTP* with the URL `https://<DOCKER_PROXY_HOST_LOCAL>`. Uptime Kuma trusts the step-ca certificate through `NODE_EXTRA_CA_CERTS`.
 
 ## Other example settings
 

@@ -15,7 +15,11 @@
 #   address;
 # - the server gets the branding files read-only where Authentik serves the
 #   "homelab/..." file names of the blueprints (files: tests/test_media.sh);
-# - Uptime Kuma is behind forward auth, except its /api/push/ path;
+# - Uptime Kuma and the Beszel hub run on ns01: Traefik gets their host names
+#   and upstream URLs, and the routes of traefik_dynamic.toml.example keep
+#   Uptime Kuma behind forward auth, except its /api/push/ path;
+# - the Docker socket proxy is read-only (no POST, socket mounted read-only,
+#   no published port) and its router only accepts the allowed source IPs;
 # - Portainer is behind forward auth, with no bypass router, and mounts the
 #   step-ca root read-only (its OAuth login calls Authentik over HTTPS);
 # - the Traefik dashboard router (/traefik and /api) is behind forward auth;
@@ -42,9 +46,13 @@ sed -e "s|^ACME_CA_SERVER=.*|ACME_CA_SERVER=https://ca.test/acme/acme/directory|
   -e "s|^AUTHENTIK_HOST_LOCAL=.*|AUTHENTIK_HOST_LOCAL=auth.home.test|" \
   -e "s|^MANAGEMENT_AUTHENTIK_DATA_DIR=.*|MANAGEMENT_AUTHENTIK_DATA_DIR=$work_dir/authentik|" \
   -e "s|^MANAGEMENT_PORTAINER_DATA_DIR=.*|MANAGEMENT_PORTAINER_DATA_DIR=$work_dir/portainer|" \
-  -e "s|^MANAGEMENT_UPTIME_KUMA_DATA_DIR=.*|MANAGEMENT_UPTIME_KUMA_DATA_DIR=$work_dir/uptime-kuma|" \
+  -e "s|^BESZEL_HOST_LOCAL=.*|BESZEL_HOST_LOCAL=beszel.example.test|" \
+  -e "s|^BESZEL_UPSTREAM_URL=.*|BESZEL_UPSTREAM_URL=http://192.0.2.1:8090|" \
+  -e "s|^UPTIME_UPSTREAM_URL=.*|UPTIME_UPSTREAM_URL=http://192.0.2.1:3001|" \
+  -e "s|^DOCKER_PROXY_ALLOWED_IPS=.*|DOCKER_PROXY_ALLOWED_IPS=192.0.2.1/32|" \
+  -e "s|^DOCKER_PROXY_HOST_LOCAL=.*|DOCKER_PROXY_HOST_LOCAL=docker.example.test|" \
   -e "s|^PROXMOX_HOST_LOCAL=.*|PROXMOX_HOST_LOCAL=pve.home.test|" \
-  -e "s|^UPTIME_HOST_LOCAL=.*|UPTIME_HOST_LOCAL=uptime.home.test|" \
+  -e "s|^UPTIME_HOST_LOCAL=.*|UPTIME_HOST_LOCAL=uptime.example.test|" \
   -e "s|^NG_HOST_LOCAL=.*|NG_HOST_LOCAL=media.home.test|" \
   -e "s|^PORTAINER_HOST_LOCAL=.*|PORTAINER_HOST_LOCAL=portainer.home.test|" \
   -e "s|^TRAEFIK_HOST_LOCAL=.*|TRAEFIK_HOST_LOCAL=proxy.example.test|" \
@@ -62,7 +70,7 @@ sed -e "s|^ACME_CA_SERVER=.*|ACME_CA_SERVER=https://ca.test/acme/acme/directory|
   -e "s|^PROXMOX_UPSTREAM_URL=.*|PROXMOX_UPSTREAM_URL=https://192.0.2.10:8006|" \
   "$stack_dir/.env.example" > "$work_dir/test.env"
 
-for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS CA_CERT_NAME MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL NG_HOST_LOCAL PORTAINER_HOST_LOCAL TRAEFIK_HOST_LOCAL VICTORIA_LOGS_HOST_LOCAL VICTORIA_METRICS_HOST_LOCAL VICTORIA_GRAFANA_HOST_LOCAL FORGEJO_HOST_LOCAL GRAMPSWEB_HOST_LOCAL IMMICH_HOST_LOCAL DONETICK_HOST_LOCAL OLLAMA_HOST_LOCAL UNIFI_HOST_LOCAL NAS_HOST_LOCAL SWITCH_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR; do
+for var in AUTHENTIK_SECRET_KEY AUTHENTIK_PG_PASS CA_CERT_NAME MANAGEMENT_SHARE_CA_CERTIFICATES_DATA_DIR AUTHENTIK_HOST_LOCAL UPTIME_HOST_LOCAL NG_HOST_LOCAL PORTAINER_HOST_LOCAL TRAEFIK_HOST_LOCAL VICTORIA_LOGS_HOST_LOCAL VICTORIA_METRICS_HOST_LOCAL VICTORIA_GRAFANA_HOST_LOCAL FORGEJO_HOST_LOCAL GRAMPSWEB_HOST_LOCAL IMMICH_HOST_LOCAL DONETICK_HOST_LOCAL OLLAMA_HOST_LOCAL UNIFI_HOST_LOCAL NAS_HOST_LOCAL SWITCH_HOST_LOCAL MANAGEMENT_AUTHENTIK_DATA_DIR UPTIME_UPSTREAM_URL BESZEL_HOST_LOCAL BESZEL_UPSTREAM_URL DOCKER_PROXY_HOST_LOCAL DOCKER_PROXY_ALLOWED_IPS; do
   if render "$var=" >/dev/null 2>&1; then fail "$var is not required"; fi
 done
 
@@ -115,7 +123,7 @@ outpost_host="$(render AUTHENTIK_HOST_PUBLIC=auth.example.test \
   | jq -r "$worker.environment.BLUEPRINT_AUTHENTIK_HOST")"
 [ "$outpost_host" = auth.example.test ] \
   || fail "BLUEPRINT_AUTHENTIK_HOST is not AUTHENTIK_HOST_PUBLIC when set: $outpost_host"
-[ "$(jq -r "$worker.environment.BLUEPRINT_UPTIME_HOST" <<<"$config")" = uptime.home.test ] \
+[ "$(jq -r "$worker.environment.BLUEPRINT_UPTIME_HOST" <<<"$config")" = uptime.example.test ] \
   || fail "BLUEPRINT_UPTIME_HOST is not UPTIME_HOST_LOCAL"
 [ "$(jq -r "$worker.environment.BLUEPRINT_NG_HOST" <<<"$config")" = media.home.test ] \
   || fail "BLUEPRINT_NG_HOST is not NG_HOST_LOCAL"
@@ -157,16 +165,39 @@ if grep -nE '[A-Za-z0-9-]+\.(lan|local|home|internal|com|fr|net|org|io)\b|https?
   fail "a blueprint holds a host name, URL, e-mail or address"
 fi
 
-uptime='.services["uptime-kuma"].labels'
-[ "$(jq -r "$uptime[\"traefik.http.routers.uptime.middlewares\"]" <<<"$config")" = authentik@docker ] \
-  || fail "Uptime Kuma router is not behind forward auth"
-[ "$(jq -r "$uptime[\"traefik.http.routers.uptime_push.rule\"]" <<<"$config")" = \
-  'Host(`uptime.home.test`) && PathPrefix(`/api/push/`)' ] \
-  || fail "push router does not match only /api/push/ on the Uptime Kuma host"
-[ "$(jq -r "$uptime[\"traefik.http.routers.uptime_push.middlewares\"] // \"\"" <<<"$config")" = "" ] \
-  || fail "push router has a middleware: push monitors would need a login"
-[ "$(jq -r "$uptime[\"traefik.http.routers.uptime_push.service\"]" <<<"$config")" = uptime ] \
-  || fail "push router does not target the Uptime Kuma service"
+[ "$(jq -r '.services["uptime-kuma"] // "none"' <<<"$config")" = none ] \
+  || fail "Uptime Kuma is still in this stack: it runs on ns01 (uptime-kuma/)"
+for pair in UPTIME_HOST_LOCAL=uptime.example.test UPTIME_UPSTREAM_URL=http://192.0.2.1:3001 \
+  BESZEL_HOST_LOCAL=beszel.example.test BESZEL_UPSTREAM_URL=http://192.0.2.1:8090; do
+  jq -e --arg p "$pair" '.services.traefik.environment | to_entries[]
+    | select("\(.key)=\(.value)" == $p)' <<<"$config" >/dev/null \
+    || fail "Traefik does not get $pair for the ns01 routes"
+done
+# Routes towards ns01 (file provider). Go templates stay as plain strings.
+python3 - "$stack_dir/traefik_dynamic.toml.example" <<'PY' || fail "ns01 routes in traefik_dynamic.toml.example"
+import sys, tomllib
+r = tomllib.load(open(sys.argv[1], "rb"))["http"]["routers"]
+host = '{{ env "UPTIME_HOST_LOCAL" }}'
+assert r["uptime"]["middlewares"] == ["authentik@docker"], "uptime router not behind forward auth"
+assert r["uptime_push"]["rule"] == f"Host(`{host}`) && PathPrefix(`/api/push/`)", "push rule"
+assert "middlewares" not in r["uptime_push"], "push router has a middleware"
+for name in ("uptime", "uptime_push", "uptime_http"):
+    assert r[name]["service"] == "uptime-svc", name
+for name in ("beszel", "beszel_http"):
+    assert r[name]["service"] == "beszel-svc", name
+PY
+
+proxy='.services["docker-socket-proxy"]'
+jq -e "$proxy.environment.POST == \"0\" and $proxy.environment.CONTAINERS == \"1\"" <<<"$config" >/dev/null \
+  || fail "Docker socket proxy is not read-only on the containers endpoints"
+jq -e "$proxy.volumes[] | select(.source == \"/var/run/docker.sock\" and .read_only == true)" <<<"$config" >/dev/null \
+  || fail "Docker socket proxy does not mount the socket read-only"
+[ "$(jq -r "$proxy.ports // [] | length" <<<"$config")" = 0 ] \
+  || fail "Docker socket proxy publishes a port: it must stay behind Traefik"
+[ "$(jq -r "$proxy.labels[\"traefik.http.routers.docker_proxy.middlewares\"]" <<<"$config")" = docker_proxy_allow ] \
+  || fail "Docker proxy router is not limited by the IP allow list"
+[ "$(jq -r "$proxy.labels[\"traefik.http.middlewares.docker_proxy_allow.ipallowlist.sourcerange\"]" <<<"$config")" = 192.0.2.1/32 ] \
+  || fail "Docker proxy allow list is not DOCKER_PROXY_ALLOWED_IPS"
 
 portainer='.services.portainer.labels'
 [ "$(jq -r "$portainer[\"traefik.http.routers.portainer.middlewares\"]" <<<"$config")" = \
