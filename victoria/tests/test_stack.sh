@@ -370,6 +370,18 @@ jq -e '.configs.vmalert_metrics_rules.content
 jq -e '.services.victoriametrics | (.command | index("-promscrape.config=/etc/victoria/scrape.yml"))
   and (.configs | any(.source == "victoriametrics_scrape" and .target == "/etc/victoria/scrape.yml"))' \
   <<<"$config" >/dev/null || fail "victoriametrics does not load victoriametrics_scrape"
+# Grafana lists the vmalert rules (Alerting > Alert rules): those of
+# vmalert-metrics through the /api/v1/rules proxy of VictoriaMetrics, those of
+# vmalert-logs through a prometheus-type datasource on vmalert-logs, since
+# Grafana reads no ruler through the VictoriaLogs plugin.
+jq -e '.services.victoriametrics.command | index("-vmalert.proxyURL=http://vmalert-metrics:8880")' \
+  <<<"$config" >/dev/null || fail "victoriametrics does not proxy the rules of vmalert-metrics"
+jq -e '[.services["vmalert-metrics"], .services["vmalert-logs"]]
+  | all(.command | index("-httpListenAddr=:8880"))' \
+  <<<"$config" >/dev/null || fail "a vmalert does not listen on :8880, the proxy target"
+jq -e '.configs.grafana_datasources.content
+  | test("- name: VictoriaLogs rules\n *uid: victorialogs-rules\n *type: prometheus\n *access: proxy\n *url: http://vmalert-logs:8880\n")' \
+  <<<"$config" >/dev/null || fail "no prometheus datasource for the rules of vmalert-logs"
 jq -e '.configs.victoriametrics_scrape.content | test("targets: \\[\"unpoller:9130\"\\]")' \
   <<<"$config" >/dev/null || fail "victoriametrics_scrape does not target unpoller:9130"
 jq -e '.configs.victoriametrics_scrape.content

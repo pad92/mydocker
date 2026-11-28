@@ -18,6 +18,19 @@ datasources:
       # Longest scrape interval (unpoller, synology, freebox): keeps
       # $__rate_interval at 4m or more, so a rate always sees 2 samples.
       timeInterval: 60s
+  # Rules of vmalert-logs, for Alerting > Alert rules only (no query). Grafana
+  # reads the rules of an outside ruler only through a prometheus or loki
+  # datasource, and VictoriaLogs serves them under /select/vmalert/ instead of
+  # /api/v1/rules: this datasource reads them from vmalert-logs itself.
+  - name: VictoriaLogs rules
+    uid: victorialogs-rules
+    type: prometheus
+    access: proxy
+    url: http://vmalert-logs:8880
+    editable: false
+    jsonData:
+      prometheusType: Prometheus
+      manageAlerts: true
   # The alerts of vmalert as Alertmanager holds them: the Grafana Alerting
   # pages list them and their silences, and an Editor or Admin creates or
   # expires a silence there, over HTTPS behind Authentik. Alertmanager itself

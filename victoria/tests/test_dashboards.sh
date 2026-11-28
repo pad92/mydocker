@@ -2,8 +2,9 @@
 # Grafana test, on the configs and environment as Compose renders them with
 # .env.example.
 #
-# On a throwaway internal network: VictoriaLogs, VictoriaMetrics, Alertmanager
-# and Grafana with the rendered environment, provisioning files, dashboards and
+# On a throwaway internal network: VictoriaLogs, VictoriaMetrics, Alertmanager,
+# the two vmalert (rendered rules, no notification, no remote write) and
+# Grafana with the rendered environment, provisioning files, dashboards and
 # Alertmanager config. Checks:
 # - without the X-authentik-username header the API answers 401 (no anonymous
 #   access), Basic auth and POST /login with the default admin/admin are
@@ -29,7 +30,10 @@
 #   datasource proxy, the admin (GF_SECURITY_ADMIN_USER, sent in the Authentik
 #   header) creates one, Alertmanager holds it active with the exact matchers,
 #   the viewer lists exactly that one, and the Alertmanager alert list is
-#   empty (no vmalert here);
+#   empty (the vmalert notify nowhere);
+# - Alerting > Alert rules: the viewer gets every group and rule of
+#   vmalert-metrics through the VictoriaMetrics datasource, and of vmalert-logs
+#   through the VictoriaLogs rules datasource;
 # - the VictoriaLogs plugin is loaded at the version pinned in
 #   GF_PLUGINS_PREINSTALL_SYNC;
 # - every VictoriaLogs target of the dashboards, sent as the viewer to
@@ -93,6 +97,7 @@ logs_image="victoriametrics/victoria-logs:$(version VICTORIA_LOGS_VERSION)"
 metrics_image="victoriametrics/victoria-metrics:$(version VICTORIA_METRICS_VERSION)"
 grafana_image="grafana/grafana:$(version GRAFANA_VERSION)"
 alertmanager_image="prom/alertmanager:$(version ALERTMANAGER_VERSION)"
+vmalert_image="victoriametrics/vmalert:$(version VMALERT_VERSION)"
 client_image="${CLIENT_IMAGE:-busybox:1.37}"
 plugin_id="victoriametrics-logs-datasource"
 viewer="test-viewer"
@@ -106,10 +111,13 @@ logs_name="victorialogs-test-$suffix"
 metrics_name="victoriametrics-test-$suffix"
 grafana_name="grafana-test-$suffix"
 alertmanager_name="alertmanager-test-$suffix"
+vmalert_logs_name="vmalert-logs-test-$suffix"
+vmalert_metrics_name="vmalert-metrics-test-$suffix"
 work_dir="$(mktemp -d)"
 
 cleanup() {
-  docker rm -f "$grafana_name" "$alertmanager_name" "$metrics_name" "$logs_name" >/dev/null 2>&1 || true
+  docker rm -f "$grafana_name" "$alertmanager_name" "$vmalert_logs_name" "$vmalert_metrics_name" \
+    "$metrics_name" "$logs_name" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   rm -rf "$work_dir"
 }
@@ -140,6 +148,21 @@ grafana_admin="$(jq -r '.services.grafana.environment.GF_SECURITY_ADMIN_USER' "$
 # is sent to it anyway.
 jq -er '.configs.alertmanager_config.content | gsub("\\$\\$"; "$")' \
   "$work_dir/compose.json" > "$work_dir/alertmanager.yml"
+# The two vmalert, with their rendered rules and command, to check that Grafana
+# lists those rules (through the -vmalert.proxyURL of VictoriaMetrics for
+# vmalert-metrics). No notification and no remote write: the alerts go nowhere and
+# the recorded series stay out of the series count below.
+for kind in logs metrics; do
+  jq -er --arg c "vmalert_${kind}_rules" '.configs[$c].content | gsub("\\$\\$"; "$")' \
+    "$work_dir/compose.json" > "$work_dir/vmalert_${kind}_rules.yml" || fail "no vmalert_${kind}_rules"
+done
+mapfile -t vmalert_logs_args < <(jq -r '.services["vmalert-logs"].command[]
+  | select(test("^-(notifier|remoteWrite|remoteRead)\\.") | not)' "$work_dir/compose.json")
+mapfile -t vmalert_metrics_args < <(jq -r '.services["vmalert-metrics"].command[]
+  | select(test("^-(notifier|remoteWrite|remoteRead)\\.") | not)' "$work_dir/compose.json")
+vmalert_test_args=(-notifier.blackhole -remoteWrite.url=http://remote-write.invalid:8428)
+metrics_proxy="$(jq -er '.services.victoriametrics.command[] | select(startswith("-vmalert.proxyURL="))' \
+  "$work_dir/compose.json")" || fail "victoriametrics has no -vmalert.proxyURL"
 # A silence created through Grafana, for an alert that fires nowhere.
 silence_start="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 silence_end="$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)"
@@ -649,7 +672,13 @@ docker network create --internal "$network" >/dev/null
 docker run -d --name "$logs_name" --network "$network" --network-alias victorialogs \
   --tmpfs /data "$logs_image" -storageDataPath=/data -httpListenAddr=:9428 >/dev/null
 docker run -d --name "$metrics_name" --network "$network" --network-alias victoriametrics \
-  --tmpfs /data "$metrics_image" -storageDataPath=/data -httpListenAddr=:8428 >/dev/null
+  --tmpfs /data "$metrics_image" -storageDataPath=/data -httpListenAddr=:8428 "$metrics_proxy" >/dev/null
+docker run -d --name "$vmalert_logs_name" --network "$network" --network-alias vmalert-logs \
+  -v "$work_dir/vmalert_logs_rules.yml:/etc/vmalert/rules.yml:ro" \
+  "$vmalert_image" "${vmalert_logs_args[@]}" "${vmalert_test_args[@]}" >/dev/null
+docker run -d --name "$vmalert_metrics_name" --network "$network" --network-alias vmalert-metrics \
+  -v "$work_dir/vmalert_metrics_rules.yml:/etc/vmalert/rules.yml:ro" \
+  "$vmalert_image" "${vmalert_metrics_args[@]}" "${vmalert_test_args[@]}" >/dev/null
 docker run -d --name "$grafana_name" --network "$network" --network-alias grafana \
   ${grafana_user:+--user "$grafana_user"} --env-file "$work_dir/grafana.env" \
   --tmpfs /var/lib/grafana:mode=1777 \
@@ -669,13 +698,15 @@ for _ in $(seq 1 90); do
   if client wget -q -O /dev/null http://victorialogs:9428/health 2>/dev/null \
     && client wget -q -O /dev/null http://victoriametrics:8428/health 2>/dev/null \
     && client wget -q -O /dev/null http://grafana:3000/api/health 2>/dev/null \
-    && client wget -q -O /dev/null http://alertmanager:9093/-/healthy 2>/dev/null; then
+    && client wget -q -O /dev/null http://alertmanager:9093/-/healthy 2>/dev/null \
+    && client wget -q -O /dev/null http://vmalert-logs:8880/health 2>/dev/null \
+    && client wget -q -O /dev/null http://vmalert-metrics:8880/health 2>/dev/null; then
     ready=1
     break
   fi
   sleep 1
 done
-[[ -n "$ready" ]] || fail "victorialogs, victoriametrics, grafana or alertmanager did not start"
+[[ -n "$ready" ]] || fail "victorialogs, victoriametrics, grafana, alertmanager or a vmalert did not start"
 
 # The Alertes dashboard reads the last 3 minutes: date the rule states now,
 # whatever the time Grafana took to start.
@@ -744,6 +775,11 @@ wget -S -O /w/out/silence_viewer_proxy.json --header "$h" --header 'Content-Type
 wget -q -O /w/out/silences_viewer.json --header "$h" "$am/silences" 2> /w/out/silences_viewer.err
 wget -q -O /w/out/am_alerts_viewer.json --header "$h" "$am/alerts" 2> /w/out/am_alerts_viewer.err
 wget -q -O /w/out/silences_direct.json http://alertmanager:9093/api/v2/silences 2> /w/out/silences_direct.err
+# The vmalert rules, as Alerting > Alert rules reads them.
+wget -q -O /w/out/rules_metrics.json --header "$h" "$g/api/prometheus/victoriametrics/api/v1/rules" \
+  2> /w/out/rules_metrics.err
+wget -q -O /w/out/rules_logs.json --header "$h" "$g/api/prometheus/victorialogs-rules/api/v1/rules" \
+  2> /w/out/rules_logs.err
 for body in /w/bodies/q*.json; do
   name="$(basename "$body" .json)"
   wget -q -O "/w/out/$name.json" --header "$h" --header 'Content-Type: application/json' \
@@ -806,6 +842,19 @@ if silence_id and [s.get("id") for s in listed] != [silence_id]:
     errors.append(f"the viewer lists silences {[s.get('id') for s in listed]}, expected [{silence_id}]")
 if load("am_alerts_viewer.json") != []:
     errors.append("the viewer cannot list the Alertmanager alerts, or some are firing")
+
+# Alerting > Alert rules: Grafana lists every group and rule of both vmalert,
+# through the VictoriaMetrics datasource and the VictoriaLogs rules one.
+for kind, uid in (("metrics", "victoriametrics"), ("logs", "victorialogs-rules")):
+    source = open(f"{work}/vmalert_{kind}_rules.yml").read()
+    groups = sorted(m.strip("'\"") for m in re.findall(r"^\s*-\s+name:\s*(.+?)\s*$", source, re.M))
+    rules = len(re.findall(r"^\s*-\s+(?:alert|record):", source, re.M))
+    listed = (load(f"rules_{kind}.json") or {}).get("data", {}).get("groups", [])
+    names = sorted(g.get("name") for g in listed)
+    count = sum(len(g.get("rules", [])) for g in listed)
+    if not groups or names != groups or count != rules:
+        errors.append(f"{uid}: Grafana lists groups {names} and {count} rules, "
+                      f"expected {groups} and {rules} from vmalert_{kind}_rules")
 
 expected_uids = ["victoria-alerts", "victoria-authentik", "victoria-disks", "victoria-dns", "victoria-docker",
                  "victoria-firewall", "victoria-freebox",
@@ -1082,4 +1131,4 @@ if errors:
 print(f"{len(index)} queries sent: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
 PY
 
-echo "OK: Grafana refuses requests without the Authentik header, signs users up as Viewer, lets only an Editor or Admin silence through Alertmanager, loads the pinned plugin and answers every dashboard target"
+echo "OK: Grafana refuses requests without the Authentik header, signs users up as Viewer, lets only an Editor or Admin silence through Alertmanager, lists the vmalert rules, loads the pinned plugin and answers every dashboard target"
